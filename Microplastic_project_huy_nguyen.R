@@ -317,10 +317,14 @@ RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
 
 
 # STEP 1.1: Data import --------------------------------------------
-setwd("C:/Users/huyng/Desktop/Microplastic/Exported_CSV")
+setwd("C:/Users/huyng/Desktop/Microplastic/Microplastic-Fingerprinting/Exported_CSV")
 
 file_list <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "Blank")]
+
+# Column Bleed and solvent 
+blank <- list.files(pattern = '*.csv') %>%
+  .[str_detect(., "Blank")]
 
 # Import samples to list
 df_list_step1.1 <- purrr::map(file_list, read.csv, skip = 2)
