@@ -72,12 +72,12 @@ limit_obser <- function(df_list, file_list, cap) {
   df_list_removed_area <- list()
   for (i in 1:length(df_list)) {
     df_list_filter_area[[i]] <- df_list[[i]] %>%
-      filter(., Area > cap) %>%
-      mutate(sample_name = file_list[[i]])
+      filter(., Area > cap)
+      # mutate(sample_name = file_list[[i]])
       
     df_list_removed_area[[i]] <- df_list[[i]] %>%
-      filter(., Area <= cap) %>%
-      mutate(sample_name = file_list[[i]])
+      filter(., Area <= cap)
+      # mutate(sample_name = file_list[[i]])
   }
   return(list(df_list_filter_area, df_list_removed_area))
 }
@@ -317,17 +317,17 @@ RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
 
 
 # STEP 1.1: Data import --------------------------------------------
-setwd("C:/Users/huyng/Desktop/Microplastic/Microplastic-Fingerprinting/Exported_CSV")
+setwd("C:/Users/huyng/Desktop/Microplastic/Microplastic-Fingerprinting/CSV_Export_2023-05-23_Cleaned")
 
 file_list <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "Blank")]
 
-# Column Bleed and solvent 
+# Blank samples 
 blank <- list.files(pattern = '*.csv') %>%
   .[str_detect(., "Blank")]
 
 # Import samples to list
-df_list_step1.1 <- purrr::map(file_list, read.csv, skip = 2)
+df_list_step1.1 <- purrr::map(file_list, read.csv)
 
 # df_step1.1 <- dplyr::bind_rows(df_list_step1.1)
 
@@ -427,6 +427,7 @@ grid.arrange(grobs = plot_b, ncol = 5,
 list_remaining_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[1]]
 list_removed_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[2]]
 
+
 # QUALITY CONTROL C (CONFIRMATION) OF STEP 1.2B: -----------------------
 ## Plotting post-removal data distribution
 data_plot_post_removal <- list() 
@@ -448,21 +449,19 @@ x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 
-
-# What is the min and max of difference in retention time of each peak
-
 # STEP 1.3: Grouping compounds based on Retention time and molecular ions  -----------------------------------------------------------------------
 # STEP 1.3A: Generate 1 grand data frame of all 31 IL samples
 
 df_step1.3 <- bind_rows(list_remaining_area) %>%
-  arrange(Center.X)
+  arrange(RT)
 
 # QUALITY CONTROL PRIOR TO STEP 1.3B ==========================================================================
-# Identify linear/non-linear relationship in retention time - predict the effect of RT1 and RT2 on count of compound
+# Identify linear/non-linear relationship in retention time 
+# -> predict the effect of RT1 and RT2 on count of compound
 # For instance, low RT1 (&RT2) "bins" will include more compounds.
 # Should do this for individual fuel type sample ??????
 
-# Supplementary Materials: Check distribution of spacing of RT1 and RT2 of remaining peaks --------------------
+# Supplementary Materials: Check distribution of spacing of retention time of remaining peaks --------------------
 rt_dif_list <- list()
 plot_dif_Center.X <- list()
 for (n in 1:length(list_remaining_area)) {
