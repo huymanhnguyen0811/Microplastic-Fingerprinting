@@ -86,14 +86,11 @@ limit_obser <- function(df_list, file_list, cap) {
 `%notin%` <- Negate(`%in%`)
 
 # Grouping compounds based on RT1, RT2, and Ion1 - Version 1
-grouping_comp_ver1 <- function(data, rt1thres, rt2thres, ion1thres, ion2thres) {
+grouping_comp_ver1 <- function(data, rtthres, mzthres) {
   
   # create empty list, each sub-list is a compound group with following criteria:
-  # rt1thres: RT1 threshold window
-  # rt2thres: RT2 threshold window
-  # ion1thres: Ion1 threshold window
-  # ion2thres: Ion2 threshold window
-  # region_applied: list of x-y coordinate for different regions to applied different threshold window, x-axis is RT1, y-axis is RT2
+  # rtthres: RT threshold window
+  # mzthres: mz threshold window
   dat <- copy(data)
   
   # Initialize the compound column filled with NA values
@@ -102,22 +99,18 @@ grouping_comp_ver1 <- function(data, rt1thres, rt2thres, ion1thres, ion2thres) {
   
   for (row in 1:nrow(dat)) {
     # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-    rt1 <- dat[row,]$RT1
-    rt2 <- dat[row,]$RT2
-    ion1 <- dat[row,]$Ion1
-    ion2 <- dat[row,]$Ion2
+    rt <- dat[row,]$RT
+    mz <- dat[row,]$m.z
     
-    idx_thres <- which(dat$RT1 <= (rt1 + rt1thres) & dat$RT1 >= (rt1 - rt1thres) & 
-                         dat$RT2 <= (rt2 + rt2thres) & dat$RT2 >= (rt2 - rt2thres) & 
-                         dat$Ion1 <= (ion1 + ion1thres) & dat$Ion1 >= (ion1 - ion1thres) & 
-                         dat$Ion2 <= (ion2 + ion2thres) & dat$Ion2 >= (ion2 - ion2thres) &
-                         is.na(dat$collapsed_compound))
+    idx <- which(dat$RT <= (rt + rtthres) & dat$RT >= (rt - rtthres) &
+                   dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
+                   is.na(dat$collapsed_compound))
     
-    if (identical(idx_thres, integer(0))) {
+    if (identical(idx, integer(0))) {
       next
     }
     else {
-      dat[idx_thres, "collapsed_compound"] <- paste0("Compound_", i, ".")
+      dat[idx, "collapsed_compound"] <- paste0("Compound_", i, ".")
       i <- i + 1
     }  
   }
@@ -203,10 +196,10 @@ comp_filter_ver1 <- function(data, n) {
     # filter data by indexing, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
     idx <- which(grepl(comp_grp, data$collapsed_compound, fixed = TRUE))
     
-    if (length(unique(data[idx,]$sample_name)) > (n - 1)) {
+    if (length(unique(data[idx,]$File)) > (n - 1)) {
       all_similar_compounds_idx <- c(all_similar_compounds_idx, idx)
     }
-    else if (length(unique(data[idx,]$sample_name)) < 2) {
+    else if (length(unique(data[idx,]$File)) < 2) {
       all_unique_compounds_idx <- c(all_unique_compounds_idx, idx)
     }
     else {
@@ -216,28 +209,6 @@ comp_filter_ver1 <- function(data, n) {
   return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
 }
 
-# Filtering similar and unique compound
-comp_filter_ver2 <- function(data, n) {
-  all_similar_compounds_idx <- c()
-  all_other_compounds_idx <- c()
-  all_unique_compounds_idx <- c()
-  
-  for (comp_grp in unique(data$collapsed_compound)) {
-    # filter data by indexing, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-    idx <- which(grepl(comp_grp, data$collapsed_compound, fixed = TRUE))
-    
-    if (length(unique(data[idx,]$gas_station)) > (n - 1)) {
-      all_similar_compounds_idx <- c(all_similar_compounds_idx, idx)
-    }
-    else if (length(unique(data[idx,]$gas_station)) < 2) {
-      all_unique_compounds_idx <- c(all_unique_compounds_idx, idx)
-    }
-    else {
-      all_other_compounds_idx <- c(all_other_compounds_idx, idx)
-    }
-  }
-  return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
-}
 
 # Probabilistic Quotient Normalization
 pqn <- function(X, n = "median", QC = NULL) {
@@ -463,26 +434,25 @@ df_step1.3 <- bind_rows(list_remaining_area) %>%
 
 # Supplementary Materials: Check distribution of spacing of retention time of remaining peaks --------------------
 rt_dif_list <- list()
-plot_dif_Center.X <- list()
+plot_dif_RT <- list()
 for (n in 1:length(list_remaining_area)) {
   dif_rt <- c()
-  count <- 1
-  item <- list_remaining_area[[n]] %>%
-    arrange(Center.X)
+  df <- list_remaining_area[[n]] %>%
+    arrange(RT)
   
-  # Calculate difference in Center.X of each peak in a sample
-  for (i in 1:(dim(item)[[1]] - 1)) {
-    dif <- base::abs(base::diff(c(item[i,]$Center.X, item[i + 1,]$Center.X)))
+  # Calculate difference in RT of each peak in a sample
+  for (i in 1:(dim(df)[[1]] - 1)) {
+    dif <- base::abs(base::diff(c(df[i,]$RT, df[i + 1,]$RT)))
     dif_rt <- c(dif, dif_rt)
-    count <- count + 1
   }
-
   
   rt_dif_list[[n]] <- dif_rt
-  names(rt_dif_list)[n] <- paste0(unique(list_remaining_area[[n]]$sample_name), "_diff_Center.X")
+  names(rt_dif_list)[n] <- paste0(unique(list_remaining_area[[n]]$File), "_diff_RT")
 
-  hist(dif_rt, breaks = 200, main = unique(list_remaining_area[[n]]$sample_name))
+  plot_dif_RT[[n]] <- hist(dif_rt, breaks = 200, main = names(rt_dif_list)[n])
 }
+
+grid.arrange(grobs = plot_dif_RT, ncol = 5)
 
 
 
@@ -546,7 +516,6 @@ plot(x = x, y = km.out$cluster, col = (km.out$cluster + 1),
 
 # STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold ----------------------------------------
 # Test integrity of function grouping_comp_ver1 by scrambling data frame in multiple ways
-# => VERY BAD!! shuffle 100 times and resulting in different compound number every iteration
 number_collapsedcomp <- c()
 for (i in 1:100) {
   shuffled_df <- df_step1.3[base::sample(1:nrow(df_step1.3)), ]
@@ -560,33 +529,21 @@ for (i in 1:100) {
   number_collapsedcomp <- c(length(unique(collapsed_shuffled_df$collapsed_compound)), number_collapsedcomp)
 }
 
-df_step1.3_rt10.2 <- grouping_comp_ver1(df_step1.3,
-                                        rt1thres = 0.2,
-                                        rt2thres = 0.125,
-                                        ion1thres = 0.05, # Ion 1 and 2 indicates molecular structure (2 most prevalent mass-to-charge)
-                                        ion2thres = 0.05)
+df_step1.3_grouped <- grouping_comp_ver1(df_step1.3,
+                                 rtthres = 0.05,
+                                 mzthres = 0.05)
 
 # STEP 2: Identify shared and unique compound groups across samples ------------------------------------------------
-idx_list_filter_area_samples_rt10.2 <- comp_filter_ver1(df_step1.3_rt10.2, 
-                                                 length(ILR_file_list))
+idx_list_filter_area_samples <- comp_filter_ver1(df_step1.3_grouped, 
+                                                 length(file_list))
 
-similar_compounds_filter_area_samples_rt10.2 <- df_step1.3_rt10.2[idx_list_filter_area_samples_rt10.2[[1]],] 
-other_compounds_filter_area_samples_rt10.2 <- df_step1.3_rt10.2[idx_list_filter_area_samples_rt10.2[[2]],] 
-unique_compounds_filter_area_samples_rt10.2 <- df_step1.3_rt10.2[idx_list_filter_area_samples_rt10.2[[3]],]
+similar_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[1]],] 
+other_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[2]],] 
+unique_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[3]],]
 
 # Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
-shared_comp_sample_rt10.2 <- bind_rows(similar_compounds_filter_area_samples_rt10.2, other_compounds_filter_area_samples_rt10.2)
-# shared_comp_sample_rt10.1 <- bind_rows(similar_compounds_filter_area_samples_rt10.1, other_compounds_filter_area_samples_rt10.1)
+shared_comp_sample <- bind_rows(similar_compounds_filter_area_samples, other_compounds_filter_area_samples)
 
-# Histogram of Area distribution of each sample/ gas_station/ fuel_type -------------------------
-ggplot(data = shared_comp_samples,
-       aes(x = Area)) +
-  facet_wrap(~sample_name, scales = "free_y") + 
-  geom_histogram(bins = 120) + 
-  labs(x = "Area") +
-  ggtitle("Area distribution") +
-  theme(text = element_text(size = 20),
-        axis.text.x = element_text(angle = 90, vjust = 0.5))
 
 # STEP 3: Data Normalization ================================================================================
 # Plotting data distribution pre-removal -----------------------------------
@@ -608,12 +565,13 @@ y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 15))
 x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
 
+
 # Normalizing data accordingly to different data frames of interest --------------------------------------------------
 add_data_normalization <- function(data) {
   temp_list <- list()
   i <- 1
-  for (sample in unique(data$sample_name)) {
-    df <- data[which(data$sample_name == sample),] %>%
+  for (sample in unique(data$File)) {
+    df <- data[which(data$File == sample),] %>%
       # Log-based normalization
       mutate(Log_Area = log10(Area)) %>%
       mutate(Log_Height = log10(Height)) %>%
@@ -628,7 +586,7 @@ add_data_normalization <- function(data) {
   return(newdata)
 }
 
-shared_comp_normalized <- add_data_normalization(shared_comp_sample_rt10.2)
+shared_comp_normalized <- add_data_normalization(shared_comp_sample)
 
 # Plotting data distribution post-removal ------------------------------------------------
 data_plot_post_removal <- list() 
@@ -660,7 +618,7 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 ggplot(data = shared_comp_normalized,
        aes(x = Percent_Area)) +
-  facet_wrap(~sample_name, scales = "free_y") + 
+  facet_wrap(~File, scales = "free_y") + 
   geom_histogram(bins = 120) + 
   labs(x = "Percentage Area") +
   ggtitle("Percentage-normalized Area distribution") +
