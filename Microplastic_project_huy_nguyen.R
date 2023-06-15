@@ -424,7 +424,15 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # STEP 1.3A: Generate 1 grand data frame of all 31 IL samples
 
 df_step1.3 <- bind_rows(list_remaining_area) %>%
-  arrange(RT)
+  select(-c("Start", "End", "Width", "Base.Peak")) %>%
+  arrange(RT) %>%
+  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                            ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                   ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                          ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                 ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                        ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other")))))))
+
 
 # QUALITY CONTROL PRIOR TO STEP 1.3B ==========================================================================
 # Identify linear/non-linear relationship in retention time 
@@ -530,8 +538,8 @@ for (i in 1:100) {
 }
 
 df_step1.3_grouped <- grouping_comp_ver1(df_step1.3,
-                                 rtthres = 0.05,
-                                 mzthres = 0.05)
+                                         rtthres = 0.05,
+                                         mzthres = 0.05)
 
 # STEP 2: Identify shared and unique compound groups across samples ------------------------------------------------
 idx_list_filter_area_samples <- comp_filter_ver1(df_step1.3_grouped, 
@@ -587,6 +595,28 @@ add_data_normalization <- function(data) {
 }
 
 shared_comp_normalized <- add_data_normalization(shared_comp_sample)
+
+# QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
+# What is the min number of observation of collapsed compounds ?
+# Create list to store number of occurence of each collasped compounds in each plastic_type
+count_obs_list <- list()
+
+for (comp in unique(shared_comp_normalized$collapsed_compound)) {
+  temp <- list()
+  i <- 1
+  idx <- which(shared_comp_normalized$collapsed_compound == comp)
+  subset_df <- shared_comp_normalized[idx,]
+  for (type in unique(subset_df$plastic_type)) {
+    # summary <- c()
+    # summary <- c(summary, type)
+    count_area <- sum(shared_comp_normalized[idx,]$plastic_type == type)
+    # summary <- c(summary, count)
+    temp[type] <- count_area
+    i <- i + 1
+  }
+  count_obs_list[comp] <- temp
+}
+
 
 # Plotting data distribution post-removal ------------------------------------------------
 data_plot_post_removal <- list() 
