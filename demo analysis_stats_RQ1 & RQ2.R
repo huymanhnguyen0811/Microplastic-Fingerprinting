@@ -2,54 +2,45 @@
 `%notin%` <- Negate(`%in%`)
 
 # Research Question 1
-stats_rq1 <- shared_comp_normalized_rt10.1 %>%
-  filter(., fuel_type %in% c("Gas", "Diesel")) %>%
-  select(sample_name, collapsed_compound, Percent_Area) %>%
-  mutate(sample_name = factor(sample_name, levels = c(unique(sample_name)))) %>%
+stats_rq1 <- shared_comp_normalized %>%
+  select(File, collapsed_compound, Percent_Area) %>%
+  mutate(File = factor(File, levels = c(unique(File)))) %>%
   mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(sample_name, collapsed_compound) %>%
+  group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = sample_name, values_from = Percent_Area) %>%
-  relocate(`0220F001D.xlsx`, `0220F009D.xlsx`, `0220F009-2D.xlsx`, `0220F005D.xlsx`, .after = last_col()) %>%
+  pivot_wider(names_from = File, values_from = Percent_Area) %>%
   column_to_rownames(., var = "collapsed_compound")
 
-# category 1: Compound with no diesel records, how we determine the significant compounds ------------------------------
-# How many compounds has no diesel records? -> 1137 out of 4769 compounds 
-cat_1 <- stats_rq1[rowSums(is.na(stats_rq1[, c(22:25)])) == 4,] # BEWARE: these compounds may only appear in 2 gas samples
-# 
-# View(shared_comp_normalized_rt10.2 %>%
-#        filter(., fuel_type %in% c("Gas", "Diesel")) %>%
-#        filter(., collapsed_compound %in% rownames(cat_1)))
+transpose_dat <- data.table::transpose(stats_rq1)
+rownames(transpose_dat) <- colnames(stats_rq1)
+colnames(transpose_dat) <- rownames(stats_rq1)
+transpose_dat <- transpose_dat %>%
+  rownames_to_column(., var = "File") %>%
+  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                               ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                      ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                             ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                    ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                           ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+  relocate(plastic_type, .after = File)
 
-# category 2: Compound with no gas records, how we determine the significant compounds ---------------------------------
-# How many compounds has no diesel records? -> 2812 out of 4769 compounds 
-cat_2 <- stats_rq1[rowSums(is.na(stats_rq1[, c(1:21)])) == 21,] 
 
-# View(shared_comp_normalized_rt10.2 %>%
-#        filter(., fuel_type %in% c("Gas", "Diesel")) %>%
-#        filter(., collapsed_compound %in% rownames(cat_2)))
+# Compound must appear in at least 2 plastic type and for each plastic type, it must have >=2 Area values -------------------
+# generate empty vector of columns to be removed
+remove_cols <- c()
+for (col in 3:ncol(transpose_dat)) {
+  # if for any plastic type, there is <= 2 obs, then remove that compound column
+  if () {
+    transpose_dat 
+  }
+}
 
-# category 3: Compound with >= 1 Gas record and only 1 diesel record, how we determine the significant compounds ---------------------------
-# How many compounds has no diesel records? -> 345 out of 4769 compounds 
-cat_3 <- stats_rq1[(rowSums(is.na(stats_rq1[, 22:25])) == 3) &  # only 1 Diesel record
-                       (rowSums(!is.na(stats_rq1[, 1:21])) >= 1),] # only 1 Gas record
-
-# category 4: only 1 Gas and >=2 Diesel --------------------------------------------------------
-cat_4 <- stats_rq1[(rowSums(!is.na(stats_rq1[, 1:21])) == 1) & 
-                       (rowSums(!is.na(stats_rq1[, 22:25])) >= 2),] # -> 101 out of 4769 compounds
-
-# dim(cat_4)
-# rownames(cat_4) <- NULL
-
-# category 5: >=2 gas and >=2 diesel (multiple testing) --------------------------------------------------------
-cat_5 <- stats_rq1[(rowSums(!is.na(stats_rq1[, 1:21])) >= 2) & 
-                       (rowSums(!is.na(stats_rq1[, 22:25])) >= 2),] # -> 374 out of 4769 compounds
-
-for (r in 1:nrow(cat_5)) { 
-  cat_5[r, which(base::is.na(cat_5[r,]))] <- runif(length(which(base::is.na(cat_5[r,]))),
-                                                       min = sort(shared_comp_normalized_rt10.1$Percent_Area)[1],
-                                                       max = sort(shared_comp_normalized_rt10.1$Percent_Area)[2])
+# Fill in missing value with LOD
+for (r in 1:nrow(stats_rq1)) { 
+  stats_rq1[r, which(base::is.na(stats_rq1[r,]))] <- runif(length(which(base::is.na(stats_rq1[r,]))),
+                                                       min = sort(shared_comp_normalized$Percent_Area)[1],
+                                                       max = sort(shared_comp_normalized$Percent_Area)[2])
 }
 
 # Examine whether 2 samples have equal variance and normally distributed.-----------------------------------------------

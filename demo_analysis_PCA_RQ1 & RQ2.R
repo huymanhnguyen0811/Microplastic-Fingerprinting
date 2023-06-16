@@ -70,14 +70,14 @@ ASTM_rq1_cat5_wilcoxon_stats_alpha0.1 <- gsub("x_", "", name)
 intersect_PCA_Wilcoxon_alpha0.1 <- intersect(toploadings_rq1, ASTM_rq1_cat5_wilcoxon_stats_alpha0.1) # 15 ASTM compounds similar between top 200 loading PCA and ASTM_alpha0.1
 
 # Pairs plot
-pairsplot(p_rq1,
+pairsplot(p,
           components = getComponents(p, c(1:5)),
           triangle = FALSE,
           trianglelabSize = 12,
           hline = 0, vline = 0,
           pointSize = 1.5,
           gridlines.major = FALSE, gridlines.minor = FALSE,
-          colby = 'fuel_type',
+          colby = 'Plastic type',
           title = 'Pairs plot',
           axisLabSize = 14, plotaxes = TRUE,
           margingaps = unit(c(-0.01, -0.01, -0.01, -0.01), 'cm'))
