@@ -87,74 +87,6 @@ grouping_comp_ver1 <- function(data, rtthres, mzthres) {
   return(dat)
 }
 
-# Grouping compounds based on RT1, RT2, and Ion1 - Version 2
-grouping_comp_ver2 <- function(data) {
-  
-  # create empty list, each sub-list is a compound group with following criteria:
-  # rt1thres: RT1 threshold window
-  # rt2thres: RT2 threshold window
-  # ion1thres: Ion1 threshold window
-  # ion2thres: Ion2 threshold window
-  # region_applied: list of x-y coordinate for different regions to applied different threshold window, x-axis is RT1, y-axis is RT2
-  data <- copy(all_data_pre_norm_filter_area)
-  
-  region_num <- as.numeric(base::readline("Please input the number of dividing region: "))
-  rt1thres <- as.numeric(base::readline("Please input the RT1 window threshold for the region applied: "))
-  rt2thres <- as.numeric(base::readline("Please input the RT2 window threshold for the region applied: "))
-  ion1thres <- as.numeric(base::readline("Please input the Ion1 window threshold for the region applied: "))
-  ion2thres <- as.numeric(base::readline("Please input the Ion2 window threshold for the region applied: "))
-  
-  # Initialize the compound column filled with NA values
-  data$compound <- NA
-  i <- 1
-  
-  for (reg_num in 1:region_num) {
-    # User will input the coordinate of region that they want to applied a specific threshold of RT1
-    region_x1 <- as.numeric(base::readline("Please input the bottom-left coordinate of the region applied: "))
-    region_x2 <- as.numeric(base::readline("Please input the bottom-right coordinate of the region applied: "))
-    region_y1 <- as.numeric(base::readline("Please input the top-left coordinate of the region applied: "))
-    region_y2 <- as.numeric(base::readline("Please input the top-right coordinate of the region applied: "))
-    
-    region_applied <- c(region_x1, region_x2, region_y1, region_y2)
-    
-    # all_data_pre_norm_filter_area <- bind_rows(list_remaining_area) %>%
-    #   arrange(RT1, RT2)
-    # 
-    # rt1thres <- 0.2
-    # rt2thres <- 0.2
-    # ion1thres <- 0.05
-    # region_applied <- c(2, 72, 1, 6)
-    
-    # Filter data frame so that it only contain data in the region applied 
-    idx_region <- which(data$RT1 >= region_applied[1] & data$RT1 <= region_applied[2] & 
-                          data$RT2 >= region_applied[3] & data$RT2 <= region_applied[4])
-
-    for (row in idx_region) {
-      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-      rt1 <- data[idx_region,][row,]$RT1
-      rt2 <- data[idx_region,][row,]$RT2
-      ion1 <- data[idx_region,][row,]$Ion1
-      ion2 <- data[idx_region,][row,]$Ion2
-      
-      idx_thres <- which(data[idx_region,]$RT1 <= (rt1 + rt1thres) & data[idx_region,]$RT1 >= (rt1 - rt1thres) & 
-                           data[idx_region,]$RT2 <= (rt2 + rt2thres) & data[idx_region,]$RT2 >= (rt2 - rt2thres) & 
-                           data[idx_region,]$Ion1 <= (ion1 + ion1thres) & data[idx_region,]$Ion1 >= (ion1 - ion1thres) & 
-                           data[idx_region,]$Ion2 <= (ion2 + ion2thres) & data[idx_region,]$Ion2 >= (ion2 - ion2thres) &
-                           is.na(data[idx_region,]$compound))
-      
-      if (identical(idx_thres, integer(0))) {
-        next
-      }
-      else {
-        data[idx_region,][idx_thres, "compound"] <- paste0("Compound_", i, ".")
-        i <- i + 1
-      }  
-    }
-  }
-  
-  return(data)
-}
-
 # Filtering similar and unique compound
 comp_filter_ver1 <- function(data, n) {
   all_similar_compounds_idx <- c()
@@ -178,43 +110,6 @@ comp_filter_ver1 <- function(data, n) {
   return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
 }
 
-
-# Probabilistic Quotient Normalization
-pqn <- function(X, n = "median", QC = NULL) {
-  X.norm <- matrix(nrow = nrow(X), ncol = ncol(X))
-  colnames(X.norm) <- colnames(X)
-  rownames(X.norm) <- rownames(X)
-  
-  if (!is.null(QC)) {
-    # if QC vector exists, use this as reference spectrum
-    if (length(QC) == 1) {
-      # only 1 reference sample given
-      mX <- as.numeric(X[QC, ])
-    } else {
-      if (n == "mean") {
-        mX <- as.numeric(colMeans(X[QC, ]))
-      }
-      if (n == "median") {
-        mX <- as.numeric(apply(X[QC, ], 2, median))
-      }
-    }
-  } else {
-    # otherwise use the mean or median of all samples as reference sample
-    if (n == "mean") {
-      mX <- as.numeric(colMeans(X))
-    }
-    if (n == "median") {
-      mX <- as.numeric(apply(X, 2, median))
-    }
-  }
-  
-  # do the actual normalisation
-  for (a in 1:nrow(X)) {
-    X.norm[a, ] <- as.numeric(X[a, ] / median(as.numeric(X[a, ] / mX)))
-  }
-  
-  return(X.norm)
-}
 
 # Relative log abundance plots
 RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
@@ -257,17 +152,19 @@ RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
 
 
 # STEP 1.1: Data import --------------------------------------------
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic-Fingerprinting/CSV_Export_2023-05-23_Cleaned")
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/CSV_Export_2023-05-23_Cleaned")
 
 file_list <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "Blank")]
 
 # Blank samples 
-blank <- list.files(pattern = '*.csv') %>%
+blank_list <- list.files(pattern = '*.csv') %>%
   .[str_detect(., "Blank")]
 
 # Import samples to list
 df_list_step1.1 <- purrr::map(file_list, read.csv)
+
+df_list_blank <- purrr::map(blank_list, read.csv)
 
 # df_step1.1 <- dplyr::bind_rows(df_list_step1.1)
 
