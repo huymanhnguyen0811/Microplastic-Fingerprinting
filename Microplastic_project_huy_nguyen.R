@@ -110,6 +110,24 @@ comp_filter_ver1 <- function(data, n) {
   return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
 }
 
+data_normalization <- function(data) {
+  temp_list <- list()
+  i <- 1
+  for (sample in unique(data$File)) {
+    df <- data[which(data$File == sample),] %>%
+      # Log-based normalization
+      mutate(Log_Area = log10(Area)) %>%
+      mutate(Log_Height = log10(Height)) %>%
+      # TSN - Percent-based normalization
+      mutate(Percent_Area = Area/sum(.$Area)) %>%
+      mutate(Percent_Height = Height/sum(.$Height))
+    temp_list[[i]] <- df
+    i <- i + 1
+  }
+  # Then combine data again to 1 grand data frame
+  newdata <- dplyr::bind_rows(temp_list)
+  return(newdata)
+}
 
 # Relative log abundance plots
 RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
@@ -441,26 +459,8 @@ grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
 
 
 # Normalizing data accordingly to different data frames of interest --------------------------------------------------
-add_data_normalization <- function(data) {
-  temp_list <- list()
-  i <- 1
-  for (sample in unique(data$File)) {
-    df <- data[which(data$File == sample),] %>%
-      # Log-based normalization
-      mutate(Log_Area = log10(Area)) %>%
-      mutate(Log_Height = log10(Height)) %>%
-      # TSN - Percent-based normalization
-      mutate(Percent_Area = Area/sum(.$Area)) %>%
-      mutate(Percent_Height = Height/sum(.$Height))
-    temp_list[[i]] <- df
-    i <- i + 1
-  }
-  # Then combine data again to 1 grand data frame
-  newdata <- dplyr::bind_rows(temp_list)
-  return(newdata)
-}
 
-shared_comp_normalized <- add_data_normalization(shared_comp_sample)
+shared_comp_normalized <- data_normalization(shared_comp_sample)
 
 # QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
 # What is the min number of observation of collapsed compounds ?
