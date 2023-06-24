@@ -113,8 +113,9 @@ comp_filter_ver1 <- function(data, n) {
 data_normalization <- function(data) {
   temp_list <- list()
   i <- 1
+  # Normalize Peak Area for each sample 
   for (sample in unique(data$File)) {
-    df <- data[which(data$File == sample),] %>%
+    df <- shared_comp_sample[which(data$File == sample),] %>%
       # Log-based normalization
       mutate(Log_Area = log10(Area)) %>%
       mutate(Log_Height = log10(Height)) %>%
@@ -185,7 +186,7 @@ df_list_step1.1 <- purrr::map(file_list, read.csv)
 df_list_blank <- purrr::map(blank_list, read.csv)
 
 # df_step1.1 <- dplyr::bind_rows(df_list_step1.1)
-
+df_blank <- dplyr::bind_rows(df_list_blank)
 # summary(df_step1.1)
 
 # Plotting data distribution pre-removal------------------
