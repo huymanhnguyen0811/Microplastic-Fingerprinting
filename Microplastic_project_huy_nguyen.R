@@ -169,6 +169,19 @@ RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
   abline(h=0)
 }
 
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
 
 # STEP 1.1: Data import --------------------------------------------
 setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/CSV_Export_2023-05-23_Cleaned")
@@ -511,7 +524,7 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Percent_Area)))
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Log_Area)))
 
-# Histogram Percentage-normalized Area distribution of each sample/ gas_station/ fuel_type
+# Histogram Percentage-normalized Area distribution of each sample
 
 ggplot(data = shared_comp_normalized,
        aes(x = Percent_Area)) +
@@ -521,3 +534,28 @@ ggplot(data = shared_comp_normalized,
   ggtitle("Percentage-normalized Area distribution") +
   theme(text = element_text(size = 20),
         axis.text.x = element_text(vjust = 0.5))
+
+# Examine linear separability between some plastic type
+my_data <- shared_comp_normalized %>%
+  select(plastic_type, collapsed_compound, Percent_Area) %>%
+  mutate(plastic_type = factor(plastic_type, levels = c(unique(plastic_type)))) %>%
+  mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
+  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
+  group_by(plastic_type, collapsed_compound) %>%
+  summarise(across(Percent_Area, mean)) %>%
+  pivot_wider(names_from = plastic_type, values_from = Percent_Area) %>%
+  column_to_rownames(., var = "collapsed_compound")
+ 
+res <- round(stats::cor(my_data, 
+                        method = "kendall", # spearman""
+                        use = "pairwise.complete.obs"), 3)
+
+library(Hmisc)
+res2 <- Hmisc::rcorr(as.matrix(my_data))
+flattenCorrMatrix(res2$r, res2$P)
+
+library(corrplot)
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01)
