@@ -549,6 +549,7 @@ my_data <- shared_comp_normalized %>%
 res <- round(stats::cor(my_data, 
                         method = "kendall", # spearman""
                         use = "pairwise.complete.obs"), 3)
+# Correlation < 0.5 is considered weak/no linear relationship
 
 library(Hmisc)
 res2 <- Hmisc::rcorr(as.matrix(my_data))
