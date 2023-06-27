@@ -422,18 +422,18 @@ plot(x = x, y = km.out$cluster, col = (km.out$cluster + 1),
 
 # STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold ----------------------------------------
 # Test integrity of function grouping_comp_ver1 by scrambling data frame in multiple ways
-number_collapsedcomp <- c()
-for (i in 1:100) {
-  shuffled_df <- df_step1.3[base::sample(1:nrow(df_step1.3)), ]
-  
-  collapsed_shuffled_df <- grouping_comp_ver1(shuffled_df,
-                                    rt1thres = 0.2,
-                                    rt2thres = 0.125,
-                                    ion1thres = 0.05,
-                                    ion2thres = 0.05)
-  
-  number_collapsedcomp <- c(length(unique(collapsed_shuffled_df$collapsed_compound)), number_collapsedcomp)
-}
+# number_collapsedcomp <- c()
+# for (i in 1:100) {
+#   shuffled_df <- df_step1.3[base::sample(1:nrow(df_step1.3)), ]
+#   
+#   collapsed_shuffled_df <- grouping_comp_ver1(shuffled_df,
+#                                     rt1thres = 0.2,
+#                                     rt2thres = 0.125,
+#                                     ion1thres = 0.05,
+#                                     ion2thres = 0.05)
+#   
+#   number_collapsedcomp <- c(length(unique(collapsed_shuffled_df$collapsed_compound)), number_collapsedcomp)
+# }
 
 df_step1.3_grouped <- grouping_comp_ver1(df_step1.3,
                                          rtthres = 0.05,
@@ -524,7 +524,7 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Percent_Area)))
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Log_Area)))
 
-# Histogram Percentage-normalized Area distribution of each sample
+# Histogram Percentage-normalized Area distribution of each sample ---------------
 
 ggplot(data = shared_comp_normalized,
        aes(x = Percent_Area)) +
@@ -535,7 +535,7 @@ ggplot(data = shared_comp_normalized,
   theme(text = element_text(size = 20),
         axis.text.x = element_text(vjust = 0.5))
 
-# Examine linear separability between some plastic type
+# Examine linear separability between some plastic type -----------------
 my_data <- shared_comp_normalized %>%
   select(plastic_type, collapsed_compound, Percent_Area) %>%
   mutate(plastic_type = factor(plastic_type, levels = c(unique(plastic_type)))) %>%
@@ -546,17 +546,24 @@ my_data <- shared_comp_normalized %>%
   pivot_wider(names_from = plastic_type, values_from = Percent_Area) %>%
   column_to_rownames(., var = "collapsed_compound")
  
-res <- round(stats::cor(my_data, 
-                        method = "kendall", # spearman""
-                        use = "pairwise.complete.obs"), 3)
+# With Pearson correlation coefficient
+res <- stats::cor(my_data, 
+                        method = "pearson", 
+                        use = "pairwise.complete.obs") # FYI: ?stats::cor
+             
+
+View(res)
+
 # Correlation < 0.5 is considered weak/no linear relationship
 
 library(Hmisc)
-res2 <- Hmisc::rcorr(as.matrix(my_data))
+res2 <- Hmisc::rcorr(as.matrix(my_data), 
+                     type = "pearson")
 flattenCorrMatrix(res2$r, res2$P)
 
 library(corrplot)
 corrplot(res, type = "upper", order = "hclust", 
          tl.col = "black", tl.srt = 45)
+
 corrplot(res2$r, type="upper", order="hclust", 
          p.mat = res2$P, sig.level = 0.01)

@@ -4,13 +4,12 @@
 # Research Question 1
 stats_rq1 <- shared_comp_normalized %>%
   select(File, collapsed_compound, Percent_Area) %>%
-  mutate(File = factor(File, levels = c(unique(File)))) %>%
+  # mutate(File = factor(File, levels = c(unique(File)))) %>%
   mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = File, values_from = Percent_Area) %>%
-  column_to_rownames(., var = "collapsed_compound")
+  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area)
 
 transpose_dat <- data.table::transpose(stats_rq1)
 rownames(transpose_dat) <- colnames(stats_rq1)
@@ -35,6 +34,18 @@ for (col in 3:ncol(transpose_dat)) {
     transpose_dat 
   }
 }
+
+# 1. create dataframe with rows (collapsed_compound) and columns (File)
+test <- shared_comp_normalized %>%
+  select(File, collapsed_compound, Percent_Area) %>%
+  # mutate(File = factor(File, levels = c(unique(File)))) %>%
+  # mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
+  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
+  group_by(File, collapsed_compound) %>%
+  summarise(across(Percent_Area, mean)) %>%
+  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area)
+
+# 2. 
 
 # Fill in missing value with LOD
 for (r in 1:nrow(stats_rq1)) { 
