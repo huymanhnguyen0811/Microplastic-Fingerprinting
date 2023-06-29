@@ -141,3 +141,7 @@ confusionMatrix(as.factor(test_y), as.factor(pred_y))
 
 tree_imp = lgb.importance(model, percentage = T)
 lgb.plot.importance(tree_imp, measure = "Gain")
+
+
+# RandomForestSRC
+library(randomForestSRC)
