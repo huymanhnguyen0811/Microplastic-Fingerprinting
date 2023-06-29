@@ -113,7 +113,7 @@ data_normalization <- function(data) {
   i <- 1
   # Normalize Peak Area for each sample 
   for (sample in unique(data$File)) {
-    df <- shared_comp_sample[which(data$File == sample),] %>%
+    df <- data[which(data$File == sample),] %>%
       # Log-based normalization
       mutate(Log_Area = log10(Area)) %>%
       mutate(Log_Height = log10(Height)) %>%
@@ -321,7 +321,6 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 df_step1.3 <- bind_rows(list_remaining_area) %>%
   select(-c("Start", "End", "Width", "Base.Peak")) %>%
-  arrange(RT) %>%
   mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
                             ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
                                    ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
@@ -329,6 +328,11 @@ df_step1.3 <- bind_rows(list_remaining_area) %>%
                                                  ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
                                                         ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other")))))))
 
+df_blank <- df_blank %>%
+  select(-c("Start", "End", "Width", "Base.Peak")) %>%
+  mutate(plastic_type = "Blanks")
+
+combined_df <- rbind(df_step1.3, df_blank) %>% arrange(RT)
 
 # QUALITY CONTROL PRIOR TO STEP 1.3B ==========================================================================
 # Identify linear/non-linear relationship in retention time 
@@ -433,23 +437,12 @@ plot(x = x, y = km.out$cluster, col = (km.out$cluster + 1),
 #   number_collapsedcomp <- c(length(unique(collapsed_shuffled_df$collapsed_compound)), number_collapsedcomp)
 # }
 
-df_step1.3_grouped <- grouping_comp_ver1(df_step1.3,
-                                         rtthres = 0.05,
-                                         mzthres = 0.05)
-
-# STEP 2: Identify shared and unique compound groups across samples ------------------------------------------------
-idx_list_filter_area_samples <- comp_filter_ver1(df_step1.3_grouped, 
-                                                 length(file_list))
-
-similar_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[1]],] 
-other_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[2]],] 
-unique_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[3]],]
-
-# Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
-shared_comp_sample <- bind_rows(similar_compounds_filter_area_samples, other_compounds_filter_area_samples)
+combined_df_grouped <- grouping_comp_ver1(combined_df,
+                                          rtthres = 0.05,
+                                          mzthres = 0.05)
 
 
-# STEP 3: Data Normalization ================================================================================
+# STEP 2: Data Normalization ================================================================================
 # Plotting data distribution pre-removal -----------------------------------
 data_plot_pre_removal <- list() 
 i <- 1
@@ -472,7 +465,53 @@ grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
 
 # Normalizing data accordingly to different data frames of interest --------------------------------------------------
 
-shared_comp_normalized <- data_normalization(shared_comp_sample)
+comp_normalized <- data_normalization(combined_df_grouped)
+
+# Step 3: Readjust compound RA (sample) by average blank RA ======================
+# Create list to store temp dfs
+temp_list <- list()
+i <- 1
+# Iterate through each collapsed_compound
+for (comp in unique(comp_normalized$collapsed_compound)) {
+  temp <- comp_normalized[which(comp_normalized$collapsed_compound == comp),]
+  # if compound does not exist in blanks then skip the compounds
+  if (identical(which(temp$plastic_type == "Blanks"), integer(0))) {
+    temp_list[[i]] <- temp
+    i <- i + 1
+    next
+  }
+  else {
+    # Calculate avg_blank for that compound across all blanks
+    avg_blank <- mean(temp[which(temp$plastic_type == "Blanks"),]$Percent_Area)
+    temp <- temp[which(temp$plastic_type != "Blanks"),]
+    # iterate through each sample
+    for (sample in unique(temp$File)) {
+      # Adjust RA for each compound of each sample = RA (sample) - avg_blank
+      temp[which(temp$File == sample),]$Percent_Area <- temp[which(temp$File == sample),]$Percent_Area - avg_blank
+    } 
+  }
+  # Append current temp df to temp_list
+  temp_list[[i]] <- temp
+  i <- i + 1
+}
+
+adjusted_df <- bind_rows(temp_list)
+
+# Step 4: Replace negative adjusted RA values with LOD
+adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0]),
+                                                                min = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[1],
+                                                                max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
+
+# STEP x: Identify shared and unique compound groups across samples ------------------------------------------------
+idx_list_filter_area_samples <- comp_filter_ver1(df_step1.3_grouped, 
+                                                 length(file_list))
+
+similar_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[1]],] 
+other_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[2]],] 
+unique_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[3]],]
+
+# Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
+shared_comp_sample <- bind_rows(similar_compounds_filter_area_samples, other_compounds_filter_area_samples)
 
 # QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
 # What is the min number of observation of collapsed compounds ?
