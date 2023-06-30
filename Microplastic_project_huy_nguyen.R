@@ -503,12 +503,12 @@ adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_
                                                                 max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
 
 # STEP x: Identify shared and unique compound groups across samples ------------------------------------------------
-idx_list_filter_area_samples <- comp_filter_ver1(df_step1.3_grouped, 
+idx_list_filter_area_samples <- comp_filter_ver1(adjusted_df, 
                                                  length(file_list))
 
-similar_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[1]],] 
-other_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[2]],] 
-unique_compounds_filter_area_samples <- df_step1.3_grouped[idx_list_filter_area_samples[[3]],]
+similar_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[1]],] 
+other_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[2]],] 
+unique_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[3]],]
 
 # Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
 shared_comp_sample <- bind_rows(similar_compounds_filter_area_samples, other_compounds_filter_area_samples)

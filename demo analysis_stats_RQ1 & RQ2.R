@@ -2,19 +2,29 @@
 `%notin%` <- Negate(`%in%`)
 
 # Research Question 1
-stats_rq1 <- shared_comp_normalized %>%
+stats_rq1 <- shared_comp_sample %>%
   select(File, collapsed_compound, Percent_Area) %>%
   # mutate(File = factor(File, levels = c(unique(File)))) %>%
   mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area)
+  pivot_wider(names_from = File, values_from = Percent_Area) %>%
+  column_to_rownames(., var = "collapsed_compound")
 
-transpose_dat <- data.table::transpose(stats_rq1)
-rownames(transpose_dat) <- colnames(stats_rq1)
-colnames(transpose_dat) <- rownames(stats_rq1)
-transpose_dat <- transpose_dat %>%
+# Fill in missing value with LOD
+for (r in 1:nrow(stats_rq1)) { 
+  stats_rq1[r, which(base::is.na(stats_rq1[r,]))] <- runif(length(which(base::is.na(stats_rq1[r,]))),
+                                                           min = sort(shared_comp_sample$Percent_Area)[1],
+                                                           max = sort(shared_comp_sample$Percent_Area)[2])
+}
+
+# Reconstruct data frame
+transpose_df <- data.table::transpose(stats_rq1)
+rownames(transpose_df) <- colnames(stats_rq1)
+colnames(transpose_df) <- rownames(stats_rq1)
+
+transpose_df <- transpose_df %>%
   rownames_to_column(., var = "File") %>%
   mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
                                ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
@@ -24,35 +34,6 @@ transpose_dat <- transpose_dat %>%
                                                            ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
   relocate(plastic_type, .after = File)
 
-
-# Compound must appear in at least 2 plastic type and for each plastic type, it must have >=2 Area values -------------------
-# generate empty vector of columns to be removed
-remove_cols <- c()
-for (col in 3:ncol(transpose_dat)) {
-  # if for any plastic type, there is <= 2 obs, then remove that compound column
-  if () {
-    transpose_dat 
-  }
-}
-
-# 1. create dataframe with rows (collapsed_compound) and columns (File)
-test <- shared_comp_normalized %>%
-  select(File, collapsed_compound, Percent_Area) %>%
-  # mutate(File = factor(File, levels = c(unique(File)))) %>%
-  # mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
-  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, collapsed_compound) %>%
-  summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area)
-
-# 2. 
-
-# Fill in missing value with LOD
-for (r in 1:nrow(stats_rq1)) { 
-  stats_rq1[r, which(base::is.na(stats_rq1[r,]))] <- runif(length(which(base::is.na(stats_rq1[r,]))),
-                                                       min = sort(shared_comp_normalized$Percent_Area)[1],
-                                                       max = sort(shared_comp_normalized$Percent_Area)[2])
-}
 
 # Examine whether 2 samples have equal variance and normally distributed.-----------------------------------------------
 ## Normally distributed by histogram, Q-Q plots and Shapiro-Wilk test, if p-value > 0.05 
@@ -94,9 +75,6 @@ car::leveneTest(data ~ group, data = non_norm_dist_data)
 # -> there is significant difference between tested sample variance => Equality of variance is NOT satisfied
 stats::fligner.test(data ~ group, data = non_norm_dist_data)
 
-# Data frame without any NA - 29 out of 4769 compounds ==========================================
-cat5_no_NA_impute <- stats_rq1[(rowSums(!is.na(stats_rq1[, 1:21])) >= 21) & 
-                                 (rowSums(!is.na(stats_rq1[, 22:25])) >= 4),] 
   
 # Wilcoxon Test ========================================================================================
 # !! vary sample size gene/compound dataset, three solutions: exact wilcoxon, permutation test, SAM (stanford)
