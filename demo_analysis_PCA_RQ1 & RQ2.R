@@ -2,6 +2,7 @@ library(PCAtools)
 
 # PCA -----------------
 df_pca <- function(data) {
+  # create sample df
   df_X_rq1 <- data %>%
     select(File, collapsed_compound, Percent_Area) %>%
     mutate(File = factor(File, levels = c(unique(File)))) %>%
@@ -33,7 +34,7 @@ df_pca <- function(data) {
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- df_pca(shared_comp_normalized)
+df_pca <- df_pca(shared_comp_sample)
 
 # Conduct principal component analysis (PCA):
 colnames(df_pca[[2]]) <- c("Plastic type")

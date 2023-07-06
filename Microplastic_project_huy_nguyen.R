@@ -108,16 +108,14 @@ comp_filter_ver1 <- function(data, n) {
   return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
 }
 
+
+# TSN - Percent-based normalization 
 data_normalization <- function(data) {
   temp_list <- list()
   i <- 1
   # Normalize Peak Area for each sample 
   for (sample in unique(data$File)) {
     df <- data[which(data$File == sample),] %>%
-      # Log-based normalization
-      mutate(Log_Area = log10(Area)) %>%
-      mutate(Log_Height = log10(Height)) %>%
-      # TSN - Percent-based normalization
       mutate(Percent_Area = Area/sum(.$Area)) %>%
       mutate(Percent_Height = Height/sum(.$Height))
     temp_list[[i]] <- df
@@ -128,44 +126,6 @@ data_normalization <- function(data) {
   return(newdata)
 }
 
-# Relative log abundance plots
-RlaPlots <- function(inputdata, type=c("ag", "wg"), cols=NULL,
-                     cex.axis=0.8, las=2, ylim=c(-2, 2), oma=c(7, 4, 4, 2) + 0.1, ...) {
-  type <- match.arg(type)
-  groups <- factor(inputdata[, 1], levels = unique(inputdata[, 1]))
-  unique.groups <- levels(groups)
-  if (is.null(cols)) 
-    cols <- ColList(length(unique.groups))
-  box_cols <- c(rep(NA, length(rownames(inputdata))))
-  for (ii in 1:length(inputdata[, 1])) 
-    box_cols[ii] <- cols[which(unique.groups == inputdata[, 1][ii])]
-  
-  # Within groups
-  if(type == "wg") {
-    out_data<-data.frame()
-    for (grp in unique.groups) {
-      submat <- inputdata[which(inputdata[, 1] == grp), -1]
-      med_vals <- apply(submat, 2, median)
-      swept_mat <- sweep(submat, 2, med_vals, "-")
-      out_data <- rbind(out_data, swept_mat)
-    }
-    # Across groups (i.e. type == "ag")
-  } else  {
-    med_vals <- apply(inputdata[, -1], 2, median)
-    out_data <- sweep(inputdata[, -1], 2, med_vals, "-")
-  }
-  
-  boxplot(t(out_data),
-          cex.axis=cex.axis,                 # font size
-          las=las,                           # label orientation
-          col=box_cols,                      # colours
-          ylim=ylim,                         # y-axis range
-          oma=oma,                           # outer margin size
-          ...
-  )
-  
-  abline(h=0)
-}
 
 # flattenCorrMatrix
 # ++++++++++++++++++++++++++++
@@ -424,18 +384,6 @@ plot(x = x, y = km.out$cluster, col = (km.out$cluster + 1),
 
 # STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold ----------------------------------------
 # Test integrity of function grouping_comp_ver1 by scrambling data frame in multiple ways
-# number_collapsedcomp <- c()
-# for (i in 1:100) {
-#   shuffled_df <- df_step1.3[base::sample(1:nrow(df_step1.3)), ]
-#   
-#   collapsed_shuffled_df <- grouping_comp_ver1(shuffled_df,
-#                                     rt1thres = 0.2,
-#                                     rt2thres = 0.125,
-#                                     ion1thres = 0.05,
-#                                     ion2thres = 0.05)
-#   
-#   number_collapsedcomp <- c(length(unique(collapsed_shuffled_df$collapsed_compound)), number_collapsedcomp)
-# }
 
 combined_df_grouped <- grouping_comp_ver1(combined_df,
                                           rtthres = 0.05,
@@ -502,16 +450,12 @@ adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_
                                                                 min = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[1],
                                                                 max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
 
-# STEP x: Identify shared and unique compound groups across samples ------------------------------------------------
+# STEP 5: Identify shared and unique compound groups across samples ------------------------------------------------
 idx_list_filter_area_samples <- comp_filter_ver1(adjusted_df, 
                                                  length(file_list))
 
-similar_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[1]],] 
-other_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[2]],] 
-unique_compounds_filter_area_samples <- adjusted_df[idx_list_filter_area_samples[[3]],]
-
 # Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
-shared_comp_sample <- bind_rows(similar_compounds_filter_area_samples, other_compounds_filter_area_samples)
+shared_comp_sample <- adjusted_df[c(idx_list_filter_area_samples[[1]], idx_list_filter_area_samples[[2]]),]
 
 # QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
 # What is the min number of observation of collapsed compounds ?

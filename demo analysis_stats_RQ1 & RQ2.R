@@ -79,17 +79,23 @@ stats::fligner.test(data ~ group, data = non_norm_dist_data)
 # Wilcoxon Test ========================================================================================
 # !! vary sample size gene/compound dataset, three solutions: exact wilcoxon, permutation test, SAM (stanford)
 
-pvalue.w <- c()
+# create empty data.frame
+summary_table <- data.frame(collapsed_compound = character(), pair=character(), pvalue=integer())
 
-for (i in 3:ncol(transpose_df)) { 
-  # iterate through each plastic type and compare each 
-  pvalue.w[i] <- wilcox.test(as.numeric(transpose_df[i, c(1:21)]), as.numeric(transpose_df[i, c(22:25)]))$p.value
+# for loop through each compound
+for (comp in colnames(transpose_df[,3:ncol(transpose_df)])) {
+  # looping through the combinations of plastic types 
+  for (col in 1:ncol(utils::combn(unique(transpose_df$plastic_type), 2))) {
+    # extract the combinations of plastic type pairs
+    plastic_type_1 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][1]
+    plastic_type_2 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][2]
+    # calculating the p-value between each plastic type pair 
+    p.value.res <- wilcox.test(transpose_df[which(transpose_df$plastic_type == plastic_type_1), comp], 
+                               transpose_df[which(transpose_df$plastic_type == plastic_type_2), comp])$p.value
+    # assigning row information
+    summary_table[nrow(summary_table) + 1,] <- c(comp, paste0(plastic_type_1, "_", plastic_type_2), p.value.res)
+  }
 }
-
-length(pvalue.w) # 374 wilcoxon tests was done
-
-summary_table <- cbind(rownames(cat_5), as.data.frame(pvalue.w))
-colnames(summary_table) <- c("collapsed_compound", "pvalue")
 
 summary_table$adjusted_pvalue_holm <- stats::p.adjust(summary_table$pvalue, method = "holm")
 summary_table$adjusted_pvalue_hochberg <- stats::p.adjust(summary_table$pvalue, method = "hochberg")
@@ -99,10 +105,7 @@ summary_table$adjusted_pvalue_BH <- stats::p.adjust(summary_table$pvalue, method
 summary_table$adjusted_pvalue_BY <- stats::p.adjust(summary_table$pvalue, method = "BY")
 summary_table$adjusted_pvalue_fdr <- stats::p.adjust(summary_table$pvalue, method = "fdr")
 
-# rq1_alpha0.05 <- summary_table %>% # default for p.adjust() method is Holm
-#   filter(., adjusted_pvalue_holm < 0.05) # NO compounds has adjusted pvalue < 0.05
-
-rq1_alpha0.1 <- summary_table %>%
+alpha <- summary_table %>%
   filter(., adjusted_pvalue_holm < 0.1) %>%
   arrange(adjusted_pvalue_holm)
 
