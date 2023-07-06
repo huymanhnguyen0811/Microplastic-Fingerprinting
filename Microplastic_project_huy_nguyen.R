@@ -85,7 +85,9 @@ grouping_comp_ver1 <- function(data, rtthres, mzthres) {
   return(dat)
 }
 
-# Filtering similar and unique compound
+# Filtering similar and unique compound 
+# compound appear in at least 2 samples
+
 comp_filter_ver1 <- function(data, n) {
   all_similar_compounds_idx <- c()
   all_other_compounds_idx <- c()
@@ -108,6 +110,29 @@ comp_filter_ver1 <- function(data, n) {
   return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
 }
 
+# compound appear in at least 2 plastic types
+
+comp_filter_ver2 <- function(data, n) {
+  all_similar_compounds_idx <- c()
+  all_other_compounds_idx <- c()
+  all_unique_compounds_idx <- c()
+  
+  for (comp_grp in unique(data$collapsed_compound)) {
+    # filter data by indexing, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+    idx <- which(grepl(comp_grp, data$collapsed_compound, fixed = TRUE))
+    
+    if (length(unique(data[idx,]$plastic_type)) > (n - 1)) {
+      all_similar_compounds_idx <- c(all_similar_compounds_idx, idx)
+    }
+    else if (length(unique(data[idx,]$plastic_type)) < 2) {
+      all_unique_compounds_idx <- c(all_unique_compounds_idx, idx)
+    }
+    else {
+      all_other_compounds_idx <- c(all_other_compounds_idx, idx)
+    }
+  }
+  return(list(all_similar_compounds_idx, all_other_compounds_idx, all_unique_compounds_idx))
+}
 
 # TSN - Percent-based normalization 
 data_normalization <- function(data) {
@@ -451,11 +476,19 @@ adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_
                                                                 max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
 
 # STEP 5: Identify shared and unique compound groups across samples ------------------------------------------------
-idx_list_filter_area_samples <- comp_filter_ver1(adjusted_df, 
-                                                 length(file_list))
+# at least in 2 samples
+idx_list_filter_samples <- comp_filter_ver1(adjusted_df, 
+                                            length(file_list))
 
-# Combine similar_compounds_filter_area and other_compounds_filter_area to one data frame 
-shared_comp_sample <- adjusted_df[c(idx_list_filter_area_samples[[1]], idx_list_filter_area_samples[[2]]),]
+# at least in 2 plastic types
+idx_list_filter_plastic_types <- comp_filter_ver2(adjusted_df, 
+                                                  length(unique(adjusted_df$plastic_type)))
+
+# Combine compounds that occur in at least 2 samples
+shared_comp_sample <- adjusted_df[c(idx_list_filter_samples[[1]], idx_list_filter_samples[[2]]),]
+
+# Combine compounds that occur in at least 2 plastic types 
+shared_comp_plastic_type <- adjusted_df[c(idx_list_filter_plastic_types[[1]], idx_list_filter_plastic_types[[2]]),]
 
 # QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
 # What is the min number of observation of collapsed compounds ?

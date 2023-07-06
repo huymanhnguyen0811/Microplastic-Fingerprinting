@@ -1,7 +1,7 @@
 # library(R.utils)
 `%notin%` <- Negate(`%in%`)
 
-# Research Question 1
+# Metadata of compounds that appear in at least 2 samples ===================
 stats_rq1 <- shared_comp_sample %>%
   select(File, collapsed_compound, Percent_Area) %>%
   # mutate(File = factor(File, levels = c(unique(File)))) %>%
@@ -19,10 +19,29 @@ for (r in 1:nrow(stats_rq1)) {
                                                            max = sort(shared_comp_sample$Percent_Area)[2])
 }
 
+#  Metadata of compounds that appear in at least 2 plastic types ===============
+stats_rq1b <- shared_comp_plastic_type %>%
+  select(File, collapsed_compound, Percent_Area) %>%
+  # mutate(File = factor(File, levels = c(unique(File)))) %>%
+  mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
+  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
+  group_by(File, collapsed_compound) %>%
+  summarise(across(Percent_Area, mean)) %>%
+  pivot_wider(names_from = File, values_from = Percent_Area) %>%
+  column_to_rownames(., var = "collapsed_compound")
+
+# Fill in missing value with LOD
+for (r in 1:nrow(stats_rq1b)) { 
+  stats_rq1b[r, which(base::is.na(stats_rq1b[r,]))] <- runif(length(which(base::is.na(stats_rq1b[r,]))),
+                                                           min = sort(shared_comp_plastic_type$Percent_Area)[1],
+                                                           max = sort(shared_comp_plastic_type$Percent_Area)[2])
+}
+
+
 # Reconstruct data frame
-transpose_df <- data.table::transpose(stats_rq1)
-rownames(transpose_df) <- colnames(stats_rq1)
-colnames(transpose_df) <- rownames(stats_rq1)
+transpose_df <- data.table::transpose(stats_rq1b)
+rownames(transpose_df) <- colnames(stats_rq1b)
+colnames(transpose_df) <- rownames(stats_rq1b)
 
 transpose_df <- transpose_df %>%
   rownames_to_column(., var = "File") %>%
