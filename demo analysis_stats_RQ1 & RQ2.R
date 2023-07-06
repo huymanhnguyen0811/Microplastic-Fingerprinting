@@ -81,8 +81,9 @@ stats::fligner.test(data ~ group, data = non_norm_dist_data)
 
 pvalue.w <- c()
 
-for (i in 1:nrow(cat_5)) { 
-  pvalue.w[i] <- wilcox.test(as.numeric(cat_5[i, c(1:21)]), as.numeric(cat_5[i, c(22:25)]))$p.value
+for (i in 3:ncol(transpose_df)) { 
+  # iterate through each plastic type and compare each 
+  pvalue.w[i] <- wilcox.test(as.numeric(transpose_df[i, c(1:21)]), as.numeric(transpose_df[i, c(22:25)]))$p.value
 }
 
 length(pvalue.w) # 374 wilcoxon tests was done
