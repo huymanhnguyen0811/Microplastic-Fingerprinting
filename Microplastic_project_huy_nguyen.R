@@ -490,27 +490,6 @@ shared_comp_sample <- adjusted_df[c(idx_list_filter_samples[[1]], idx_list_filte
 # Combine compounds that occur in at least 2 plastic types 
 shared_comp_plastic_type <- adjusted_df[c(idx_list_filter_plastic_types[[1]], idx_list_filter_plastic_types[[2]]),]
 
-# QUALITY CONTROL STEP 3A: For each collapsed compounds we need at least 2 values of that compound for each plastic_type =======
-# What is the min number of observation of collapsed compounds ?
-# Create list to store number of occurence of each collasped compounds in each plastic_type
-count_obs_list <- list()
-
-for (comp in unique(shared_comp_normalized$collapsed_compound)) {
-  temp <- list()
-  i <- 1
-  idx <- which(shared_comp_normalized$collapsed_compound == comp)
-  subset_df <- shared_comp_normalized[idx,]
-  for (type in unique(subset_df$plastic_type)) {
-    # summary <- c()
-    # summary <- c(summary, type)
-    count_area <- sum(shared_comp_normalized[idx,]$plastic_type == type)
-    # summary <- c(summary, count)
-    temp[type] <- count_area
-    i <- i + 1
-  }
-  count_obs_list[comp] <- temp
-}
-
 
 # Plotting data distribution post-removal ------------------------------------------------
 data_plot_post_removal <- list() 
@@ -538,18 +517,8 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Percent_Area)))
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Log_Area)))
 
-# Histogram Percentage-normalized Area distribution of each sample ---------------
 
-ggplot(data = shared_comp_normalized,
-       aes(x = Percent_Area)) +
-  facet_wrap(~File, scales = "free_y") + 
-  geom_histogram(bins = 120) + 
-  labs(x = "Percentage Area") +
-  ggtitle("Percentage-normalized Area distribution") +
-  theme(text = element_text(size = 20),
-        axis.text.x = element_text(vjust = 0.5))
-
-# Examine linear separability between some plastic type -----------------
+# Examine correlation between plastic types -----------------
 my_data <- shared_comp_normalized %>%
   select(plastic_type, collapsed_compound, Percent_Area) %>%
   mutate(plastic_type = factor(plastic_type, levels = c(unique(plastic_type)))) %>%
