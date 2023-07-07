@@ -276,6 +276,7 @@ grid.arrange(grobs = plot_b, ncol = 5,
 
 # STEP 1.2B Filtering out limit of observations---------------------------- 
 # Area  = 100000 seems to be the right cutoff after inspection with quality control A and B
+
 list_remaining_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[1]]
 list_removed_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[2]]
 
@@ -319,96 +320,8 @@ df_blank <- df_blank %>%
 
 combined_df <- rbind(df_step1.3, df_blank) %>% arrange(RT)
 
-# QUALITY CONTROL PRIOR TO STEP 1.3B ==========================================================================
-# Identify linear/non-linear relationship in retention time 
-# -> predict the effect of RT1 and RT2 on count of compound
-# For instance, low RT1 (&RT2) "bins" will include more compounds.
-# Should do this for individual fuel type sample ??????
-
-# Supplementary Materials: Check distribution of spacing of retention time of remaining peaks --------------------
-rt_dif_list <- list()
-plot_dif_RT <- list()
-for (n in 1:length(list_remaining_area)) {
-  dif_rt <- c()
-  df <- list_remaining_area[[n]] %>%
-    arrange(RT)
-  
-  # Calculate difference in RT of each peak in a sample
-  for (i in 1:(dim(df)[[1]] - 1)) {
-    dif <- base::abs(base::diff(c(df[i,]$RT, df[i + 1,]$RT)))
-    dif_rt <- c(dif, dif_rt)
-  }
-  
-  rt_dif_list[[n]] <- dif_rt
-  names(rt_dif_list)[n] <- paste0(unique(list_remaining_area[[n]]$File), "_diff_RT")
-
-  plot_dif_RT[[n]] <- hist(dif_rt, breaks = 200, main = names(rt_dif_list)[n])
-}
-
-grid.arrange(grobs = plot_dif_RT, ncol = 5)
-
-
-
-# Plot peak width against retention time ----------------------
-ggplot(data = list_remaining_area[[1]]  %>%
-         mutate(peak_width = .$Area/.$Height)) + 
-  geom_point(aes(x = Center.X, y = peak_width)) + 
-  labs(title = unique(list_remaining_area[[1]]$sample_name)) + 
-  theme_bw(base_size = 15)
-
-# Data Visualization of RT1 and RT2: -----------------------------------------
-# Plot Peak width (=Peak Area/Peak Height) against RT1 and RT2 for each sample
-plot_peak_width <- list()
-for (i in 1:length(list_remaining_area)) {
-  temp <- list_remaining_area[[i]] %>%
-    mutate(peak_width = .$Area/.$Height)
-  plot_peak_width[[i]] <- ggscatter(temp, x = c("RT1", "RT2"), y = "peak_width", color = "sample_name", palette = "jco")  %>% 
-    invoke(ggarrange, .)
-}
-
-grid.arrange(grobs = plot_peak_width, ncol = 4)
-
-# Plot histogram of count of RT1 and RT2 (same graph) for each sample
-ggplot(data = df_remaining_area %>% 
-         pivot_longer(cols = c(RT1, RT2), names_to = "RT", values_to = "value"), 
-       aes(x = value, fill = RT)) +
-  geom_histogram(color = '#e9ecef', alpha = 0.6, position = 'identity', bins = 120) +
-  facet_wrap(~sample_name) + 
-  scale_x_continuous(limits = c(3, 6))
-
-# Pseudo-Heatmap scatter plot of RT1 RT2 as xy-axis and Peak Width as heat color intensity
-plot_heatmap <- list()
-i <- 1
-for (item in 1:length(list_remaining_area)) {
-  if (unique(list_remaining_area[[item]]$sample_name) %in% gas_only_file_list) {
-    data <- list_remaining_area[[item]] %>%
-      mutate(peak_width = .$Area/.$Height) # %>% filter(., peak_width <= quantile(peak_width)[2])
-    plot_heatmap[[i]] <- ggplot(data, aes(x = RT1, y = RT2, color = peak_width)) +
-      geom_point(size = 1.5) +
-      theme_minimal() +
-      scale_colour_gradientn(colors=c("red", "yellow", "green")) + 
-      labs(title = unique(data$sample_name))
-    i <- i + 1
-  }
-  else {
-    next
-  }
-}
-
-# grid.arrange(grobs = plot_heatmap, ncol = 3)
-plot_heatmap[[1]]
-# => random distribution of peak-width (not any widening pattern of peak width from low to high retention time) -> GOOD!!!
-
-
-## K-means clustering on Center.X ----------------------------------------------------
-x <- matrix(c(df_step1.3$Center.X), ncol = 1)
-set.seed(runif(1, min = 1, max = 5))
-km.out <- amap::Kmeans(x, centers = 20, nstart = 100, method = "manhattan")
-plot(x = x, y = km.out$cluster, col = (km.out$cluster + 1),
-      pch = 20, cex = 2)
 
 # STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold ----------------------------------------
-# Test integrity of function grouping_comp_ver1 by scrambling data frame in multiple ways
 
 combined_df_grouped <- grouping_comp_ver1(combined_df,
                                           rtthres = 0.05,
@@ -517,36 +430,3 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Percent_Area)))
 # View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Log_Area)))
 
-
-# Examine correlation between plastic types -----------------
-my_data <- shared_comp_normalized %>%
-  select(plastic_type, collapsed_compound, Percent_Area) %>%
-  mutate(plastic_type = factor(plastic_type, levels = c(unique(plastic_type)))) %>%
-  mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
-  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(plastic_type, collapsed_compound) %>%
-  summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = plastic_type, values_from = Percent_Area) %>%
-  column_to_rownames(., var = "collapsed_compound")
- 
-# With Pearson correlation coefficient
-res <- stats::cor(my_data, 
-                        method = "pearson", 
-                        use = "pairwise.complete.obs") # FYI: ?stats::cor
-             
-
-View(res)
-
-# Correlation < 0.5 is considered weak/no linear relationship
-
-library(Hmisc)
-res2 <- Hmisc::rcorr(as.matrix(my_data), 
-                     type = "pearson")
-flattenCorrMatrix(res2$r, res2$P)
-
-library(corrplot)
-corrplot(res, type = "upper", order = "hclust", 
-         tl.col = "black", tl.srt = 45)
-
-corrplot(res2$r, type="upper", order="hclust", 
-         p.mat = res2$P, sig.level = 0.01)
