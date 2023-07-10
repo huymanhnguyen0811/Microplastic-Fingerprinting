@@ -4,8 +4,6 @@
 # Metadata of compounds that appear in at least 2 samples ===================
 stats_rq1 <- shared_comp_sample %>%
   select(File, collapsed_compound, Percent_Area) %>%
-  # mutate(File = factor(File, levels = c(unique(File)))) %>%
-  mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%
@@ -22,8 +20,6 @@ for (r in 1:nrow(stats_rq1)) {
 #  Metadata of compounds that appear in at least 2 plastic types ===============
 stats_rq1b <- shared_comp_plastic_type %>%
   select(File, collapsed_compound, Percent_Area) %>%
-  # mutate(File = factor(File, levels = c(unique(File)))) %>%
-  mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%

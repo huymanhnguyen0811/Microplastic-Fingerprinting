@@ -1,6 +1,59 @@
+# RandomForestSRC ----------------
+library(randomForestSRC)
+
+my.data <- my_data %>%
+  rownames_to_column(., var = "File") %>%
+  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                               ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                      ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                             ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                    ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                           ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+  relocate(plastic_type, .before = 1) %>%
+  column_to_rownames(., var = "File") %>%
+  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type)))
+
+set.seed (1234) # sets a numerical starting point; will be set randomly if not set by the user
+
+my.rf <- rfsrc(plastic_type ~ ., mtry=5, ntree=2000, splitrule = "gini", na.action = "na.impute",
+               importance = "random", data=my.data) # function to run RF
+
+my.rf # output of model details, e.g. goodness-of-fit, out-of-bag (OBB) error
+
+plot(ggRandomForests::gg_error(my.rf)) # plot OOB error rate against the number of trees
+
+# Estimate the variables importance --------
+my.rf.vimp <- ggRandomForests::gg_vimp(my.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
+my.rf.vimp
+plot(my.rf.vimp) # visualises the predictor’s importance
+ 
+# Plot the response variable against each predictor variable, we can generate partial dependance plots --------------
+my.rf.part.plot <- plot.variable(my.rf, partial=TRUE, sorted=FALSE,
+                                  show.plots=FALSE, nvar = 10)
+gg.part <- gg_partial(my.rf.part.plot)
+plot(gg.part, xvar=names(my.data[,-1]), panel=TRUE, se=TRUE)
+
+# selection of the best candidates ------------------
+md.obj <- max.subtree(my.rf)
+md.obj$topvars # extracts the names of the variables in the object md.obj
+
+my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
+                                      importance="random", method="vimp", nrep=3) 
+
+# Boosted Regression Trees
+library(gbm)
+library(dismo)
+
+my.brt <- gbm.step(data=my.data, gbm.x=c(1:3, 5), gbm.y=6,
+                    family="gaussian", tree.complexity=5, learning.rate=0.005,
+                    bag.fraction=0.7)
+
+
+
+# Reserve Code -------------------
 library(tree)
 
-# Fit classification tree to predict plastic_type
+# Fit classification tree to predict plastic_type 
 tree.model <- tree::tree(plastic_type ~ .,shared_comp_normalized)
 summary(tree.model)
 
@@ -17,7 +70,7 @@ train <- sample(1: nrow(shared_comp_normalized), 1500)
 dat.test <- shared_comp_normalized[-train, ]
 plastic.true <- shared_comp_normalized$plastic_type[-train]
 tree.plastic <- tree(plastic_type ~ . ,shared_comp_normalized,
-                      subset = train)
+                     subset = train)
 tree.pred <- predict(tree.plastic, dat.test,
                      type = "class")
 table(tree.pred, plastic.true)
@@ -61,8 +114,8 @@ varImpPlot(rf.plastic)
 # Boosting
 library(gbm)
 boost.plastic <- gbm(medv ~ ., data = Boston[train, ],
-                    distribution = "gaussian", n.trees = 5000,
-                    interaction.depth = 4)
+                     distribution = "gaussian", n.trees = 5000,
+                     interaction.depth = 4)
 summary(boost.boston)
 
 # PArtial dependence plot: illustrate the marginal effect of the selected variables on the response after integrating out the other variables
@@ -98,7 +151,7 @@ mean((ytest - yhat.bart)^2)
 ord <- order(bartfit$varcount.mean , decreasing = T)
 bartfit$varcount.mean[ord]
 
-# LightGBM for Multiclass Classification -------------
+# LightGBM for Multiclass Classification
 library(lightgbm)
 # split into train and test  
 indexes = caret::createDataPartition(shared_comp_normalized$plastic_type, p = .8, list = F)
@@ -142,6 +195,3 @@ confusionMatrix(as.factor(test_y), as.factor(pred_y))
 tree_imp = lgb.importance(model, percentage = T)
 lgb.plot.importance(tree_imp, measure = "Gain")
 
-
-# RandomForestSRC
-library(randomForestSRC)

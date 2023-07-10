@@ -5,8 +5,6 @@ df_pca <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     select(File, collapsed_compound, Percent_Area) %>%
-    mutate(File = factor(File, levels = c(unique(File)))) %>%
-    mutate(collapsed_compound = factor(collapsed_compound, levels = c(unique(collapsed_compound)))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
@@ -43,7 +41,7 @@ p <- pca(mat = df_pca[[1]], metadata = df_pca[[2]])
 
 # A bi-plot
 PCAtools::biplot(p,
-                 lab = NULL, # #row.names(p_rq1_rt10.2$metadata)
+                 lab = NULL, 
                  colby = "Plastic type",
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
@@ -60,15 +58,6 @@ PCAtools::biplot(p,
 loadingS_rq1_sorted <- p_rq1$loadings %>% arrange(PC1, PC2)
 toploadings_rq1 <- rownames(loadingS_rq1_sorted[c(1:50, nrow(loadingS_rq1_sorted):(nrow(loadingS_rq1_sorted) - 50)),1:2])
 
-# Cross check similarity between top 100 loading and RQ1 Wilcoxon test result
-idx <- which(str_detect(ASTM_list$`RQ1: Category 5: Compounds with >=2 Gas record and >=2 Diesel record, PASS WILCOXON TEST (data imputed with LOD), alpha threshold < 0.1 (rt1thres = 0.2)`, 
-                           "x"))
-
-name <- unlist(flatten(ASTM_list[idx, 16]))
-
-ASTM_rq1_cat5_wilcoxon_stats_alpha0.1 <- gsub("x_", "", name)
-
-intersect_PCA_Wilcoxon_alpha0.1 <- intersect(toploadings_rq1, ASTM_rq1_cat5_wilcoxon_stats_alpha0.1) # 15 ASTM compounds similar between top 200 loading PCA and ASTM_alpha0.1
 
 # Pairs plot
 pairsplot(p,
