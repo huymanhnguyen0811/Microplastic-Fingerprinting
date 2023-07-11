@@ -2,13 +2,10 @@ library(Hmisc)
 library(corrplot)
 
 # Correlation Analysis:
-
-
-
 # Calculate the correlation coefficients between each collasped_compound
 
 # Transform data frame for cor() function; file names as rows & collasped_compound as columns
-my_data <- shared_comp_plastic_type  %>%
+my_data <- shared_comp_plastic_type %>%
   select(File, collapsed_compound, Percent_Area) %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%

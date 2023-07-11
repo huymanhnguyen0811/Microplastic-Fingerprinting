@@ -1,26 +1,56 @@
 # RandomForestSRC ----------------
 library(randomForestSRC)
 
-my.data <- my_data %>%
-  rownames_to_column(., var = "File") %>%
+# WARNING!!! -> Values from `Percent_Area` are not uniquely identified -> ASK ROXANA!!!!
+View(shared_comp_plastic_type %>%
+       dplyr::group_by(File, collapsed_compound) %>%
+       dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
+       dplyr::filter(n > 1L))
+
+# since we have duplicates with different values of the same compound in some samples
+my.data <- shared_comp_plastic_type  %>%
+  dplyr::select(File, collapsed_compound, Percent_Area) %>%
+  group_by(File, collapsed_compound) %>%
+  # , we summarize these values by taking the mean of them
+  summarise(across(Percent_Area, mean)) %>%
+  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
   mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
                                ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
                                       ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
                                              ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
                                                     ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
                                                            ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
   relocate(plastic_type, .before = 1) %>%
-  column_to_rownames(., var = "File") %>%
-  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type)))
+  column_to_rownames(., var = "File")
 
 set.seed (1234) # sets a numerical starting point; will be set randomly if not set by the user
 
-my.rf <- rfsrc(plastic_type ~ ., mtry=5, ntree=2000, splitrule = "gini", na.action = "na.impute",
-               importance = "random", data=my.data) # function to run RF
+# Not fill NA with LOD --------------------------------------------
+my.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
+               na.action = "na.impute", 
+               # nimpute = 2,
+               nodesize = 1, importance = "random", data=my.data) # function to run RF
 
 my.rf # output of model details, e.g. goodness-of-fit, out-of-bag (OBB) error
 
-plot(ggRandomForests::gg_error(my.rf)) # plot OOB error rate against the number of trees
+# Fill NA with LOD ------------------------------------------------
+filled.data <- copy(my.data)
+for (c in 2:ncol(filled.data)) { 
+  filled.data[which(base::is.na(filled.data[,c])), c] <- runif(length(which(base::is.na(filled.data[,c]))),
+                                                               min = sort(shared_comp_plastic_type$Percent_Area)[1],
+                                                               max = sort(shared_comp_plastic_type$Percent_Area)[2])
+}
+
+filled.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
+                   nodesize = 1,
+                   importance = "random", data = filled.data) # function to run RF
+
+filled.rf
+
+# plot OOB error rate against the number of trees -------
+plot(ggRandomForests::gg_error(my.rf)) 
+plot(ggRandomForests::gg_error(filled.rf)) 
 
 # Estimate the variables importance --------
 my.rf.vimp <- ggRandomForests::gg_vimp(my.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
@@ -30,24 +60,15 @@ plot(my.rf.vimp) # visualises the predictor’s importance
 # Plot the response variable against each predictor variable, we can generate partial dependance plots --------------
 my.rf.part.plot <- plot.variable(my.rf, partial=TRUE, sorted=FALSE,
                                   show.plots=FALSE, nvar = 10)
-gg.part <- gg_partial(my.rf.part.plot)
+gg.part <- ggRandomForests::gg_partial	(my.rf.part.plot)
 plot(gg.part, xvar=names(my.data[,-1]), panel=TRUE, se=TRUE)
 
 # selection of the best candidates ------------------
 md.obj <- max.subtree(my.rf)
 md.obj$topvars # extracts the names of the variables in the object md.obj
 
-my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
-                                      importance="random", method="vimp", nrep=3) 
-
-# Boosted Regression Trees
-library(gbm)
-library(dismo)
-
-my.brt <- gbm.step(data=my.data, gbm.x=c(1:3, 5), gbm.y=6,
-                    family="gaussian", tree.complexity=5, learning.rate=0.005,
-                    bag.fraction=0.7)
-
+# my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
+                                      # importance="random", method="vimp", nrep=3) 
 
 
 # Reserve Code -------------------

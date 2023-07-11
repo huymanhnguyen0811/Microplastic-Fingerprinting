@@ -3,8 +3,11 @@
 # https://socialsciences.mcmaster.ca/jfox/Misc/sem/SEM-paper.pdf - Structural Equation Modelling
 
 
-library(sem)
+library(lavaan)
 
+HS.model <- ' visual =~ x1 + x2 + x3
+textual =~ x4 + x5 + x6
+speed =~ x7 + x8 + x9 '
 
-Klein$P.lag <- c(NA, Klein$P[-22])
-Klein$X.lag <- c(NA, Klein$X[-22])
+fit <- lavaan::cfa(model = HS.model, data = HolzingerSwineford1939)
+summary(fit, fit.measures = TRUE)
