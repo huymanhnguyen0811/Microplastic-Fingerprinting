@@ -1,6 +1,8 @@
 # RandomForestSRC ----------------
 library(randomForestSRC)
 
+set.seed (1234) # sets a numerical starting point; will be set randomly if not set by the user
+
 # WARNING!!! -> Values from `Percent_Area` are not uniquely identified -> ASK ROXANA!!!!
 View(shared_comp_plastic_type %>%
        dplyr::group_by(File, collapsed_compound) %>%
@@ -23,8 +25,6 @@ my.data <- shared_comp_plastic_type  %>%
   mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
   relocate(plastic_type, .before = 1) %>%
   column_to_rownames(., var = "File")
-
-set.seed (1234) # sets a numerical starting point; will be set randomly if not set by the user
 
 # Not fill NA with LOD --------------------------------------------
 my.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
