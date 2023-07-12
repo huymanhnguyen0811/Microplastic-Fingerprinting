@@ -4,7 +4,8 @@ library(PCAtools)
 df_pca <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
-    select(File, collapsed_compound, Percent_Area) %>%
+    dplyr::select(File, collapsed_compound, Percent_Area) %>%
+    mutate(File = factor(File, levels = unique(File))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
@@ -32,12 +33,17 @@ df_pca <- function(data) {
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- df_pca(shared_comp_sample)
+df_pca <- df_pca(shared_comp_plastic_type)
 
 # Conduct principal component analysis (PCA):
 colnames(df_pca[[2]]) <- c("Plastic type")
 
 p <- pca(mat = df_pca[[1]], metadata = df_pca[[2]])
+
+screeplot(p, components = getComponents(p, 1:30),
+          hline = 80, vline = 27, axisLabSize = 14, titleLabSize = 20,
+          returnPlot = FALSE) +
+  geom_label(aes(20, 80, label = '80% explained variation', vjust = -1, size = 8))
 
 # A bi-plot
 PCAtools::biplot(p,
@@ -55,8 +61,8 @@ PCAtools::biplot(p,
                  legendIconSize = 6)
 
 # Retrieve compound name of top 100 loading
-loadingS_rq1_sorted <- p_rq1$loadings %>% arrange(PC1, PC2)
-toploadings_rq1 <- rownames(loadingS_rq1_sorted[c(1:50, nrow(loadingS_rq1_sorted):(nrow(loadingS_rq1_sorted) - 50)),1:2])
+loadingS_sorted <- p$loadings %>% arrange(PC1, PC2)
+toploadings <- rownames(loadingS_sorted[c(1:50, nrow(loadingS_sorted):(nrow(loadingS_sorted) - 50)),1:2])
 
 
 # Pairs plot
@@ -74,10 +80,16 @@ pairsplot(p,
 
 
 # explore further the collapsed_compounds that are driving these differences along each PC.
-plotloadings(p_rq1,
+plotloadings(p,
              rangeRetain = 0.05, # top 5% variables = top/bottom 5% of the loadings range per PC
              caption = 'Top 10% variables',
              labSize = 4)
 
 
 eigencorplot(p, metavars = c('fuel_type', 'gas_station'))
+
+p.prcomp <- list(sdev = p$sdev,
+                 rotation = data.matrix(p$loadings),
+                 x = data.matrix(p$rotated),
+                 center = TRUE, scale = TRUE)
+predict(p.prcomp, newdata = newdata)[,1:5]
