@@ -28,23 +28,28 @@ for (c in 2:ncol(filled.data)) {
 }
 
 # split train and test data 60:40 , random sampling is done within the levels of plastic_type
-samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.5, list = F)
-train <- filled.data[samp,]
-test <- filled.data[-samp,]
+set.seed(123)  # for reproducibility
+churn_split <- rsample::initial_split(filled.data, prop = 0.7, strata = "plastic_type")
+churn_train <- rsample::training(churn_split)
+churn_test  <- rsample::testing(churn_split)
+
+# samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.5, list = F)
+# train <- filled.data[samp,]
+# test <- filled.data[-samp,]
 
 # Train and Select best cost parameter -------------------
-tune.out <- tune(svm, plastic_type ~ ., data = train, kernel = "polynomial",
-                 ranges = list(cost = c(0.001 , 0.01 , 0.1 , 1, 5, 10, 100)),
-                               # gamma = c(0.5 , 1, 2, 3, 4)),
-                 decision.values = TRUE)
-# summary(tune.out)
-bestmod <- tune.out$best.model
-View(table(bestmod$fitted, train$plastic_type))
-
-# Test
-ypred <- predict(bestmod, test)
-
-View(table(ypred, test$plastic_type))
+# tune.out <- tune(svm, plastic_type ~ ., data = train, kernel = "polynomial",
+#                  ranges = list(cost = c(0.001 , 0.01 , 0.1 , 1, 5, 10, 100)),
+#                                # gamma = c(0.5 , 1, 2, 3, 4)),
+#                  decision.values = TRUE)
+# # summary(tune.out)
+# bestmod <- tune.out$best.model
+# View(table(bestmod$fitted, train$plastic_type))
+# 
+# # Test
+# ypred <- predict(bestmod, test)
+# 
+# View(table(ypred, test$plastic_type))
 
 # Caret: Control params for SVM
 ctrl <- caret::trainControl(
@@ -55,30 +60,42 @@ ctrl <- caret::trainControl(
 )
 
 # Tune an SVM with caret
-svm_auc <- caret::train(
+
+churn_svm_auc <- caret::train(
   plastic_type ~ ., 
-  data = train,
-  method = "svmPoly",               
-  preProcess = c("center", "scale"),
-  metric = "ROC",
+  data = filled.data,
+  method = "svmRadial",               
+  # preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
   trControl = ctrl,
   tuneLength = 10
 )
 
-# Print results
-svm_auc$results
+churn_svm_auc$results
 
-caret::confusionMatrix(svm_auc)
+caret::confusionMatrix(churn_svm_auc)
 
 
 
 # Feature importance
-prob_yes <- function(object, newdata) {
-  predict(object, newdata = newdata, type = "prob")[, "Yes"]
+prob <- function(object, newdata) {
+  predict(object, newdata = newdata, type = "prob")[, "Plastic_Bottles_and_Bottle_Caps"] # Food_Packaging_Waste
 }
 
 # Variable importance plot
 set.seed(2827)  # for reproducibility
-vip(bestmod, method = "permute", nsim = 5, train = train, 
-    target = "plastic_type", metric = "auc", reference_class = "Yes", 
-    pred_wrapper = prob_yes)
+vip::vip(churn_svm_auc, method = "permute", nsim = 5, train = filled.data, 
+         target = "plastic_type", metric = "auc", reference_class = "Plastic_Bottles_and_Bottle_Caps",
+         pred_wrapper = prob)
+
+# construct PDPs for the top four features of reference_class
+features <- c("Compound_7.", "Compound_1196.",
+              "Compound_1193.", "Compound_1199.")
+
+pdps <- lapply(features, function(x) {
+  partial(churn_svm_auc, pred.var = x, which.class = 2,  
+          prob = TRUE, plot = TRUE, plot.engine = "ggplot2") +
+    coord_flip()
+})
+
+grid.arrange(grobs = pdps,  ncol = 2)
