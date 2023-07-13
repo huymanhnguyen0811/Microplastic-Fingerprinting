@@ -1,5 +1,6 @@
 library(PCAtools)
 
+
 # PCA -----------------
 df_pca <- function(data) {
   # create sample df
@@ -12,6 +13,7 @@ df_pca <- function(data) {
     pivot_wider(names_from = File, values_from = Percent_Area) %>%
     column_to_rownames(., var = "collapsed_compound")
   
+
   for (r in 1:nrow(df_X_rq1)) { 
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- runif(length(which(base::is.na(df_X_rq1[r,]))),
                                                            min = sort(data$Percent_Area)[1],
@@ -35,10 +37,12 @@ df_pca <- function(data) {
 
 df_pca <- df_pca(shared_comp_plastic_type)
 
+
+
 # Conduct principal component analysis (PCA):
 colnames(df_pca[[2]]) <- c("Plastic type")
 
-p <- pca(mat = df_pca[[1]], metadata = df_pca[[2]])
+p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]])
 
 screeplot(p, components = getComponents(p, 1:30),
           hline = 80, vline = 27, axisLabSize = 14, titleLabSize = 20,
