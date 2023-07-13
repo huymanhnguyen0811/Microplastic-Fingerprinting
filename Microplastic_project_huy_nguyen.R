@@ -321,14 +321,14 @@ df_blank <- df_blank %>%
 combined_df <- rbind(df_step1.3, df_blank) %>% arrange(RT)
 
 
-# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold ----------------------------------------
+# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold
 
 combined_df_grouped <- grouping_comp_ver1(combined_df,
                                           rtthres = 0.05,
                                           mzthres = 0.05)
 
 
-# STEP 2: Data Normalization ================================================================================
+
 # Plotting data distribution pre-removal -----------------------------------
 data_plot_pre_removal <- list() 
 i <- 1
@@ -349,7 +349,7 @@ x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
 
 
-# Normalizing data accordingly to different data frames of interest --------------------------------------------------
+# STEP 2: Normalizing data accordingly to different data frames of interest --------------------------------------------------
 
 comp_normalized <- data_normalization(combined_df_grouped)
 
@@ -383,7 +383,7 @@ for (comp in unique(comp_normalized$collapsed_compound)) {
 
 adjusted_df <- bind_rows(temp_list)
 
-# Step 4: Replace negative adjusted RA values with LOD
+# Step 4: Replace negative adjusted RA values with LOD =============================
 adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0]),
                                                                 min = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[1],
                                                                 max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
