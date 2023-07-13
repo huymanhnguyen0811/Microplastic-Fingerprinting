@@ -10,8 +10,8 @@ my_data <- shared_comp_plastic_type %>%
   # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
   group_by(File, collapsed_compound) %>%
   summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
-  column_to_rownames(., var = "File")
+  pivot_wider(names_from = File, values_from = Percent_Area) %>%
+  tibble::column_to_rownames(., var = "collapsed_compound")
              
 # Merge all correlated variables ===============================================
 
@@ -31,3 +31,6 @@ for (c in 1:ncol(my_data)) {
 }
 
 corrplot(cor(my_data), order = "hclust", tl.col = "black", tl.srt = 45)
+
+
+View(as.matrix(stats::dist(as.matrix(my_data), method = "minkowski", upper = TRUE)))
