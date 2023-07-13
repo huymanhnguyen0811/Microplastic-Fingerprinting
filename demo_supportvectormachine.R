@@ -27,40 +27,47 @@ for (c in 2:ncol(filled.data)) {
                                                                max = sort(shared_comp_plastic_type$Percent_Area)[2])
 }
 
-# split train and test data 60:40 , random sampling is done within the levels of plastic_type
+# e1071 package: ===========================
+
+samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.7, list = F)
+train <- filled.data[samp,]
+test <- filled.data[-samp,]
+
+
+# Train and Select best cost parameter
+tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = train, kernel = "radial",
+                 ranges = list(cost = c(0.001 , 0.01 , 0.1 , 1, 5, 10, 100),
+                               gamma = seq(from=0, to=0.02, by= 0.005),
+                               epsilon = c(0.001 , 0.01 , 0.1)),
+                 decision.values = TRUE)
+
+# summary(tune.out)
+bestmod <- tune.out$best.model
+View(table(bestmod$fitted, train$plastic_type))
+
+# Test
+ypred <- predict(bestmod, test)
+
+View(table(ypred, test$plastic_type))
+
+# Caret package: ===================================
+# split train and test data 60:40 with stratification on plastic_type
 set.seed(123)  # for reproducibility
+# Conduct stratified sampling
 churn_split <- rsample::initial_split(filled.data, prop = 0.7, strata = "plastic_type")
+# Assign train & test set to variables
 churn_train <- rsample::training(churn_split)
 churn_test  <- rsample::testing(churn_split)
 
-# samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.5, list = F)
-# train <- filled.data[samp,]
-# test <- filled.data[-samp,]
-
-# Train and Select best cost parameter -------------------
-# tune.out <- tune(svm, plastic_type ~ ., data = train, kernel = "polynomial",
-#                  ranges = list(cost = c(0.001 , 0.01 , 0.1 , 1, 5, 10, 100)),
-#                                # gamma = c(0.5 , 1, 2, 3, 4)),
-#                  decision.values = TRUE)
-# # summary(tune.out)
-# bestmod <- tune.out$best.model
-# View(table(bestmod$fitted, train$plastic_type))
-# 
-# # Test
-# ypred <- predict(bestmod, test)
-# 
-# View(table(ypred, test$plastic_type))
-
-# Caret: Control params for SVM
+# Control params for SVM
 ctrl <- caret::trainControl(
   method = "cv", 
-  number = 10, 
+  number = 10, # Performing 10-fold CrossValidation
   classProbs = TRUE,                 
   summaryFunction = multiClassSummary  # also needed for AUC/ROC
 )
 
 # Tune an SVM with caret
-
 churn_svm_auc <- caret::train(
   plastic_type ~ ., 
   data = filled.data,
@@ -73,24 +80,30 @@ churn_svm_auc <- caret::train(
 
 churn_svm_auc$results
 
+# Confusion Matrix
 caret::confusionMatrix(churn_svm_auc)
 
-
-
 # Feature importance
-prob <- function(object, newdata) {
-  predict(object, newdata = newdata, type = "prob")[, "Plastic_Bottles_and_Bottle_Caps"] # Food_Packaging_Waste
+
+
+vip_all <- c()
+for (pt in unique(filled.data$plastic_type)) {
+  set.seed(282)  # for reproducibility
+  
+  # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
+  prob <- function(object, newdata) {
+    predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
+  }
+  
+  # Variable importance plot
+  vip_res <- vip::vip(churn_svm_auc, method = "permute", nsim = 5, train = filled.data, 
+                      target = "plastic_type", metric = "auc", reference_class = pt,
+                      pred_wrapper = prob)
+  vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
 }
 
-# Variable importance plot
-set.seed(2827)  # for reproducibility
-vip::vip(churn_svm_auc, method = "permute", nsim = 5, train = filled.data, 
-         target = "plastic_type", metric = "auc", reference_class = "Plastic_Bottles_and_Bottle_Caps",
-         pred_wrapper = prob)
-
 # construct PDPs for the top four features of reference_class
-features <- c("Compound_7.", "Compound_1196.",
-              "Compound_1193.", "Compound_1199.")
+features <- vip_all
 
 pdps <- lapply(features, function(x) {
   partial(churn_svm_auc, pred.var = x, which.class = 2,  
@@ -98,4 +111,4 @@ pdps <- lapply(features, function(x) {
     coord_flip()
 })
 
-grid.arrange(grobs = pdps,  ncol = 2)
+grid.arrange(grobs = pdps,  ncol = 5)
