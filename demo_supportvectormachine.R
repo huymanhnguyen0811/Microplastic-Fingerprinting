@@ -28,11 +28,27 @@ for (c in 2:ncol(filled.data)) {
 }
 
 # e1071 package: ===========================
-
+# With original data
 samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.7, list = F)
-train <- filled.data[samp,]
-test <- filled.data[-samp,]
 
+# With Principal Component merged data
+dat <- e1071_merge_PC %>% # 
+  tibble::rownames_to_column(., var = "File") %>%
+  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                               ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                      ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                             ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                    ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                           ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+  dplyr::relocate(plastic_type, .before = 1) %>%
+  tibble::column_to_rownames(., var = "File")
+  
+samp_PC <- caret::createDataPartition(dat$plastic_type, p = 0.7, list = F)
+
+# Split train and test datasets
+train <- dat[samp_PC,]
+test <- dat[-samp_PC,]
 
 # Train and Select best cost parameter
 base::system.time(tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = train, kernel = "radial",

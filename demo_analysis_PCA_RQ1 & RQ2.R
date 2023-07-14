@@ -2,6 +2,7 @@ library(PCAtools)
 
 
 # PCA -----------------
+# prep input
 df_pca <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
@@ -10,8 +11,8 @@ df_pca <- function(data) {
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
-    pivot_wider(names_from = File, values_from = Percent_Area) %>%
-    column_to_rownames(., var = "collapsed_compound")
+    pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "File")
   
 
   for (r in 1:nrow(df_X_rq1)) { 
@@ -41,24 +42,21 @@ df_pca <- df_pca(shared_comp_plastic_type)
 colnames(df_pca[[2]]) <- c("Plastic type")
 
 # PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
-p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]],
-                   center = FALSE)
+p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]])
 
 # Retrieve PC and add as new variables to data frame 
 PCAtools_mergePC <- p$rotated
 
 # PCA with stats::prcomp ===========
-# stats::prcomp requires input x as df (columns as collapsed_compound, rows as sample name)
+# stats::prcomp requires input x as df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
 
 prcomp_res <- stats::prcomp(df_pca[[1]])
-# summary(prcomp_res)
-stats::biplot(prcompnew)
+
+stats::biplot(prcomp_res)
 
 # Retrieve PC and add as new variables to data frame 
-merged_PC_dat <- prcomp_res$x
-t_merge_PC <- data.table::transpose(as.data.frame(PCAtools_mergePC))
-rownames(t_merge_PC) <- colnames(PCAtools_mergePC)
-colnames(t_merge_PC) <- rownames(PCAtools_mergePC)
+e1071_merge_PC <- as.data.frame(prcomp_res$x)
+
 
 # PCA further visualizations ----------------------------------------------------------------
 # Scree plot
