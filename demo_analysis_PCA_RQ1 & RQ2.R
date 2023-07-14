@@ -20,7 +20,7 @@ df_pca <- function(data) {
                                                            max = sort(data$Percent_Area)[2])
   }
   
-  # table for information ((rows are sample IDs, columns are sample information) -----------------------
+  # table for information (rows are sample IDs, columns are sample information) -----------------------
   metadata_X_rq1 <- data.frame(unique(data$File)) 
   colnames(metadata_X_rq1) <- c('File')
   metadata_X_rq1 <- metadata_X_rq1 %>%
@@ -37,20 +37,38 @@ df_pca <- function(data) {
 
 df_pca <- df_pca(shared_comp_plastic_type)
 
-
-
-# Conduct principal component analysis (PCA):
+# PCA with PCAtools::pca ===========
 colnames(df_pca[[2]]) <- c("Plastic type")
 
-p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]])
+# PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
+p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]],
+                   center = FALSE)
 
+# Retrieve PC and add as new variables to data frame 
+PCAtools_mergePC <- p$rotated
+
+# PCA with stats::prcomp ===========
+# stats::prcomp requires input x as df (columns as collapsed_compound, rows as sample name)
+
+prcomp_res <- stats::prcomp(df_pca[[1]])
+# summary(prcomp_res)
+stats::biplot(prcompnew)
+
+# Retrieve PC and add as new variables to data frame 
+merged_PC_dat <- prcomp_res$x
+t_merge_PC <- data.table::transpose(as.data.frame(PCAtools_mergePC))
+rownames(t_merge_PC) <- colnames(PCAtools_mergePC)
+colnames(t_merge_PC) <- rownames(PCAtools_mergePC)
+
+# PCA further visualizations ----------------------------------------------------------------
+# Scree plot
 screeplot(p, components = getComponents(p, 1:30),
           hline = 80, vline = 27, axisLabSize = 14, titleLabSize = 20,
           returnPlot = FALSE) +
   geom_label(aes(20, 80, label = '80% explained variation', vjust = -1, size = 8))
 
 # A bi-plot
-PCAtools::biplot(p,
+PCAtools::biplot(p_merged_PC,
                  lab = NULL, 
                  colby = "Plastic type",
                  hline = 0, vline = 0,

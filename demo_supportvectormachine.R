@@ -35,19 +35,23 @@ test <- filled.data[-samp,]
 
 
 # Train and Select best cost parameter
-tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = train, kernel = "radial",
-                 ranges = list(cost = c(0.001 , 0.01 , 0.1 , 1, 5, 10, 100),
-                               gamma = seq(from=0, to=0.02, by= 0.005),
-                               epsilon = c(0.001 , 0.01 , 0.1)),
-                 decision.values = TRUE)
+base::system.time(tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = train, kernel = "radial",
+                                          ranges = list(cost = seq(from = 0.1, to = 1, by = 0.01),
+                                                        gamma = 0.01,
+                                                        epsilon = seq(from = 0.0001, to = 0.001, by = 0.0001)),
+                                          decision.values = TRUE, 
+                                          probability = TRUE))
 
 # summary(tune.out)
 bestmod <- tune.out$best.model
-View(table(bestmod$fitted, train$plastic_type))
+View(bestmod)
+# View(table(bestmod$fitted, train$plastic_type))
 
 # Test
-ypred <- predict(bestmod, test)
-
+base::system.time(pred_prob <- predict(bestmod, test,
+                                       decision.values = TRUE, probability = TRUE))
+# Examine prediction accuracy
+attr(pred_prob, "probabilities")
 View(table(ypred, test$plastic_type))
 
 # Caret package: ===================================
@@ -84,7 +88,6 @@ churn_svm_auc$results
 caret::confusionMatrix(churn_svm_auc)
 
 # Feature importance
-
 
 vip_all <- c()
 for (pt in unique(filled.data$plastic_type)) {
