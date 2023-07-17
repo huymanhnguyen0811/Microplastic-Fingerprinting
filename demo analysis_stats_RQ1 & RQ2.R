@@ -40,8 +40,8 @@ rownames(transpose_df) <- colnames(stats_rq1b)
 colnames(transpose_df) <- rownames(stats_rq1b)
 
 transpose_df <- transpose_df %>%
-  rownames_to_column(., var = "File") %>%
-  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+  tibble::rownames_to_column(., var = "File") %>%
+  dplyr::mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
                                ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
                                       ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
                                              ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
@@ -49,12 +49,68 @@ transpose_df <- transpose_df %>%
                                                            ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
   relocate(plastic_type, .after = File)
 
+# Extract balloons from transpose data frame and make them class numeric 
+balloons <- as.vector(t(transpose_df[1:18, 3:ncol(transpose_df)]))
+hist(balloons, col='steelblue', main='Balloons')
+
+### Examining for normal distribution ----------------
+## Histogram 
+# Create empty list 
+histlist <- list()
+# For loop creating histograms of each plastic type
+i <- 1
+for (plastic in unique(transpose_df$plastic_type)) {
+  grouped_plastic <- which(transpose_df$plastic_type == plastic)
+  histlist[[i]] <- ggplot() +
+    geom_histogram(mapping = aes(as.vector(t(transpose_df[grouped_plastic, 3:ncol(transpose_df)])))) + 
+    labs(x = plastic, title = plastic)
+  i <- i + 1
+}
+# Appending each histogram to the empty list in order to view all of them
+gridExtra::grid.arrange(grobs = histlist)
+
+## QQ Plot 
+# Create empty list 
+qqlist <- list()
+# For loop creating QQ plots of each plastic type
+i <- 1 
+# Appending QQ plots together 
+par(mfrow=c(3,3))
+for (plastic in unique(transpose_df$plastic_type)) {
+  grouped_plastic <- which(transpose_df$plastic_type == plastic)
+  qqlist[[i]] <- qqnorm(as.vector(t(transpose_df[grouped_plastic, 3:ncol(transpose_df)])), main = plastic, xlab = plastic, col = 'steelblue')
+  qqline(as.vector(t(transpose_df[grouped_plastic, 3:ncol(transpose_df)])), col = 'red')
+  i <- i + 1
+}
+
+### Conclusion = they are not normally distributed 
+
+### Examining for equality of variance -----------------------------
+library(car)
+
+results <- list()
+for (col in 1:ncol(utils::combn(unique(transpose_df$plastic_type), 2))) {
+  # extract the combinations of plastic type pairs
+  plastic_type_1 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][1]
+  plastic_type_2 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][2]
+  idx1 <- which(transpose_df$plastic_type == plastic_type_1)
+  idx2 <- which(transpose_df$plastic_type == plastic_type_2)
+  V1 <- as.vector(t(transpose_df[idx1, 3:ncol(transpose_df)]))
+  V2 <- as.vector(t(transpose_df[idx2, 3:ncol(transpose_df)]))
+  data <- c(V1, V2)
+  grouped <- as.factor(c(rep(plastic_type_1, times = length(V1)), rep(plastic_type_2, times = length(V2))))
+  non_norm <- data.frame(data, grouped)
+  results[[paste0(plastic_type_1, plastic_type_2)]] <- car::leveneTest(data ~ grouped, data = non_norm)
+}
+
 
 # Examine whether 2 samples have equal variance and normally distributed.-----------------------------------------------
 ## Normally distributed by histogram, Q-Q plots and Shapiro-Wilk test, if p-value > 0.05 
 #-> normally distributed, not for each compound but for the whole
 GasData <- as.vector(t(cat_5[,c(1:21)])) # 100149 data points
 DieselData <- as.vector(t(cat_5[,c(22:25)])) # 19076 data point
+
+
 
 # Histogram
 hist(GasData, col='steelblue', main='Gas')
@@ -67,9 +123,6 @@ stats::qqline(GasData)
 stats::qqnorm(DieselData, main='Diesel')
 stats::qqline(DieselData)
 
-# Shapiro-Wilk tests - Error in shapiro.test(GasData) : sample size must be between 3 and 5000 -> do Normal Probability plot instead=
-# shapiro.test(GasData)
-# shapiro.test(DieselData)
 
 # CONCLUSION: both Gas and Diesel populations are NOT normally distrubuted
 
