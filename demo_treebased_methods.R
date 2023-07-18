@@ -69,7 +69,7 @@ add_p_type <- function(data) {
 PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
 e1071_merge_PC <- add_p_type(e1071_merge_PC)
 
-# PArtitioning train&test sets / training / predict on test set ----------
+# PArtitioning train&test sets / training / predict on test set
 rfsrc.result <- function(dat, split.ratio){
   set.seed(1234)
   plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
@@ -118,6 +118,66 @@ plot(gg.part, xvar=names(plastic_trn[,-1]), panel=TRUE, se=TRUE)
 # my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
                                       # importance="random", method="vimp", nrep=3) 
 
+
+# LightGBM for Multiclass Classification ==================
+library(lightgbm)
+
+lightgbm.result <- function(dat, split.ratio) {
+  
+  # Must convert plastic_type from factors to numeric
+  test <- copy(dat)
+  test$plastic_type <- as.numeric(as.factor(test$plastic_type)) - 1L
+  # Split train and test sets
+  set.seed(1234)
+  plastic_idx <- caret::createDataPartition(test$plastic_type, p = split.ratio, list = F)
+  plastic_trn <- as.matrix(test[plastic_idx, ])
+  plastic_tst <- as.matrix(test[-plastic_idx, ])
+  
+  dtrain <- lgb.Dataset(data = plastic_trn[, 2:ncol(plastic_trn)], label = plastic_trn[, 1])
+  dtest <- lgb.Dataset.create.valid(dtrain, data = plastic_tst[, 2:ncol(plastic_tst)], label = plastic_tst[, 1])
+  valids <- list(test = dtest)
+  
+  # Setup parameters
+  params <- list(
+    min_data = 1L
+    , learning_rate = 1
+    , objective = "multiclass"
+    , metric = "multi_error"
+    , num_class = 7L
+  ) 
+  
+  lgb.model <- lgb.train(params,
+                    dtrain,
+                    nrounds = 100,
+                    valids,
+                    early_stopping_rounds = 25L
+                    )
+  
+  # prediction
+  my_preds <- round(predict(lgb.model, plastic_tst[, 2:ncol(plastic_tst)]), 3)
+  smaller_my_preds <- split(my_preds, rep(1:29, each = 7))
+  # create prediction result df
+  testing <- data.frame(matrix(nrow=0, ncol = 7))
+  for (i in 1:length(smaller_my_preds)) {
+    testing <- rbind(testing, smaller_my_preds[[i]])
+  }
+
+  colnames(testing) <- levels(dat$plastic_type)
+  rownames(testing) <- rownames(plastic_tst)
+
+  # IMportant features
+  tree_imp = lgb.importance(lgb.model, percentage = T)
+  imp_var <- lgb.plot.importance(tree_imp, measure = "Gain")
+  
+  return(list(testing, imp_var))
+}
+
+
+PCAtools_mergePC.LGBMresult <- lightgbm.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.LGBMresult <- lightgbm.result(e1071_merge_PC, split.ratio = 0.6)
+
+View(PCAtools_mergePC.LGBMresult[[1]])
+View(e1071_merge_PC.LGBMresult[[1]])
 
 # Reserve Code -------------------
 library(tree)
@@ -219,48 +279,4 @@ mean((ytest - yhat.bart)^2)
 # check how many times each variable appeared in the collection of trees.
 ord <- order(bartfit$varcount.mean , decreasing = T)
 bartfit$varcount.mean[ord]
-
-# LightGBM for Multiclass Classification
-library(lightgbm)
-# split into train and test  
-indexes = caret::createDataPartition(shared_comp_normalized$plastic_type, p = .8, list = F)
-
-# split dataset into train and test parts that both contain feature and label parts.
-train = as.matrix(shared_comp_normalized[-indexes, ])
-test = as.matrix(shared_comp_normalized[indexes, ])
-
-train_x = train[, -9]
-train_y = train[, 9]
-
-test_x = test[, -9]
-test_y = test[, 9]
-
-# load the train and test data into the LightGBM dataset object
-dtrain = lightgbm::lgb.Dataset(train_x, label = train_y)
-dtest = lightgbm::lgb.Dataset.create.valid(dtrain, data = test_x, label = test_y)
-
-# Setup parameters
-params = list(
-  objective= 'multiclass',
-  metric = "multi_error", 
-  num_class = 7) 
-
-valids = list(test = dtest)
-model = lgb.train(params,
-                  dtrain,
-                  nrounds = 100,
-                  valids,
-                  min_data=1,
-                  learning_rate = 1,
-                  early_stopping_rounds = 10)
-
-# prediction
-pred = predict(model, test_x, reshape=T)
-pred_y = max.col(pred)-1
-
-# Confusion matrix
-confusionMatrix(as.factor(test_y), as.factor(pred_y))
-
-tree_imp = lgb.importance(model, percentage = T)
-lgb.plot.importance(tree_imp, measure = "Gain")
 
