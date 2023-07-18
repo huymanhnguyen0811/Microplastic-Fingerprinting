@@ -26,24 +26,54 @@ for (c in 2:ncol(my.data)) {
                                                        max = sort(shared_comp_plastic_type$Percent_Area)[2])
 }
 
-set.seed(430)
-plastic_idx <- caret::createDataPartition(my.data$plastic_type, p = 0.7, list = F)
-plastic_trn <- my.data[plastic_idx, ]
-plastic_tst <- my.data[-plastic_idx, ]
+# PCA-based feature data
+# add plastic_type as factor
+add_p_type <- function(data) {
+  newdata <- data %>%
+    rownames_to_column(., var = "File") %>%
+    mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+    relocate(plastic_type, .before = 1) %>%
+    column_to_rownames(., var = "File")
+  
+  return(newdata)
+}
 
-default_knn_mod <- caret::train(
-  plastic_type ~ .,
-  data = plastic_trn,
-  method = "knn",
-  trControl = trainControl(method = "cv", number = 5), # using 5-fold cross-validation
-  preProcess = c("center", "scale"),
-  tuneGrid = expand.grid(k = seq(1, 101, by = 2))
-)
+PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
+e1071_merge_PC <- add_p_type(e1071_merge_PC)
 
-default_knn_mod$finalModel
+# PArtitioning train&test sets / training / predict on test set
+class.kNN.result <- function(dat, split.ratio){
+  set.seed(1234)
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
+  plastic_trn <- dat[plastic_idx, ]
+  plastic_tst <- dat[-plastic_idx, ]  
+  
+  default_knn_mod <- caret::train(
+    plastic_type ~ .,
+    data = plastic_trn,
+    method = "knn",
+    trControl = trainControl(method = "cv", number = 5), # using 5-fold cross-validation
+    # preProcess = c("center", "scale"),
+    tuneGrid = expand.grid(k = seq(1, 9, by = 2))
+  )
+  
+  
+  # Prediction results
+  knn_pred_res <- predict(default_knn_mod, newdata = plastic_tst, type = "prob")
+  rownames(knn_pred_res) <- rownames(plastic_tst)
+  
+  return(knn_pred_res)
+}
 
-knn_pred_res <- predict(default_knn_mod, newdata = plastic_tst, type = "prob")
-rownames(knn_pred_res) <- rownames(plastic_tst)
+PCAtools_mergePC.SVMresult <- class.kNN.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.SVMresult <- class.kNN.result(e1071_merge_PC, split.ratio = 0.6)
+
 
 # With mlr3verse ---------------------
 library(mlr3verse)
