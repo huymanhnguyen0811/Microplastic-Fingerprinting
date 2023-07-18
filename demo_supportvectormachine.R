@@ -3,6 +3,7 @@ library(caret)
 library(ROCR)
 library(MLmetrics)
 
+# Original dat --------------
 my.data <- shared_comp_plastic_type  %>%
   dplyr::select(File, collapsed_compound, Percent_Area) %>%
   group_by(File, collapsed_compound) %>%
@@ -28,106 +29,122 @@ for (c in 2:ncol(filled.data)) {
 }
 
 # e1071 package: ===========================
-# With original data
-samp <- caret::createDataPartition(filled.data$plastic_type, p = 0.7, list = F)
-
-# With Principal Component merged data
-dat <- e1071_merge_PC %>% # 
-  tibble::rownames_to_column(., var = "File") %>%
-  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
-                               ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                      ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
-                                             ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                    ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                           ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
-  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
-  dplyr::relocate(plastic_type, .before = 1) %>%
-  tibble::column_to_rownames(., var = "File")
+# PCA-based feature data
+# add plastic_type as factor
+add_p_type <- function(data) {
+  newdata <- data %>%
+    rownames_to_column(., var = "File") %>%
+    mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+    relocate(plastic_type, .before = 1) %>%
+    column_to_rownames(., var = "File")
   
-samp_PC <- caret::createDataPartition(dat$plastic_type, p = 0.7, list = F)
-
-# Split train and test datasets
-train <- dat[samp_PC,]
-test <- dat[-samp_PC,]
-
-# Train and Select best cost parameter
-base::system.time(tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = train, kernel = "radial",
-                                          ranges = list(cost = seq(from = 0.1, to = 1, by = 0.01),
-                                                        gamma = 0.01,
-                                                        epsilon = seq(from = 0.0001, to = 0.001, by = 0.0001)),
-                                          decision.values = TRUE, 
-                                          probability = TRUE))
-
-# summary(tune.out)
-bestmod <- tune.out$best.model
-View(bestmod)
-# View(table(bestmod$fitted, train$plastic_type))
-
-# Test
-base::system.time(pred_prob <- predict(bestmod, test,
-                                       decision.values = TRUE, probability = TRUE))
-# Examine prediction accuracy
-attr(pred_prob, "probabilities")
-View(table(ypred, test$plastic_type))
-
-# Caret package: ===================================
-# split train and test data 60:40 with stratification on plastic_type
-set.seed(123)  # for reproducibility
-# Conduct stratified sampling
-churn_split <- rsample::initial_split(filled.data, prop = 0.7, strata = "plastic_type")
-# Assign train & test set to variables
-churn_train <- rsample::training(churn_split)
-churn_test  <- rsample::testing(churn_split)
-
-# Control params for SVM
-ctrl <- caret::trainControl(
-  method = "cv", 
-  number = 10, # Performing 10-fold CrossValidation
-  classProbs = TRUE,                 
-  summaryFunction = multiClassSummary  # also needed for AUC/ROC
-)
-
-# Tune an SVM with caret
-churn_svm_auc <- caret::train(
-  plastic_type ~ ., 
-  data = filled.data,
-  method = "svmRadial",               
-  # preProcess = c("center", "scale"),  
-  metric = "ROC",  # area under ROC curve (AUC)       
-  trControl = ctrl,
-  tuneLength = 10
-)
-
-churn_svm_auc$results
-
-# Confusion Matrix
-caret::confusionMatrix(churn_svm_auc)
-
-# Feature importance
-
-vip_all <- c()
-for (pt in unique(filled.data$plastic_type)) {
-  set.seed(282)  # for reproducibility
-  
-  # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
-  prob <- function(object, newdata) {
-    predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
-  }
-  
-  # Variable importance plot
-  vip_res <- vip::vip(churn_svm_auc, method = "permute", nsim = 5, train = filled.data, 
-                      target = "plastic_type", metric = "auc", reference_class = pt,
-                      pred_wrapper = prob)
-  vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
+  return(newdata)
 }
 
-# construct PDPs for the top four features of reference_class
-features <- vip_all
+PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
+e1071_merge_PC <- add_p_type(e1071_merge_PC)
 
-pdps <- lapply(features, function(x) {
-  partial(churn_svm_auc, pred.var = x, which.class = 2,  
-          prob = TRUE, plot = TRUE, plot.engine = "ggplot2") +
-    coord_flip()
-})
+# PArtitioning train&test sets / training / predict on test set
+e1071.SVM.result <- function(dat, split.ratio){
+  set.seed(1234)
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
+  plastic_trn <- dat[plastic_idx, ]
+  plastic_tst <- dat[-plastic_idx, ]  
+  
+  tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = plastic_trn, kernel = "radial",
+                          ranges = list(cost = seq(from = 0.1, to = 1, by = 0.01),
+                                        gamma = 0.01,
+                                        epsilon = seq(from = 0.0001, to = 0.001, by = 0.0001)),
+                          decision.values = TRUE, 
+                          probability = TRUE)
+  bestmod <- tune.out$best.model
+  
+  # Prediction results
+  pred_prob <- predict(bestmod, newdata = plastic_tst,
+                       decision.values = TRUE, probability = TRUE)
+  pred_res <- attr(pred_prob, "probabilities")
+  return(pred_res)
+}
 
-grid.arrange(grobs = pdps,  ncol = 5)
+PCAtools_mergePC.SVMresult <- e1071.SVM.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.SVMresult <- e1071.SVM.result(e1071_merge_PC, split.ratio = 0.6)
+
+
+# Caret package: ===================================
+caret.SVM.result <- function(dat, split.ratio) {
+  set.seed(1234)
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = 0.6, list = F)
+  plastic_trn <- dat[plastic_idx, ]
+  plastic_tst <- dat[-plastic_idx, ]
+  
+  # Control params for SVM
+  ctrl <- caret::trainControl(
+    method = "cv", 
+    number = 10, # Performing 10-fold CrossValidation
+    classProbs = TRUE,                 
+    summaryFunction = multiClassSummary  # also needed for AUC/ROC
+  )
+  
+  # Tune an SVM with caret
+  caret_svm_auc <- caret::train(
+    plastic_type ~ ., 
+    data = plastic_trn,
+    method = "svmRadial",               
+    # preProcess = c("center", "scale"),  
+    metric = "ROC",  # area under ROC curve (AUC)       
+    trControl = ctrl,
+    tuneLength = 10
+  )
+  
+  
+  # Prediction
+  pred_prob <-predict(caret_svm_auc, newdata = plastic_tst, type = "prob")
+  rownames(pred_prob) <- rownames(plastic_tst)
+  
+  # Confusion Matrix
+  # caret::confusionMatrix(caret_svm_auc)
+  
+  # Feature importance
+  
+  vip_all <- c()
+  for (pt in unique(plastic_trn$plastic_type)) {
+    set.seed(282)  # for reproducibility
+    
+    # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
+    prob <- function(object, newdata) {
+      predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
+    }
+    
+    # Variable importance plot
+    vip_res <- vip::vip(caret_svm_auc, method = "permute", nsim = 5, train = plastic_trn, 
+                        target = "plastic_type", metric = "auc", reference_class = pt,
+                        pred_wrapper = prob)
+    vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
+  }
+  
+  # construct PDPs for the top four features of reference_class
+  # features <- vip_all
+  # 
+  # pdps <- lapply(features, function(x) {
+  #   partial(caret_svm_auc, pred.var = x, which.class = 2,  
+  #           prob = TRUE, plot = TRUE, plot.engine = "ggplot2") +
+  #     coord_flip()
+  # })
+  # 
+  # grid.arrange(grobs = pdps,  ncol = 5)
+  # 
+  
+  return(list(pred_prob, vip_all))
+}
+
+PCAtools_mergePC.SVMresult <- caret.SVM.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.SVMresult <- caret.SVM.result(e1071_merge_PC, split.ratio = 0.6)
+
+View(PCAtools_mergePC.SVMresult[[1]])
+View(e1071_merge_PC.SVMresult[[1]])

@@ -48,24 +48,72 @@ filled.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc",
 
 filled.rf
 
+# PCA-based feature data ==========================
+# add plastic_type as factor
+add_p_type <- function(data) {
+  newdata <- data %>%
+    rownames_to_column(., var = "File") %>%
+    mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+    relocate(plastic_type, .before = 1) %>%
+    column_to_rownames(., var = "File")
+  
+  return(newdata)
+}
+
+PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
+e1071_merge_PC <- add_p_type(e1071_merge_PC)
+
+# PArtitioning train&test sets / training / predict on test set ----------
+rfsrc.result <- function(dat, split.ratio){
+  set.seed(1234)
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
+  plastic_trn <- dat[plastic_idx, ]
+  plastic_tst <- dat[-plastic_idx, ]  
+  
+  mergePC.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
+                      nodesize = 1,
+                      importance = "random", data = plastic_trn) # function to run RF
+  
+  mergePC.rf
+  
+  # Prediction results
+  pred_res <- predict(mergePC.rf, newdata = plastic_tst, type = "prob")$predicted
+  rownames(pred_res) <- rownames(plastic_tst)
+  
+  # selection of the best feature candidates ------------------
+  md.obj <- max.subtree(mergePC.rf)
+  best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
+  
+  return(list(pred_res, best.feature))
+}
+
+PCAtools_mergePC.RFresult <- rfsrc.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.RFresult <- rfsrc.result(e1071_merge_PC, split.ratio = 0.6)
+
+
 # plot OOB error rate against the number of trees -------
 plot(ggRandomForests::gg_error(my.rf)) 
 plot(ggRandomForests::gg_error(filled.rf)) 
 
 # Estimate the variables importance --------
-my.rf.vimp <- ggRandomForests::gg_vimp(my.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
-my.rf.vimp
+my.rf.vimp <- ggRandomForests::gg_vimp(mergePC.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
 plot(my.rf.vimp) # visualises the predictor’s importance
  
 # Plot the response variable against each predictor variable, we can generate partial dependance plots --------------
-my.rf.part.plot <- plot.variable(my.rf, partial=TRUE, sorted=FALSE,
-                                  show.plots=FALSE, nvar = 10)
-gg.part <- ggRandomForests::gg_partial	(my.rf.part.plot)
-plot(gg.part, xvar=names(my.data[,-1]), panel=TRUE, se=TRUE)
+my.rf.part.plot <- plot.variable(mergePC.rf, partial=TRUE, sorted=FALSE,
+                                 show.plots=FALSE, 
+                                 nvar = 10 # look at top 10 predictor's importance
+                                 )
+gg.part <- ggRandomForests::gg_partial(my.rf.part.plot)
+plot(gg.part, xvar=names(plastic_trn[,-1]), panel=TRUE, se=TRUE)
 
-# selection of the best candidates ------------------
-md.obj <- max.subtree(my.rf)
-md.obj$topvars # extracts the names of the variables in the object md.obj
+
 
 # my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
                                       # importance="random", method="vimp", nrep=3) 
