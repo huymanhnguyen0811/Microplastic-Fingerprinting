@@ -1,5 +1,4 @@
-# With class package ---------------------------
-library(class)
+# With caret package ---------------------------
 library(caret)
 
 
@@ -48,7 +47,7 @@ PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
 e1071_merge_PC <- add_p_type(e1071_merge_PC)
 
 # PArtitioning train&test sets / training / predict on test set
-class.kNN.result <- function(dat, split.ratio){
+caret.kNN.result <- function(dat, split.ratio){
   set.seed(1234)
   plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
   plastic_trn <- dat[plastic_idx, ]
@@ -58,9 +57,11 @@ class.kNN.result <- function(dat, split.ratio){
     plastic_type ~ .,
     data = plastic_trn,
     method = "knn",
-    trControl = trainControl(method = "cv", number = 5), # using 5-fold cross-validation
+    trControl = trainControl(method = "cv", 
+                             number = 5, # using 5-fold cross-validation
+                             classProbs = TRUE), 
     # preProcess = c("center", "scale"),
-    tuneGrid = expand.grid(k = seq(1, 9, by = 2))
+    tuneGrid = expand.grid(k = seq(1, 9, by = 1))
   )
   
   
@@ -68,11 +69,13 @@ class.kNN.result <- function(dat, split.ratio){
   knn_pred_res <- predict(default_knn_mod, newdata = plastic_tst, type = "prob")
   rownames(knn_pred_res) <- rownames(plastic_tst)
   
-  return(knn_pred_res)
+  pROC.res <- pROC::multiclass.roc(response = plastic_tst$plastic_type, predictor = knn_pred_res)
+  
+  return(list(knn_pred_res, pROC.res))
 }
 
-PCAtools_mergePC.SVMresult <- class.kNN.result(PCAtools_mergePC, split.ratio = 0.6)
-e1071_merge_PC.SVMresult <- class.kNN.result(e1071_merge_PC, split.ratio = 0.6)
+PCAtools_mergePC.kNNresult <- caret.kNN.result(PCAtools_mergePC, split.ratio = 0.6)
+e1071_merge_PC.kNNresult <- caret.kNN.result(e1071_merge_PC, split.ratio = 0.6)
 
 
 # With mlr3verse ---------------------

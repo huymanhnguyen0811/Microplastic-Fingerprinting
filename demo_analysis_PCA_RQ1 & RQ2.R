@@ -11,8 +11,8 @@ df_pca <- function(data) {
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
-    column_to_rownames(., var = "File")
+    pivot_wider(names_from = File, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "collapsed_compound")
   
 
   for (r in 1:nrow(df_X_rq1)) { 
