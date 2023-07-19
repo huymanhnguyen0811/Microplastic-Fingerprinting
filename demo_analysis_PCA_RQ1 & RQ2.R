@@ -52,7 +52,7 @@ PCAtools_mergePC <- p$rotated
 
 prcomp_res <- stats::prcomp(df_pca[[1]])
 
-stats::biplot(prcomp_res)
+# stats::biplot(prcomp_res)
 
 # Retrieve PC and add as new variables to data frame 
 e1071_merge_PC <- as.data.frame(prcomp_res$x)

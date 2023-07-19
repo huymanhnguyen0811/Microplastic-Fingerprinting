@@ -78,7 +78,10 @@ rfsrc.result <- function(dat, split.ratio){
   
   mergePC.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
                       nodesize = 1,
-                      importance = "random", data = plastic_trn) # function to run RF
+                      mtry = 21,
+                      importance = "permute", 
+                      data = plastic_trn
+                      )
   
   mergePC.rf
   
@@ -96,6 +99,8 @@ rfsrc.result <- function(dat, split.ratio){
 PCAtools_mergePC.RFresult <- rfsrc.result(PCAtools_mergePC, split.ratio = 0.6)
 e1071_merge_PC.RFresult <- rfsrc.result(e1071_merge_PC, split.ratio = 0.6)
 
+View(PCAtools_mergePC.RFresult[[1]])
+View(e1071_merge_PC.RFresult[[1]])
 
 # plot OOB error rate against the number of trees -------
 plot(ggRandomForests::gg_error(my.rf)) 

@@ -39,3 +39,19 @@ corrplot(cor(my_data), order = "hclust", tl.col = "black", tl.srt = 45)
 
 
 View(as.matrix(stats::dist(as.matrix(my_data), method = "minkowski", upper = TRUE)))
+
+# Check linear relationship between each predictor and response variables (aka. plastic_type) --------
+cor.res <- list()
+for (col in colnames(filled.data[, 2:ncol(filled.data)])) {
+  cor.res[paste0("plastic_type", "_", col)] <- stats::kruskal.test(filled.data[, col]~filled.data$plastic_type)$p.value
+}
+
+cor.resdf <- data.frame(sapply(cor.res,c)) 
+colnames(cor.resdf) <- c("pvalue")
+cor.resdf <- cor.resdf %>%
+  dplyr::arrange(pvalue) %>%
+  filter(pvalue < 0.05)
+
+library(ggpubr)
+ggpubr::ggboxplot(filled.data, x = "plastic_type", y = "Compound_867.", 
+                  color = "plastic_type")
