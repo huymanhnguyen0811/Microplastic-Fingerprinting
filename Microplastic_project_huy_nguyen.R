@@ -280,7 +280,6 @@ grid.arrange(grobs = plot_b, ncol = 5,
 list_remaining_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[1]]
 list_removed_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[2]]
 
-
 # QUALITY CONTROL C (CONFIRMATION) OF STEP 1.2B: -----------------------
 ## Plotting post-removal data distribution
 data_plot_post_removal <- list() 
@@ -402,7 +401,6 @@ shared_comp_sample <- adjusted_df[c(idx_list_filter_samples[[1]], idx_list_filte
 
 # Combine compounds that occur in at least 2 plastic types 
 shared_comp_plastic_type <- adjusted_df[c(idx_list_filter_plastic_types[[1]], idx_list_filter_plastic_types[[2]]),]
-
 
 # Plotting data distribution post-removal ------------------------------------------------
 data_plot_post_removal <- list() 

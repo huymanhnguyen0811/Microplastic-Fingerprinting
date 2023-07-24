@@ -116,7 +116,7 @@ fligner.test(datat ~ grouped, data = non_norm)
 # K-S Test non-parametric data ---------
 # The KS test compared the CDF of these samples. The null hypothesis is that the two distributions are the same. 
 
-stats::ks.test(V1, V2, non_norm)
+stats::ks.test(V1, V2)
 ### With alternative "two-sided" which is default, p-value less than significance value. We can reject the null hypothesis and claim the two 
 #distributions are not the same. D = 0.05 which is close to 0, however, means the two samples' distribution are pretty similar even if they 
 #are not the same. The D statistic is a calculation of the maximum difference between the two samples' empirical distribution 
@@ -146,16 +146,65 @@ for (comp in colnames(transpose_df[,3:ncol(transpose_df)])) {
     ks_test <- ks.test(transpose_df[which(transpose_df$plastic_type == plastic_type_1), comp],
                        transpose_df[which(transpose_df$plastic_type == plastic_type_2), comp])$p.value
     # assigning row information
-    summary_table_of_tests[nrow(summary_table_of_tests) + 1,] <- c(comp, paste0(plastic_type_1, "_", plastic_type_2), wilcox_test, ks_test)
+    summary_table_of_tests[nrow(summary_table_of_tests) + 1,] <- c(comp, paste0(plastic_type_1, "&", plastic_type_2), wilcox_test, ks_test)
   }
 }
+
+summary_table_of_tests$adjusted_pvalue_holm <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "holm")
+summary_table_of_tests$adjusted_pvalue_hochberg <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "hochberg")
+summary_table_of_tests$adjusted_pvalue_hommel <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "hommel")
+summary_table_of_tests$adjusted_pvalue_bonferroni <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "bonferroni")
+summary_table_of_tests$adjusted_pvalue_BH <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "BH")
+summary_table_of_tests$adjusted_pvalue_BY <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "BY")
+summary_table_of_tests$adjusted_pvalue_fdr <- stats::p.adjust(summary_table_of_tests$wilcox_test, method = "fdr")
+
+alpha <- summary_table_of_tests %>%
+  filter(., adjusted_pvalue_holm < 0.05) %>%
+  arrange(adjusted_pvalue_holm)
 
 summary_p0.05 <- summary_table_of_tests %>% filter(wilcox_test < 0.05 & ks_test < 0.05)
 
 unique(summary_p0.05$comp)
 
+top <- summary_p0.05 %>% arrange(wilcox_test, ks_test)
+
+top_wil <- summary_p0.05 %>% arrange(wilcox_test)
+top_ks <- summary_p0.05 %>% arrange(ks_test)
 
 
+#get first 10 rows
+top_10 <- top[1:10,]
+#then make ggplot with unique of each compound 
+
+C16 <- transpose_df %>% select(., c("plastic_type", "Compound_16.")) %>% filter(plastic_type %in% c("Plastic_Cups", 
+                                                                                                    "Plastic_Drinking_Straws"))
+ggplot(data = C16) + geom_boxplot(aes(x = plastic_type, y = Compound_16., fill = plastic_type))
+
+C1164 <- transpose_df %>% select(., c("plastic_type", "Compound_1164.")) %>% filter(plastic_type %in% c("Food_Packaging_Waste", 
+                                                                                                    "Plastic_Cups"))
+ggplot(data = C1164) + geom_boxplot(aes(x = plastic_type, y = Compound_1164., fill = plastic_type))
+
+
+
+result <- c()
+for (i in unique(summary_p0.05$comp)) {
+  if (length(which(summary_p0.05$comp == i)) > 4) {
+    result <- c(result, i)
+  }
+  else {
+    next
+  }
+}
+
+
+ggplot(data = transpose_df %>% 
+         dplyr::select(., c("plastic_type", result)) %>%
+         pivot_longer(., cols = 2:ncol(.), names_to = "compound", values_to = "percent_area"),
+       aes(x = plastic_type, y = percent_area, fill = plastic_type)) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(~ compound) +
+  geom_boxplot()
+  
 
 
 

@@ -50,7 +50,7 @@ rfsrc.result <- function(dat, split.ratio){
   pred_res <- predict(mergePC.rf, newdata = plastic_tst, type = "prob")$predicted
   rownames(pred_res) <- rownames(plastic_tst)
   
-  # selection of the best feature candidates ------------------
+  # selection of the best feature candidates
   md.obj <- max.subtree(mergePC.rf)
   best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
   
