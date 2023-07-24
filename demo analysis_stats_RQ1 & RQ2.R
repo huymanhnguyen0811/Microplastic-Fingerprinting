@@ -85,7 +85,10 @@ for (plastic in unique(transpose_df$plastic_type)) {
 
 ### Conclusion = they are not normally distributed 
 
+
+
 ### Examining for equality of variance -----------------------------
+# Levene’s test-non-normally distributed data (car::leveneTest()), significant if p-value < 0.05 
 library(car)
 
 results <- list()
@@ -97,11 +100,64 @@ for (col in 1:ncol(utils::combn(unique(transpose_df$plastic_type), 2))) {
   idx2 <- which(transpose_df$plastic_type == plastic_type_2)
   V1 <- as.vector(t(transpose_df[idx1, 3:ncol(transpose_df)]))
   V2 <- as.vector(t(transpose_df[idx2, 3:ncol(transpose_df)]))
-  data <- c(V1, V2)
+  datat <- c(V1, V2)
   grouped <- as.factor(c(rep(plastic_type_1, times = length(V1)), rep(plastic_type_2, times = length(V2))))
-  non_norm <- data.frame(data, grouped)
-  results[[paste0(plastic_type_1, plastic_type_2)]] <- car::leveneTest(data ~ grouped, data = non_norm)
+  non_norm <- data.frame(datat, grouped)
+  results[[paste0(plastic_type_1, plastic_type_2)]] <- car::leveneTest(datat ~ grouped, data = non_norm)
 }
+# -> p-value is 0.4096 which is greater the significance level of 0.05 therefore can conclude there is no significant difference between the variances
+
+
+# Fligner-Killeen's test (fligner.test()), significant if p-value < 0.05 
+fligner.test(datat ~ grouped, data = non_norm)
+# p-value less than significance level therefore there is significant difference between variances
+
+
+# K-S Test non-parametric data ---------
+# The KS test compared the CDF of these samples. The null hypothesis is that the two distributions are the same. 
+
+stats::ks.test(V1, V2, non_norm)
+### With alternative "two-sided" which is default, p-value less than significance value. We can reject the null hypothesis and claim the two 
+#distributions are not the same. D = 0.05 which is close to 0, however, means the two samples' distribution are pretty similar even if they 
+#are not the same. The D statistic is a calculation of the maximum difference between the two samples' empirical distribution 
+#functions.
+
+# KS Test asks if x and y come from the same distribution. KS test measures the spread and shape of the data sets, 
+#i.e. if the data is symmetric or skewed. The Wilcoxon test is interested in the location differences of the data sets, not so much 
+#the spread of the data but where individually are their medians and means comparatively. 
+
+# Wilcoxon test to verify non normality of samples -----------
+# Examine a difference in median value between distributions. 
+wilcox.test(datat ~ grouped, data = non_norm, paired = FALSE)
+# -> p-value smaller than significance level meaning two samples differ in distribution and median
+
+
+summary_table_of_tests <- data.frame(comp=character(), pair=character(), wilcox_test=integer(), ks_test=integer())
+
+for (comp in colnames(transpose_df[,3:ncol(transpose_df)])) {
+  # looping through the combinations of plastic types 
+  for (col in 1:ncol(utils::combn(unique(transpose_df$plastic_type), 2))) {
+    # extract the combinations of plastic type pairs
+    plastic_type_1 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][1]
+    plastic_type_2 <- utils::combn(unique(transpose_df$plastic_type), 2)[,col][2]
+    # calculating the p-value between each plastic type pair 
+    wilcox_test <- wilcox.test(transpose_df[which(transpose_df$plastic_type == plastic_type_1), comp], 
+                               transpose_df[which(transpose_df$plastic_type == plastic_type_2), comp])$p.value
+    ks_test <- ks.test(transpose_df[which(transpose_df$plastic_type == plastic_type_1), comp],
+                       transpose_df[which(transpose_df$plastic_type == plastic_type_2), comp])$p.value
+    # assigning row information
+    summary_table_of_tests[nrow(summary_table_of_tests) + 1,] <- c(comp, paste0(plastic_type_1, "_", plastic_type_2), wilcox_test, ks_test)
+  }
+}
+
+summary_p0.05 <- summary_table_of_tests %>% filter(wilcox_test < 0.05 & ks_test < 0.05)
+
+unique(summary_p0.05$comp)
+
+
+
+
+
 
 
 # Examine whether 2 samples have equal variance and normally distributed.-----------------------------------------------

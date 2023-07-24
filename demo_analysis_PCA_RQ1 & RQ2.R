@@ -7,6 +7,8 @@ df_pca <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(File, collapsed_compound, Percent_Area) %>%
+    filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
+    filter(., !str_detect(File, "Balloons_Sample")) %>%
     mutate(File = factor(File, levels = unique(File))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
@@ -24,13 +26,15 @@ df_pca <- function(data) {
   # table for information (rows are sample IDs, columns are sample information) -----------------------
   metadata_X_rq1 <- data.frame(unique(data$File)) 
   colnames(metadata_X_rq1) <- c('File')
-  metadata_X_rq1 <- metadata_X_rq1 %>%
-    mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
-                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+  metadata_X_rq1 <- metadata_X_rq1 %>% 
+    filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
+    filter(., !str_detect(File, "Balloons_Sample")) %>%
+    mutate(plastic_type = ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                 # ifelse(str_detect(File, "Balloons"), "Balloons",
                                         ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
                                                ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+                                                      # ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))) %>%
     column_to_rownames(., var = "File")
   
   return(list(df_X_rq1 ,metadata_X_rq1))
@@ -66,7 +70,7 @@ screeplot(p, components = getComponents(p, 1:30),
   geom_label(aes(20, 80, label = '80% explained variation', vjust = -1, size = 8))
 
 # A bi-plot
-PCAtools::biplot(p_merged_PC,
+PCAtools::biplot(p,
                  lab = NULL, 
                  colby = "Plastic type",
                  hline = 0, vline = 0,

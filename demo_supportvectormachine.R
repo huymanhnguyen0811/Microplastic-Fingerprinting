@@ -3,30 +3,6 @@ library(caret)
 library(ROCR)
 library(MLmetrics)
 
-# Original dat --------------
-my.data <- shared_comp_plastic_type  %>%
-  dplyr::select(File, collapsed_compound, Percent_Area) %>%
-  group_by(File, collapsed_compound) %>%
-  # , we summarize these values by taking the mean of them
-  summarise(across(Percent_Area, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
-  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
-                               ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                      ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
-                                             ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                    ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                           ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
-  mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
-  relocate(plastic_type, .before = 1) %>%
-  column_to_rownames(., var = "File")
-
-# Fill NA with LOD ------------------------------------------------
-filled.data <- copy(my.data)
-for (c in 2:ncol(filled.data)) { 
-  filled.data[which(base::is.na(filled.data[,c])), c] <- runif(length(which(base::is.na(filled.data[,c]))),
-                                                               min = sort(shared_comp_plastic_type$Percent_Area)[1],
-                                                               max = sort(shared_comp_plastic_type$Percent_Area)[2])
-}
 
 # e1071 package: ===========================
 # PCA-based feature data
@@ -74,6 +50,28 @@ e1071.SVM.result <- function(dat, split.ratio){
 
 PCAtools_mergePC.SVMresult <- e1071.SVM.result(PCAtools_mergePC, split.ratio = 0.6)
 e1071_merge_PC.SVMresult <- e1071.SVM.result(e1071_merge_PC, split.ratio = 0.6)
+my.data.SVMresult <- e1071.SVM.result(my.data, split.ratio = 0.6)
+
+plot.dat <- function(dat) {
+  newdat <- as.data.frame(dat) %>%
+    tibble::rownames_to_column(., var = "File") %>%
+    tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "plastic_type", values_to = "prob")
+  return(newdat)
+}   
+
+PCAtoolsdat <- plot.dat(PCAtools_mergePC.SVMresult)
+e1071dat <- plot.dat(e1071_merge_PC.SVMresult)
+mydat <- plot.dat(my.data.SVMresult)
+
+# Make bar graph of prediction probability
+ggplot(data = mydat) + 
+  geom_col(aes(x = File, y = prob, fill = plastic_type), 
+           position = "dodge" # separating stacking prob cols
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(n.breaks = 10) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90))
 
 
 # Caret package: ===================================
@@ -145,6 +143,22 @@ caret.SVM.result <- function(dat, split.ratio) {
 
 PCAtools_mergePC.SVMresult <- caret.SVM.result(PCAtools_mergePC, split.ratio = 0.6)
 e1071_merge_PC.SVMresult <- caret.SVM.result(e1071_merge_PC, split.ratio = 0.6)
+my.data.SVMresult <- caret.SVM.result(my.data, split.ratio = 0.6)
 
 View(PCAtools_mergePC.SVMresult[[1]])
 View(e1071_merge_PC.SVMresult[[1]])
+View(my.data.SVMresult[[1]])
+
+PCAtoolsdat <- plot.dat(PCAtools_mergePC.SVMresult[[1]])
+e1071dat <- plot.dat(e1071_merge_PC.SVMresult[[1]])
+mydat <- plot.dat(my.data.SVMresult[[1]])
+
+# Make bar graph of prediction probability
+ggplot(data = mydat) + 
+  geom_col(aes(x = File, y = prob, fill = plastic_type), 
+           position = "dodge" # separating stacking prob cols
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(n.breaks = 10) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90))
