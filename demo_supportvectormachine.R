@@ -94,7 +94,7 @@ caret.SVM.result <- function(dat, split.ratio) {
     plastic_type ~ ., 
     data = plastic_trn,
     method = "svmRadial",               
-    # preProcess = c("center", "scale"),  
+    preProcess = c("center", "scale"),
     metric = "ROC",  # area under ROC curve (AUC)       
     trControl = ctrl,
     tuneLength = 10

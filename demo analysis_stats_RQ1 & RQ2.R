@@ -110,7 +110,8 @@ for (col in 1:ncol(utils::combn(unique(transpose_df$plastic_type), 2))) {
 
 # Fligner-Killeen's test (fligner.test()), significant if p-value < 0.05 
 fligner.test(datat ~ grouped, data = non_norm)
-# p-value less than significance level therefore there is significant difference between variances
+# p-value less than significance level therefore there is significant difference between variances.
+# Test to determine the homogeneity of group variances. 
 
 
 # K-S Test non-parametric data ---------
@@ -205,6 +206,62 @@ ggplot(data = transpose_df %>%
   facet_wrap(~ compound) +
   geom_boxplot()
   
+
+
+# 5 assumptions of multiple linear regression --------------------
+must_convert<-sapply(transpose_df, is.factor)
+new_pt <- sapply(transpose_df[, must_convert], unclass)
+out<-cbind(transpose_df[,!must_convert],new_pt) 
+
+out <- out %>% 
+  relocate(new_pt, .after = File) %>%
+  column_to_rownames(., var = "File") 
+
+# Linear relationship (predicting the plastic type)
+linearity <- lm(new_pt ~ ., data = out)
+summary(linearity)
+
+ # No multicollinearity 
+
+library(car)
+vif(linearity)
+
+  # check correlation between predictor variables
+cor_matrix <- out[, 2:ncol(out)]
+
+cor(cor_matrix)
+  # create heat map to see correlation 
+library(reshape2)
+cor_mat <- round(cor(cor_matrix), 3)
+melt_cor_mat <- melt(cor_mat)
+
+#ggplot(data = melt_cor_mat, aes(x=Var1, y=Var2, fill=value)) +
+ # geom_tile()
+
+install.packages("ggcorrplot")
+library(ggcorrplot)
+ggcorrplot::ggcorrplot(cor(cor_matrix))
+
+ # Independence 
+  # the Durbin-Watson Test
+library(car)
+durbinWatsonTest(linearity)
+  # reject null hypothesis because autocorrelation is not 0,
+  # alternative hypothesis is true (true autocorrelation is greater than 0).
+
+ # Homoscedasticity 
+plot(fitted(linearity), resid(linearity), xlab='Fitted Values', ylab='Residuals')
+abline(0,0)
+   # does not work because lm model is filled with NA's, must fix this. 
+   # all compounds that had a number for st deviation are important. must remove all NA's (because of collinearity). 
+  # slice into coefficients in linearity and take out all compounds where is.na = FALSE because we want all the values. 
+  # go back to out matrix and subset all the columns that are important 
+
+ # Multivariate Normality 
+
+
+
+# Multivariate parametric test -> anova (assumptions must be met, earlier tests were non-parametric)
 
 
 
