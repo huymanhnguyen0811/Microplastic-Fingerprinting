@@ -29,14 +29,22 @@ e1071_merge_PC <- add_p_type(e1071_merge_PC)
 # PArtitioning train&test sets / training / predict on test set
 e1071.SVM.result <- function(dat, split.ratio){
   set.seed(1234)
-  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
-  plastic_trn <- dat[plastic_idx, ]
-  plastic_tst <- dat[-plastic_idx, ]  
+  plastic_idx <- caret::createDataPartition(my.data$plastic_type, p = 0.5, list = F)
+  plastic_trn <- my.data[plastic_idx, ]
+  plastic_tst <- my.data[-plastic_idx, ]  
   
-  tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., data = plastic_trn, kernel = "radial",
-                          ranges = list(cost = seq(from = 0.1, to = 1, by = 0.01),
-                                        gamma = 0.01,
-                                        epsilon = seq(from = 0.0001, to = 0.001, by = 0.0001)),
+  # Create 1 million evenly spaced values on a log scale between 10^-6 and 10^2
+  lseq <- function(from = 0.000001, to = 100, length.out=1000000) {
+    # logarithmic spaced sequence
+    exp(seq(log(from), log(to), length.out = length.out))
+  }
+  
+  # Model tuning
+  tune.out <- e1071::tune(e1071::svm, plastic_type ~ ., 
+                          data = plastic_trn,
+                          kernel = "linear",
+                          scale = TRUE,
+                          ranges = list(cost = lseq()),
                           decision.values = TRUE, 
                           probability = TRUE)
   bestmod <- tune.out$best.model
@@ -45,6 +53,23 @@ e1071.SVM.result <- function(dat, split.ratio){
   pred_prob <- predict(bestmod, newdata = plastic_tst,
                        decision.values = TRUE, probability = TRUE)
   pred_res <- attr(pred_prob, "probabilities")
+  
+  vip_all <- c()
+  for (pt in unique(plastic_trn$plastic_type)) {
+    set.seed(282)  # for reproducibility
+
+    # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
+    prob <- function(object, newdata) {
+      predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
+    }
+
+    # Variable importance plot
+    vip_res <- vip::vip(bestmod, method = "permute", nsim = 5, train = plastic_trn,
+                        target = "plastic_type", metric = "auc", reference_class = pt,
+                        pred_wrapper = prob)
+    vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
+  }
+  
   return(pred_res)
 }
 
@@ -77,7 +102,7 @@ ggplot(data = mydat) +
 # Caret package: ===================================
 caret.SVM.result <- function(dat, split.ratio) {
   set.seed(1234)
-  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = 0.6, list = F)
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
   plastic_trn <- dat[plastic_idx, ]
   plastic_tst <- dat[-plastic_idx, ]
   
@@ -86,7 +111,7 @@ caret.SVM.result <- function(dat, split.ratio) {
     method = "cv", 
     number = 10, # Performing 10-fold CrossValidation
     classProbs = TRUE,                 
-    summaryFunction = multiClassSummary  # also needed for AUC/ROC
+    summaryFunction = multiClassSummary  
   )
   
   # Tune an SVM with caret
@@ -95,7 +120,7 @@ caret.SVM.result <- function(dat, split.ratio) {
     data = plastic_trn,
     method = "svmRadial",               
     preProcess = c("center", "scale"),
-    metric = "ROC",  # area under ROC curve (AUC)       
+    metric = "logLoss",     
     trControl = ctrl,
     tuneLength = 10
   )
@@ -110,21 +135,21 @@ caret.SVM.result <- function(dat, split.ratio) {
   
   # Feature importance
   
-  vip_all <- c()
-  for (pt in unique(plastic_trn$plastic_type)) {
-    set.seed(282)  # for reproducibility
-    
-    # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
-    prob <- function(object, newdata) {
-      predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
-    }
-    
-    # Variable importance plot
-    vip_res <- vip::vip(caret_svm_auc, method = "permute", nsim = 5, train = plastic_trn, 
-                        target = "plastic_type", metric = "auc", reference_class = pt,
-                        pred_wrapper = prob)
-    vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
-  }
+  # vip_all <- c()
+  # for (pt in unique(plastic_trn$plastic_type)) {
+  #   set.seed(282)  # for reproducibility
+  #   
+  #   # Add prediction wrapper function to return the predicted class probabilities for the reference class of interest.
+  #   prob <- function(object, newdata) {
+  #     predict(object, newdata = newdata, type = "prob")[, pt] # Food_Packaging_Waste
+  #   }
+  #   
+  #   # Variable importance plot
+  #   vip_res <- vip::vip(caret_svm_auc, method = "permute", nsim = 5, train = plastic_trn, 
+  #                       target = "plastic_type", metric = "auc", reference_class = pt,
+  #                       pred_wrapper = prob)
+  #   vip_all <- c(vip_all, vip_res$data[1:3,]$Variable)
+  # }
   
   # construct PDPs for the top four features of reference_class
   # features <- vip_all
@@ -138,12 +163,12 @@ caret.SVM.result <- function(dat, split.ratio) {
   # grid.arrange(grobs = pdps,  ncol = 5)
   # 
   
-  return(list(pred_prob, vip_all))
+  return(pred_prob) # , vip_all)
 }
 
 PCAtools_mergePC.SVMresult <- caret.SVM.result(PCAtools_mergePC, split.ratio = 0.6)
 e1071_merge_PC.SVMresult <- caret.SVM.result(e1071_merge_PC, split.ratio = 0.6)
-my.data.SVMresult <- caret.SVM.result(my.data, split.ratio = 0.6)
+my.data.SVMresult <- caret.SVM.result(my.data, split.ratio = 0.5)
 
 View(PCAtools_mergePC.SVMresult[[1]])
 View(e1071_merge_PC.SVMresult[[1]])

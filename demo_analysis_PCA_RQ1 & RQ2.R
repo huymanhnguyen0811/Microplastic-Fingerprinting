@@ -13,11 +13,11 @@ df_pca <- function(data) {
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
-    pivot_wider(names_from = File, values_from = Percent_Area) %>%
-    column_to_rownames(., var = "collapsed_compound")
+    pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "File")
   
 
-  for (r in 1:nrow(df_X_rq1)) { 
+  for (r in 1:nrow(df_X_rq1)) {
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- runif(length(which(base::is.na(df_X_rq1[r,]))),
                                                            min = sort(data$Percent_Area)[1],
                                                            max = sort(data$Percent_Area)[2])
@@ -52,7 +52,7 @@ p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]])
 PCAtools_mergePC <- p$rotated
 
 # PCA with stats::prcomp ===========
-# stats::prcomp requires input x as df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
+# stats::prcomp requires input df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
 
 prcomp_res <- stats::prcomp(df_pca[[1]])
 

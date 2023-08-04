@@ -167,7 +167,7 @@ flattenCorrMatrix <- function(cormat, pmat) {
 }
 
 # STEP 1.1: Data import --------------------------------------------
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/CSV_Export_2023-05-23_Cleaned")
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data")
 
 file_list <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "Blank")]
@@ -422,9 +422,3 @@ x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 # scipy.stats.norm.ppf function from Python 
-
-# STEP 3.1: Examine data distribution post-normalization ===================================================
-
-# View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Percent_Area)))
-# View(whole_df %>% group_by(compound, fuel_type) %>% summarize(var(Log_Area)))
-
