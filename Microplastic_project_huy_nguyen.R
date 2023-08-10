@@ -428,4 +428,5 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 # Merging Sample info with shared df ===========================================
 colnames(sampleinfo)[1] <- 'File'
-merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File')
+merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File') %>%
+  select(-"plastic_type")
