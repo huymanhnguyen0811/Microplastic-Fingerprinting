@@ -127,3 +127,45 @@ gg <- ggplot() +
 gg
 
 
+# K-means clustering for gene expression =======================================
+# Goal is to cluster X collapsed_compounds into n (n << X) clusters
+# perform PCA
+pca = prcomp(t(test), center=TRUE, scale=TRUE)
+rotation = data.frame(pca$x)
+plot(rotation[1:3], pch=16, cex=0.6, cex.main=0.9)
+
+# perform Kmeans in PCA space
+wss = (nrow(rotation)-1)*sum(apply(rotation,2,var))
+for (i in 2:9) wss[i] <- sum(kmeans(rotation, centers=i)$withinss)
+plot(1:9, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+km = kmeans(rotation, 2)
+cluster_assignment = as.factor(km$cluster)
+
+# plot k-means cluster assignment in PCA space
+library(ggplot2)
+ggplot(rotation, aes(rotation$PC1, rotation$PC2, color=cluster_assignment, label=rownames(rotation))) + geom_point() + geom_text()
+
+threshold <- 1
+nms <- as.character()
+for(n in 1:n_clusters) {
+  
+  for(i in 1:ncol(t(test)[row.names(t(test)) %in% names(cluster_assignment[cluster_assignment == n]),])){
+    if(mean(t(test)[row.names(t(test)) %in% names(cluster_assignment[cluster_assignment == n]),i]) > threshold){
+      nms <- c(nms, colnames(t(test)[row.names(t(test)) %in% names(cluster_assignment[cluster_assignment == n]),])[i])
+    }
+  }
+  if(n == 1) result <- data.frame(GENE = nms, CLUSTER = rep(n,length(nms))); rm(nms); nms <- as.character()
+  if(n >  1) result <- rbind(result, data.frame(GENE = nms, CLUSTER = rep(n,length(nms))))
+}
+
+result
+
+
+# Hierarchichal Clustering of collapsed_compounds ==============================
+# Do not scale the colaapsed_compounds bofre compute dissimilarity, because we already normalized data 
+# and need to preserve chemical patterns as much as possible . Also because all the unit are already on the same scale
+# https://stats.stackexchange.com/questions/110428/clustering-a-noisy-data-or-with-outliers
+
+library(rsample)
+
+clus.cv.res <- rsample::clustering_cv()

@@ -185,6 +185,8 @@ df_list_blank <- purrr::map(blank_list, read.csv)
 df_blank <- dplyr::bind_rows(df_list_blank)
 # summary(df_step1.1)
 
+sampleinfo <- readxl::read_excel(paste0(getwd(), '/SampleInfo.xlsx'))
+
 # Plotting data distribution pre-removal------------------
 data_plot_pre_removal <- list() # NOTE: Data sets are all heavy left-skewed
 for (i in 1:30) { # length(df_list_step1.1)
@@ -422,3 +424,8 @@ x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 # scipy.stats.norm.ppf function from Python 
+
+
+# Merging Sample info with shared df ===========================================
+colnames(sampleinfo)[1] <- 'File'
+merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File')

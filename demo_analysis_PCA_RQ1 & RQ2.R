@@ -1,20 +1,23 @@
 library(PCAtools)
+library(stats)
 
+# Bins values of collapsed_compounds into bins
+?Hmisc::cut2
 
 # PCA -----------------
 # prep input
-df_pca <- function(data) {
+input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(File, collapsed_compound, Percent_Area) %>%
-    filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
-    filter(., !str_detect(File, "Balloons_Sample")) %>%
+    # filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
+    # filter(., !str_detect(File, "Balloons_Sample")) %>%
     mutate(File = factor(File, levels = unique(File))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
     summarise(across(Percent_Area, mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
-    column_to_rownames(., var = "File")
+    pivot_wider(names_from = File, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "collapsed_compound")
   
 
   for (r in 1:nrow(df_X_rq1)) {
@@ -27,26 +30,26 @@ df_pca <- function(data) {
   metadata_X_rq1 <- data.frame(unique(data$File)) 
   colnames(metadata_X_rq1) <- c('File')
   metadata_X_rq1 <- metadata_X_rq1 %>% 
-    filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
-    filter(., !str_detect(File, "Balloons_Sample")) %>%
+    # filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
+    # filter(., !str_detect(File, "Balloons_Sample")) %>%
     mutate(plastic_type = ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                 # ifelse(str_detect(File, "Balloons"), "Balloons",
+                                 ifelse(str_detect(File, "Balloons"), "Balloons",
                                         ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
                                                ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                      # ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))) %>%
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
     column_to_rownames(., var = "File")
   
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- df_pca(shared_comp_plastic_type)
+df_pca <- input_df(shared_comp_plastic_type)
 
 # PCA with PCAtools::pca ===========
 colnames(df_pca[[2]]) <- c("Plastic type")
 
 # PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
-p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]])
+p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]], scale = FALSE, center = FALSE)
 
 # Retrieve PC and add as new variables to data frame 
 PCAtools_mergePC <- p$rotated
@@ -54,9 +57,8 @@ PCAtools_mergePC <- p$rotated
 # PCA with stats::prcomp ===========
 # stats::prcomp requires input df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
 
-prcomp_res <- stats::prcomp(df_pca[[1]])
-
-# stats::biplot(prcomp_res)
+prcomp_res <- stats::prcomp(df_pca[[1]], center = FALSE)
+stats::biplot(x = prcomp_res)
 
 # Retrieve PC and add as new variables to data frame 
 e1071_merge_PC <- as.data.frame(prcomp_res$x)

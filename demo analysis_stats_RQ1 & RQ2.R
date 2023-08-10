@@ -209,55 +209,76 @@ ggplot(data = transpose_df %>%
 
 
 # 5 assumptions of multiple linear regression --------------------
-must_convert<-sapply(transpose_df, is.factor)
-new_pt <- sapply(transpose_df[, must_convert], unclass)
-out<-cbind(transpose_df[,!must_convert],new_pt) 
+transpose_df <- transpose_df %>% 
+  mutate(plastic_type = factor(x = plastic_type, levels=unique(plastic_type))) %>%
+  mutate(File = factor(x = File, levels=unique(File)))
 
-out <- out %>% 
-  relocate(new_pt, .after = File) %>%
+must_convert<-sapply(transpose_df, is.factor)
+new_pt <- sapply(transpose_df[,must_convert], unclass)
+  # Using FactoMineR
+out <- cbind(new_pt,var$contrib)
+rownames(out) <- NULL
+
+out <- as.data.frame(out) %>% 
   column_to_rownames(., var = "File") 
 
-# Linear relationship (predicting the plastic type)
-linearity <- lm(new_pt ~ ., data = out)
+ # Linear relationship (predicting the plastic type)
+linearity <- stats::lm(plastic_type ~ ., data = out)
 summary(linearity)
+#No linearity between predictor and response variables
 
- # No multicollinearity 
 
+ # Multicollinearity 
 library(car)
 vif(linearity)
-
+# all VIFs are between 1 and 5 which indicates moderate correlation between variables
+# but not severe enough. 
   # check correlation between predictor variables
 cor_matrix <- out[, 2:ncol(out)]
-
 cor(cor_matrix)
   # create heat map to see correlation 
 library(reshape2)
 cor_mat <- round(cor(cor_matrix), 3)
 melt_cor_mat <- melt(cor_mat)
-
 #ggplot(data = melt_cor_mat, aes(x=Var1, y=Var2, fill=value)) +
- # geom_tile()
-
+#  geom_tile()
 install.packages("ggcorrplot")
 library(ggcorrplot)
 ggcorrplot::ggcorrplot(cor(cor_matrix))
 
+
  # Independence 
   # the Durbin-Watson Test
+    # Used to detect autocorrelation in residuals. 
+    # Ranges from 0 to 4, 2 is no autocorrelation, below 2 is positive autocorrelation 
+    # and above 2 is negative correlation.
 library(car)
 durbinWatsonTest(linearity)
-  # reject null hypothesis because autocorrelation is not 0,
+  # The statistic is 0.46 and p-value is 0 so 
+  # reject null hypothesis and conclude residuals are auto correlated.
   # alternative hypothesis is true (true autocorrelation is greater than 0).
 
  # Homoscedasticity 
 plot(fitted(linearity), resid(linearity), xlab='Fitted Values', ylab='Residuals')
 abline(0,0)
-   # does not work because lm model is filled with NA's, must fix this. 
-   # all compounds that had a number for st deviation are important. must remove all NA's (because of collinearity). 
-  # slice into coefficients in linearity and take out all compounds where is.na = FALSE because we want all the values. 
-  # go back to out matrix and subset all the columns that are important 
+  # residuals seem to follow an equal variance throughout the plot.
+
+  # Formally tests for heteroscedasticity using Breusch-Pagan test 
+install.packages("lmtest")
+library(zoo)
+library(lmtest)
+bptest(linearity)
+   # since the p-value is greater than 0.05 we don't reject the null hypothesis 
+   # and conclude homoscedasticity is present and not violated.
+
 
  # Multivariate Normality 
+   # Use a QQ plot to determine whether or not residuals of a model follow normal
+   # distribution, if points form straight line then assumption is met. 
+
+# qq norm takes numerical data like our data set out, but not in data frames. 
+
+out %>% mutate_all(out)
 
 
 
