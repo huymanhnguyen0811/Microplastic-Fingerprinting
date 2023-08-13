@@ -187,3 +187,5 @@ ggplot(data = mydat) +
   scale_y_continuous(n.breaks = 10) +
   theme_bw() + 
   theme(axis.text.x = element_text(angle = 90))
+
+

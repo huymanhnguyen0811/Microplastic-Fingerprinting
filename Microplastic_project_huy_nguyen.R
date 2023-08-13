@@ -186,6 +186,7 @@ df_blank <- dplyr::bind_rows(df_list_blank)
 # summary(df_step1.1)
 
 sampleinfo <- readxl::read_excel(paste0(getwd(), '/SampleInfo.xlsx'))
+sampleinfo$`Collection Date (YYYY-MM-DD)` <- as.Date(as.numeric(sampleinfo$`Collection Date (YYYY-MM-DD)`), origin = "1899-12-30")
 
 # Plotting data distribution pre-removal------------------
 data_plot_pre_removal <- list() # NOTE: Data sets are all heavy left-skewed
@@ -429,4 +430,5 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 # Merging Sample info with shared df ===========================================
 colnames(sampleinfo)[1] <- 'File'
 merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File') %>%
-  select(-"plastic_type")
+  select(-"plastic_type") %>%
+  filter(., !is.na(collapsed_compound))

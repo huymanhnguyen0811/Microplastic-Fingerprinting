@@ -10,8 +10,7 @@ input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(File, collapsed_compound, Percent_Area) %>%
-    # filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
-    # filter(., !str_detect(File, "Balloons_Sample")) %>%
+    filter(., !str_detect(File, "_USE")) %>% # exclude environmental samples
     mutate(File = factor(File, levels = unique(File))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
@@ -27,26 +26,30 @@ input_df <- function(data) {
   }
   
   # table for information (rows are sample IDs, columns are sample information) -----------------------
-  metadata_X_rq1 <- data.frame(unique(data$File)) 
+  metadata_X_rq1 <- data.frame(unique((data %>% 
+                                         filter(., !str_detect(File, "_USE")))$File))
   colnames(metadata_X_rq1) <- c('File')
-  metadata_X_rq1 <- metadata_X_rq1 %>% 
-    # filter(., !str_detect(File, "PC_Sample")) %>% # Exclude Plastic_cups to examine further clustering of others types
-    # filter(., !str_detect(File, "Balloons_Sample")) %>%
+  material <- c()
+  for (row in 1:nrow(metadata_X_rq1)) {
+    material<- c(material, unique(data[which(data$File == metadata_X_rq1[row, 'File']),]$Material))
+  }
+  metadata_X_rq1$material <- material
+  metadata_X_rq1 <- metadata_X_rq1 %>%
     mutate(plastic_type = ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
                                  ifelse(str_detect(File, "Balloons"), "Balloons",
-                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste",
                                                ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
                                                       ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
                                                              ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
     column_to_rownames(., var = "File")
-  
+
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- input_df(shared_comp_plastic_type)
+df_pca <- input_df(merge_df)
 
 # PCA with PCAtools::pca ===========
-colnames(df_pca[[2]]) <- c("Plastic type")
+colnames(df_pca[[2]])[2] <- c("Plastic type")
 
 # PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
 p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]], scale = FALSE, center = FALSE)
@@ -66,20 +69,19 @@ e1071_merge_PC <- as.data.frame(prcomp_res$x)
 
 # PCA further visualizations ----------------------------------------------------------------
 # Scree plot
-screeplot(p, components = getComponents(p, 1:30),
+screeplot(p, components = getComponents(p),
           hline = 80, vline = 27, axisLabSize = 14, titleLabSize = 20,
-          returnPlot = FALSE) +
-  geom_label(aes(20, 80, label = '80% explained variation', vjust = -1, size = 8))
+          returnPlot = FALSE) 
 
 # A bi-plot
 PCAtools::biplot(p,
                  lab = NULL, 
-                 colby = "Plastic type",
+                 colby = "material",
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
                  sizeLoadingsNames = 5,
                  showLoadings = TRUE,
-                 # showLoadingsNames = FALSE,
+                 showLoadingsNames = FALSE,
                  ntopLoadings = 10,
                  pointSize = 4, 
                  legendLabSize = 15,
