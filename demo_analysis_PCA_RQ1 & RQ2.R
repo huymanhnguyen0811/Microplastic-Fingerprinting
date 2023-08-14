@@ -10,7 +10,6 @@ input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(File, collapsed_compound, Percent_Area) %>%
-    filter(., !str_detect(File, "_USE")) %>% # exclude environmental samples
     mutate(File = factor(File, levels = unique(File))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     group_by(File, collapsed_compound) %>%
@@ -24,10 +23,11 @@ input_df <- function(data) {
                                                            min = sort(data$Percent_Area)[1],
                                                            max = sort(data$Percent_Area)[2])
   }
-  
+
   # table for information (rows are sample IDs, columns are sample information) -----------------------
-  metadata_X_rq1 <- data.frame(unique((data %>% 
-                                         filter(., !str_detect(File, "_USE")))$File))
+  metadata_X_rq1 <- data.frame(unique((data 
+                                         # filter(., !str_detect(File, "_USSB"))
+                                       )$File))
   colnames(metadata_X_rq1) <- c('File')
   material <- c()
   for (row in 1:nrow(metadata_X_rq1)) {
@@ -52,7 +52,11 @@ df_pca <- input_df(merge_df)
 colnames(df_pca[[2]])[2] <- c("Plastic type")
 
 # PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
-p <- PCAtools::pca(mat = df_pca[[1]], metadata = df_pca[[2]], scale = FALSE, center = FALSE)
+p <- PCAtools::pca(mat = df_pca[[1]], 
+                   metadata = df_pca[[2]], 
+                   # center = FALSE,
+                   scale = FALSE 
+                   )
 
 # Retrieve PC and add as new variables to data frame 
 PCAtools_mergePC <- p$rotated
@@ -76,7 +80,7 @@ screeplot(p, components = getComponents(p),
 # A bi-plot
 PCAtools::biplot(p,
                  lab = NULL, 
-                 colby = "material",
+                 colby = "material", 
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
                  sizeLoadingsNames = 5,
@@ -94,30 +98,28 @@ toploadings <- rownames(loadingS_sorted[c(1:50, nrow(loadingS_sorted):(nrow(load
 
 
 # Pairs plot
-pairsplot(p,
-          components = getComponents(p, c(1:5)),
-          triangle = FALSE,
-          trianglelabSize = 12,
-          hline = 0, vline = 0,
-          pointSize = 1.5,
-          gridlines.major = FALSE, gridlines.minor = FALSE,
-          colby = 'Plastic type',
-          title = 'Pairs plot',
-          axisLabSize = 14, plotaxes = TRUE,
-          margingaps = unit(c(-0.01, -0.01, -0.01, -0.01), 'cm'))
+# pairsplot(p,
+#           components = getComponents(p, c(1:5)),
+#           triangle = FALSE,
+#           trianglelabSize = 12,
+#           hline = 0, vline = 0,
+#           pointSize = 1.5,
+#           gridlines.major = FALSE, gridlines.minor = FALSE,
+#           colby = 'Plastic type',
+#           title = 'Pairs plot',
+#           axisLabSize = 14, plotaxes = TRUE,
+#           margingaps = unit(c(-0.01, -0.01, -0.01, -0.01), 'cm'))
 
 
 # explore further the collapsed_compounds that are driving these differences along each PC.
-plotloadings(p,
-             rangeRetain = 0.05, # top 5% variables = top/bottom 5% of the loadings range per PC
-             caption = 'Top 10% variables',
-             labSize = 4)
+# plotloadings(p,
+#              rangeRetain = 0.05, # top 5% variables = top/bottom 5% of the loadings range per PC
+#              caption = 'Top 10% variables',
+#              labSize = 4)
 
 
-eigencorplot(p, metavars = c('fuel_type', 'gas_station'))
-
-p.prcomp <- list(sdev = p$sdev,
-                 rotation = data.matrix(p$loadings),
-                 x = data.matrix(p$rotated),
-                 center = TRUE, scale = TRUE)
-predict(p.prcomp, newdata = newdata)[,1:5]
+# p.prcomp <- list(sdev = p$sdev,
+#                  rotation = data.matrix(p$loadings),
+#                  x = data.matrix(p$rotated),
+#                  center = TRUE, scale = TRUE)
+# predict(p.prcomp, newdata = newdata)[,1:5]

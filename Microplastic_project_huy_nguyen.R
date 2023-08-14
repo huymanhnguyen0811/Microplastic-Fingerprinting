@@ -4,23 +4,16 @@ library(readxl)
 library(ggpubr)
 library(gtable)
 library(gridExtra)
-library(viridis)
-library(wesanderson)
 library(tidyverse)
 library(lubridate)
 library(dplyr)
 library(data.table)
-library(corrplot)
 library(purrr)
 library(stringr)
 library(stringi)
 library(grid)
 library(plotly)
-library(umap)
-library(mdatools)
 library(writexl)
-library(ggsignif)
-
 
 # Functions -------------------------------------------------------------------------------------------------------
 # Filtering matched compound names
@@ -171,6 +164,7 @@ setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Mi
 
 file_list <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "Blank")]
+  # .[!str_detect(., "_USSB")] # exclude environmental samples
 
 # Blank samples 
 blank_list <- list.files(pattern = '*.csv') %>%
@@ -181,12 +175,133 @@ df_list_step1.1 <- purrr::map(file_list, read.csv)
 
 df_list_blank <- purrr::map(blank_list, read.csv)
 
-# df_step1.1 <- dplyr::bind_rows(df_list_step1.1)
 df_blank <- dplyr::bind_rows(df_list_blank)
 # summary(df_step1.1)
 
 sampleinfo <- readxl::read_excel(paste0(getwd(), '/SampleInfo.xlsx'))
+colnames(sampleinfo)[1] <- 'File'
+
+# sampleinfo <- sampleinfo %>%
+#   filter(., !str_detect(File, "_USSB")) # exclude environmental samples
+
 sampleinfo$`Collection Date (YYYY-MM-DD)` <- as.Date(as.numeric(sampleinfo$`Collection Date (YYYY-MM-DD)`), origin = "1899-12-30")
+
+# STEP 1.2B Filtering out limit of observations---------------------------- 
+# Area  = 100000 seems to be the right cutoff after inspection with quality control A and B
+
+list_remaining_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[1]]
+list_removed_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[2]]
+
+# STEP 1.3: Grouping compounds based on Retention time and molecular ions  -----------------------------------------------------------------------
+# STEP 1.3A: Generate 1 grand data frame of all 31 IL samples
+
+df_step1.3 <- bind_rows(list_remaining_area) %>%
+  select(-c("Start", "End", "Width", "Base.Peak")) %>%
+  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                            ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                   ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                          ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                 ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                        ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other")))))))
+
+df_blank <- df_blank %>%
+  select(-c("Start", "End", "Width", "Base.Peak")) %>%
+  mutate(plastic_type = "Blanks")
+
+combined_df <- rbind(df_step1.3, df_blank) %>% arrange(RT)
+
+
+# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold
+
+combined_df_grouped <- grouping_comp_ver1(combined_df,
+                                          rtthres = 0.05,
+                                          mzthres = 0.05)
+
+
+
+# STEP 2: Normalizing data accordingly to different data frames of interest --------------------------------------------------
+
+comp_normalized <- data_normalization(combined_df_grouped)
+
+# Step 3: Readjust compound RA (sample) by average blank RA ======================
+# Create list to store temp dfs
+temp_list <- list()
+i <- 1
+# Iterate through each collapsed_compound
+for (comp in unique(comp_normalized$collapsed_compound)) {
+  temp <- comp_normalized[which(comp_normalized$collapsed_compound == comp),]
+  # if compound does not exist in blanks then skip the compounds
+  if (identical(which(temp$plastic_type == "Blanks"), integer(0))) {
+    temp_list[[i]] <- temp
+    i <- i + 1
+    next
+  }
+  else {
+    # Calculate avg_blank for that compound across all blanks
+    avg_blank <- mean(temp[which(temp$plastic_type == "Blanks"),]$Percent_Area)
+    temp <- temp[which(temp$plastic_type != "Blanks"),]
+    # iterate through each sample
+    for (sample in unique(temp$File)) {
+      # Adjust RA for each compound of each sample = RA (sample) - avg_blank
+      temp[which(temp$File == sample),]$Percent_Area <- temp[which(temp$File == sample),]$Percent_Area - avg_blank
+    } 
+  }
+  # Append current temp df to temp_list
+  temp_list[[i]] <- temp
+  i <- i + 1
+}
+
+adjusted_df <- bind_rows(temp_list)
+
+# Step 4: Replace negative adjusted RA values with LOD =============================
+adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0]),
+                                                                min = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[1],
+                                                                max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
+
+# STEP 5: Identify shared and unique compound groups across samples ------------------------------------------------
+# at least in 2 samples
+idx_list_filter_samples <- comp_filter_ver1(adjusted_df, 
+                                            length(file_list))
+
+# at least in 2 plastic types
+idx_list_filter_plastic_types <- comp_filter_ver2(adjusted_df, 
+                                                  length(unique(adjusted_df$plastic_type)))
+
+# Combine compounds that occur in at least 2 samples
+shared_comp_sample <- adjusted_df[c(idx_list_filter_samples[[1]], idx_list_filter_samples[[2]]),]
+
+# Combine compounds that occur in at least 2 plastic types 
+shared_comp_plastic_type <- adjusted_df[c(idx_list_filter_plastic_types[[1]],
+                                          idx_list_filter_plastic_types[[2]]
+                                          )
+                                        ,]
+
+# Merging Sample info with shared df ===========================================
+
+merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File') %>%
+  select(-"plastic_type") %>%
+  filter(., !is.na(collapsed_compound))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Plotting data distribution pre-removal------------------
 data_plot_pre_removal <- list() # NOTE: Data sets are all heavy left-skewed
@@ -277,12 +392,6 @@ grid.arrange(grobs = plot_b, ncol = 5,
              bottom = x)
 
 
-# STEP 1.2B Filtering out limit of observations---------------------------- 
-# Area  = 100000 seems to be the right cutoff after inspection with quality control A and B
-
-list_remaining_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[1]]
-list_removed_area <- limit_obser(df_list_step1.1, file_list, cap = 100000)[[2]]
-
 # QUALITY CONTROL C (CONFIRMATION) OF STEP 1.2B: -----------------------
 ## Plotting post-removal data distribution
 data_plot_post_removal <- list() 
@@ -290,7 +399,7 @@ j <- 1
 for (i in 31:60) { # length(list_remaining_area)
   filter_area <- list_remaining_area[[i]]
   data_plot_post_removal[[j]] <- ggplot(data = filter_area,
-                                    aes(x = Area)) +
+                                        aes(x = Area)) +
     geom_histogram(bins = 100) +
     ggtitle(file_list[[i]]) +
     # scale_x_continuous(limits = c(0, 2000000)) +
@@ -302,33 +411,6 @@ for (i in 31:60) { # length(list_remaining_area)
 y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 15))
 x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
-
-
-# STEP 1.3: Grouping compounds based on Retention time and molecular ions  -----------------------------------------------------------------------
-# STEP 1.3A: Generate 1 grand data frame of all 31 IL samples
-
-df_step1.3 <- bind_rows(list_remaining_area) %>%
-  select(-c("Start", "End", "Width", "Base.Peak")) %>%
-  mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
-                            ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                   ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
-                                          ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                 ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                        ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other")))))))
-
-df_blank <- df_blank %>%
-  select(-c("Start", "End", "Width", "Base.Peak")) %>%
-  mutate(plastic_type = "Blanks")
-
-combined_df <- rbind(df_step1.3, df_blank) %>% arrange(RT)
-
-
-# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold
-
-combined_df_grouped <- grouping_comp_ver1(combined_df,
-                                          rtthres = 0.05,
-                                          mzthres = 0.05)
-
 
 
 # Plotting data distribution pre-removal -----------------------------------
@@ -351,67 +433,13 @@ x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
 grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
 
 
-# STEP 2: Normalizing data accordingly to different data frames of interest --------------------------------------------------
-
-comp_normalized <- data_normalization(combined_df_grouped)
-
-# Step 3: Readjust compound RA (sample) by average blank RA ======================
-# Create list to store temp dfs
-temp_list <- list()
-i <- 1
-# Iterate through each collapsed_compound
-for (comp in unique(comp_normalized$collapsed_compound)) {
-  temp <- comp_normalized[which(comp_normalized$collapsed_compound == comp),]
-  # if compound does not exist in blanks then skip the compounds
-  if (identical(which(temp$plastic_type == "Blanks"), integer(0))) {
-    temp_list[[i]] <- temp
-    i <- i + 1
-    next
-  }
-  else {
-    # Calculate avg_blank for that compound across all blanks
-    avg_blank <- mean(temp[which(temp$plastic_type == "Blanks"),]$Percent_Area)
-    temp <- temp[which(temp$plastic_type != "Blanks"),]
-    # iterate through each sample
-    for (sample in unique(temp$File)) {
-      # Adjust RA for each compound of each sample = RA (sample) - avg_blank
-      temp[which(temp$File == sample),]$Percent_Area <- temp[which(temp$File == sample),]$Percent_Area - avg_blank
-    } 
-  }
-  # Append current temp df to temp_list
-  temp_list[[i]] <- temp
-  i <- i + 1
-}
-
-adjusted_df <- bind_rows(temp_list)
-
-# Step 4: Replace negative adjusted RA values with LOD =============================
-adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0] <- runif(length(adjusted_df$Percent_Area[adjusted_df$Percent_Area < 0]),
-                                                                min = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[1],
-                                                                max = sort(adjusted_df$Percent_Area[adjusted_df$Percent_Area > 0])[2])
-
-# STEP 5: Identify shared and unique compound groups across samples ------------------------------------------------
-# at least in 2 samples
-idx_list_filter_samples <- comp_filter_ver1(adjusted_df, 
-                                            length(file_list))
-
-# at least in 2 plastic types
-idx_list_filter_plastic_types <- comp_filter_ver2(adjusted_df, 
-                                                  length(unique(adjusted_df$plastic_type)))
-
-# Combine compounds that occur in at least 2 samples
-shared_comp_sample <- adjusted_df[c(idx_list_filter_samples[[1]], idx_list_filter_samples[[2]]),]
-
-# Combine compounds that occur in at least 2 plastic types 
-shared_comp_plastic_type <- adjusted_df[c(idx_list_filter_plastic_types[[1]], idx_list_filter_plastic_types[[2]]),]
-
 # Plotting data distribution post-removal ------------------------------------------------
 data_plot_post_removal <- list() 
 i <- 1
 for (sample in unique(other_compounds_filter_area_samples_normalized$sample_name)) {
   data_plot_post_removal[[i]] <- ggplot(data = other_compounds_filter_area_samples_normalized %>% 
-                                         filter(., sample_name %in% sample),
-                                       aes(x = Percent_Area)) +
+                                          filter(., sample_name %in% sample),
+                                        aes(x = Percent_Area)) +
     geom_histogram(bins = 50) +
     ggtitle(sample) +
     # scale_x_continuous() + # limits = c(0, 2000000)
@@ -426,9 +454,3 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 # scipy.stats.norm.ppf function from Python 
 
-
-# Merging Sample info with shared df ===========================================
-colnames(sampleinfo)[1] <- 'File'
-merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by = 'File') %>%
-  select(-"plastic_type") %>%
-  filter(., !is.na(collapsed_compound))
