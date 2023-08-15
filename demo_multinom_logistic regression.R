@@ -2,6 +2,8 @@ library(class)
 library(caret)
 library(nnet)
 
+## Link: https://stats.oarc.ucla.edu/r/dae/multinomial-logistic-regression/
+
 # With PCA-based feature data
 # add plastic_type as factor
 add_p_type <- function(data) {

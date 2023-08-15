@@ -1,7 +1,6 @@
 # RandomForestSRC ----------------
 library(randomForestSRC)
-
-set.seed (1234) # sets a numerical starting point; will be set randomly if not set by the user
+# https://www.randomforestsrc.org/articles/getstarted.html
 
 # WARNING!!! -> Values from `Percent_Area` are not uniquely identified -> ASK ROXANA!!!!
 View(shared_comp_plastic_type %>%
@@ -11,54 +10,92 @@ View(shared_comp_plastic_type %>%
 
 # PCA-based feature data ==========================
 # add plastic_type as factor
-add_p_type <- function(data) {
+ptype_n_samp <- function(data, use) {
   newdata <- data %>%
-    rownames_to_column(., var = "File") %>%
-    mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
-                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
-                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
-    mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
-    relocate(plastic_type, .before = 1) %>%
-    column_to_rownames(., var = "File")
+    tibble::rownames_to_column(., var = "File") %>%
+    dplyr::mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                                        ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                               ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                                      ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                             ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                                    ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    dplyr::mutate(Type = ifelse(str_detect(File, "USSB"), "Store-Bought", "Environmental")) %>%
+    dplyr::mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+    dplyr::mutate(Type = factor(Type, levels = unique(Type))) %>%
+    dplyr::relocate(c(Type, plastic_type), .before = 1) %>%
+    tibble::column_to_rownames(., var = "File")
   
-  return(newdata)
+  if (use == "min") {
+    # identify plastic type with minimum number of samples
+    min_samp_size <- as.numeric(newdata %>% count(plastic_type) %>% summarise(min(n)))
+    
+    # select random number of rows for each plastic type == minimum number of samples
+    newdf <- list()
+    i <- 1
+    for (plt in unique(newdata$plastic_type)) {
+      tmpdf <- newdata[which(newdata$plastic_type == plt),]
+      # random sampling within the levels of y when y is a factor to balance the class distributions within the splits.
+      idx <- caret::createDataPartition(tmpdf$Type, 
+                                        p = base::round(min_samp_size/nrow(tmpdf), 1), 
+                                        list = F)
+      newdf[[i]] <- tmpdf[idx, ]
+      i <- i + 1
+    }
+    
+    df <- bind_rows(newdf)
+  }
+  else {
+    df <- newdata
+  }
+  return(df)
 }
 
-PCAtools_mergePC <- add_p_type(PCAtools_mergePC)
-e1071_merge_PC <- add_p_type(e1071_merge_PC)
+PCAtools_alldf <- ptype_n_samp(PCAtools_mergePC, use = "all")
+e1071_alldf <- ptype_n_samp(e1071_merge_PC, use = "all")
+PCAtools_mindf <- ptype_n_samp(PCAtools_mergePC, use = "min")
+e1071_mindf <- ptype_n_samp(e1071_merge_PC, use = "min")
 
-# PArtitioning train&test sets / training / predict on test set
 rfsrc.result <- function(dat, split.ratio){
   set.seed(1234)
+  # Partitioning train&test sets / training / predict on test set
   plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
   plastic_trn <- dat[plastic_idx, ]
   plastic_tst <- dat[-plastic_idx, ]  
   
-  mergePC.rf <- rfsrc(plastic_type ~ ., ntree=2000, splitrule = "auc", 
-                      nodesize = 1,
-                      mtry = 21,
+  # Train
+  mergePC.rf <- rfsrc(plastic_type ~ ., 
+                      ntree=20000, 
+                      splitrule = "auc", 
+                      nodesize = 1, #Minumum size of terminal node for classification (1)
+                      # mtry = 21,
                       importance = "permute", 
+                      samptype = "swr",
+                      membership = TRUE,
+                      perf.type="misclass",
+                      block.size = 1, # cumulative error rate on every tree
                       data = plastic_trn
-                      )
+  )
+  print(mergePC.rf)
+  oob_error_plot <- plot(mergePC.rf)
   
-  mergePC.rf
-  
+  imp_var <- vimp(mergePC.rf, importance = "permute")$importance
+  print(get.auc(plastic_trn$plastic_type, mergePC.rf$predicted.oob))
   # Prediction results
   pred_res <- predict(mergePC.rf, newdata = plastic_tst, type = "prob")$predicted
   rownames(pred_res) <- rownames(plastic_tst)
   
   # selection of the best feature candidates
-  md.obj <- max.subtree(mergePC.rf)
-  best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
+  # md.obj <- max.subtree(mergePC.rf)
+  # best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
   
-  return(list(pred_res, best.feature))
+  return(list(pred_res, oob_error_plot, imp_var))
 }
 
-PCAtools_mergePC.RFresult <- rfsrc.result(PCAtools_mergePC, split.ratio = 0.6)
-e1071_merge_PC.RFresult <- rfsrc.result(e1071_merge_PC, split.ratio = 0.6)
+PCAtools_alldf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+e1071_alld.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+PCAtools_mindf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+e1071_mindf.RFresult <- rfsrc.result(e1071_mindf, split.ratio = 0.6)
+
 my.data.RFresult <- rfsrc.result(my.data, split.ratio = 0.6)
 
 View(PCAtools_mergePC.RFresult[[1]])
@@ -90,8 +127,8 @@ plot(ggRandomForests::gg_error(my.rf))
 plot(ggRandomForests::gg_error(filled.rf)) 
 
 # Estimate the variables importance --------
-my.rf.vimp <- ggRandomForests::gg_vimp(mergePC.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
-plot(my.rf.vimp) # visualises the predictor’s importance
+# my.rf.vimp <- ggRandomForests::gg_vimp(mergePC.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
+# plot(my.rf.vimp) # visualises the predictor’s importance
  
 # Plot the response variable against each predictor variable, we can generate partial dependance plots --------------
 my.rf.part.plot <- plot.variable(mergePC.rf, partial=TRUE, sorted=FALSE,

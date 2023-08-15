@@ -6,28 +6,39 @@ library(stats)
 
 # PCA -----------------
 # prep input
-input_df <- function(data) {
+input_df <- function(data, pkg) {
   # create sample df
-  df_X_rq1 <- data %>%
-    dplyr::select(File, collapsed_compound, Percent_Area) %>%
-    mutate(File = factor(File, levels = unique(File))) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, collapsed_compound) %>%
-    summarise(across(Percent_Area, mean)) %>%
-    pivot_wider(names_from = File, values_from = Percent_Area) %>%
-    column_to_rownames(., var = "collapsed_compound")
-  
-
+  if (pkg == "PCAtools") {
+    df_X_rq1 <- data %>%
+      dplyr::select(File, collapsed_compound, Percent_Area) %>%
+      mutate(File = factor(File, levels = unique(File))) %>%
+      # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+      group_by(File, collapsed_compound) %>%
+      summarise(across(Percent_Area, mean)) %>%
+      pivot_wider(names_from = File, values_from = Percent_Area) %>%
+      column_to_rownames(., var = "collapsed_compound")
+    
+  }
+  else {
+    df_X_rq1 <- data %>%
+      dplyr::select(File, collapsed_compound, Percent_Area) %>%
+      mutate(File = factor(File, levels = unique(File))) %>%
+      # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+      group_by(File, collapsed_compound) %>%
+      summarise(across(Percent_Area, mean)) %>%
+      pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
+      column_to_rownames(., var = "File")
+  }
   for (r in 1:nrow(df_X_rq1)) {
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- runif(length(which(base::is.na(df_X_rq1[r,]))),
                                                            min = sort(data$Percent_Area)[1],
                                                            max = sort(data$Percent_Area)[2])
   }
-
+  
   # table for information (rows are sample IDs, columns are sample information) -----------------------
   metadata_X_rq1 <- data.frame(unique((data 
-                                         # filter(., !str_detect(File, "_USSB"))
-                                       )$File))
+                                       # filter(., !str_detect(File, "_USSB"))
+  )$File))
   colnames(metadata_X_rq1) <- c('File')
   material <- c()
   for (row in 1:nrow(metadata_X_rq1)) {
@@ -42,11 +53,11 @@ input_df <- function(data) {
                                                       ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
                                                              ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
     column_to_rownames(., var = "File")
-
+  
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- input_df(merge_df)
+df_pca <- input_df(merge_df, pkg = "PCAtools")
 
 # PCA with PCAtools::pca ===========
 colnames(df_pca[[2]])[2] <- c("Plastic type")
@@ -56,14 +67,14 @@ p <- PCAtools::pca(mat = df_pca[[1]],
                    metadata = df_pca[[2]], 
                    # center = FALSE,
                    scale = FALSE 
-                   )
+)
 
 # Retrieve PC and add as new variables to data frame 
 PCAtools_mergePC <- p$rotated
 
 # PCA with stats::prcomp ===========
 # stats::prcomp requires input df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
-
+df_pca <- input_df(merge_df, pkg = "stats")
 prcomp_res <- stats::prcomp(df_pca[[1]], center = FALSE)
 stats::biplot(x = prcomp_res)
 
@@ -91,10 +102,6 @@ PCAtools::biplot(p,
                  legendLabSize = 15,
                  legendTitleSize = 16,
                  legendIconSize = 6)
-
-# Retrieve compound name of top 100 loading
-loadingS_sorted <- p$loadings %>% arrange(PC1, PC2)
-toploadings <- rownames(loadingS_sorted[c(1:50, nrow(loadingS_sorted):(nrow(loadingS_sorted) - 50)),1:2])
 
 
 # Pairs plot

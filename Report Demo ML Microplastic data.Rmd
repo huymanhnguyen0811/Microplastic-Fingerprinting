@@ -1,19 +1,29 @@
+---
+title: "Demo ML Microplastic"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = getwd())
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Documentation
+This repo is accompanying the publication: "Computational fingerprinting workflow for environmental source tracking of microplastic based on representative additives"
+
+Demo of each ML algorithms is shown below.
+
+## Data processing
+
+You can include R code in the document as follows:
+
+```{r, echo = FALSE, message = FALSE}
 # Loading Packages --------------------------------------------------------
 library(ggplot2)
 library(readxl)
-library(ggpubr)
-library(gtable)
-library(gridExtra)
 library(tidyverse)
-library(lubridate)
 library(dplyr)
 library(data.table)
-library(purrr)
-library(stringr)
-library(stringi)
-library(grid)
-library(plotly)
-library(writexl)
 
 # Functions -------------------------------------------------------------------------------------------------------
 # Filtering matched compound names
@@ -282,179 +292,218 @@ merge_df <- dplyr::full_join(x = sampleinfo,  y = shared_comp_plastic_type, by =
   select(-"plastic_type") %>%
   filter(., !is.na(collapsed_compound))
 
+```
 
+## Demo PCA
 
+```{r , echo=FALSE, warning = FALSE}
+library(PCAtools)
+library(stats)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Plotting data distribution pre-removal------------------
-data_plot_pre_removal <- list() # NOTE: Data sets are all heavy left-skewed
-for (i in 1:30) { # length(df_list_step1.1)
-  filter_area <- df_list_step1.1[[i]]
-  data_plot_pre_removal[[i]] <- ggplot(data = filter_area,
-                                       aes(x = Area)) +
-    geom_histogram(bins = 100) +
-    ggtitle(file_list[[i]]) +
-    # scale_x_continuous(limits = c(0, 2000000)) +
-    labs(x = NULL, y = NULL) + 
-    theme(legend.position = "hidden", 
-          axis.title = element_text(size = 5),
-          axis.text.x = element_text(size = 13),
-          axis.text.y = element_text(size = 12))
-}
-
-y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 20))
-x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 20))
-grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
-
-
-# QUALITY CONTROL A OF STEP 1.2B: Plot Percentage coverage after removal of limit observation----------------------------
-plot_a <- list()
-j <- 1
-for (i in 31:60) { # length(df_list_step1.1)
-  coverage <- c()
-  for (threshold in c(seq(from = 0, to = 200000, by = 50000))) {
-    df_filter_area <- df_list_step1.1[[i]] %>%
-      filter(., Area > threshold)
-    coverage <- c(coverage, sum(df_filter_area$Area)*100/sum(df_list_step1.1[[i]]$Area))
+# PCA -----------------
+# prep input
+input_df <- function(data, pkg) {
+  # create sample df
+  if (pkg == "PCAtools") {
+    df_X_rq1 <- data %>%
+    dplyr::select(File, collapsed_compound, Percent_Area) %>%
+    mutate(File = factor(File, levels = unique(File))) %>%
+    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+    group_by(File, collapsed_compound) %>%
+    summarise(across(Percent_Area, mean)) %>%
+    pivot_wider(names_from = File, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "collapsed_compound")
+  
   }
-  df <- data.frame(thres = seq(from = 0, to = 200000, by = 50000), cover = coverage)
-  plot_a[[j]] <- ggplot(data = df,
-                        aes(x = thres, y = cover)) +
-    geom_col() +
-    theme(text = element_text(size = 15)) +
-    geom_text(aes(label = round(cover, digits = 3)), color = "green", angle = 90, hjust = 1, size = 6) +
-    scale_x_continuous(breaks = seq(from = 0, to = 200000, by = 50000),
-                       # remove space between plotted data and xy-axes
-                       expand = c(0,0)) +
-    scale_y_continuous(breaks = seq(from = 0, to = 100, by = 25), 
-                       # remove space between plotted data and xy-axes
-                       expand = c(0,0)) +
-    ggtitle(file_list[[i]]) +
-    labs(x = NULL, y = NULL) 
-  j <- j + 1
-}
-
-y <- textGrob("Percentage coverage of remaining peaks after removal", rot = 90, gp = gpar(fontsize = 20))
-x <- textGrob("Threshold of removal for limit observations", gp = gpar(fontsize = 20))
-
-grid.arrange(grobs = plot_a, ncol = 5, 
-             left = y,
-             bottom = x)
-
-# QUALITY CONTROL B OF STEP 1.2B: Plot number of peak remains after removal of limit observation----------------------------
-plot_b <- list()
-j <- 1
-for (i in 31:60) { # length(df_list_step1.1)
-  peak_remain <- c()
-  for (threshold in c(seq(from = 0, to = 200000, by = 50000))) {
-    df_filter_area <- df_list_step1.1[[i]] %>%
-      filter(., Area > threshold)
-    peak_remain <- c(peak_remain, dim(df_filter_area)[1])
+  else {
+      df_X_rq1 <- data %>%
+    dplyr::select(File, collapsed_compound, Percent_Area) %>%
+    mutate(File = factor(File, levels = unique(File))) %>%
+    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+    group_by(File, collapsed_compound) %>%
+    summarise(across(Percent_Area, mean)) %>%
+    pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
+    column_to_rownames(., var = "File")
   }
-  df <- data.frame(thres = seq(from = 0, to = 200000, by = 50000), remain = peak_remain)
-  plot_b[[j]] <- ggplot(data = df,
-                        aes(x = thres, y = remain)) +
-    geom_col() +
-    geom_text(aes(label = remain), color = "green", vjust = 1.2, size = 5) +
-    scale_x_continuous(breaks = seq(from = 0, to = 200000, by = 50000), 
-                       # remove space between plotted data and xy-axes
-                       expand = c(0,0)) +
-    ggtitle(file_list[[i]]) +
-    theme(axis.text.x = element_text(size = 20),
-          axis.text.y = element_text(size = 20)) +
-    labs(x = NULL, y = NULL) +
-    theme_classic()
-  j <- j + 1
+  for (r in 1:nrow(df_X_rq1)) {
+    df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- runif(length(which(base::is.na(df_X_rq1[r,]))),
+                                                           min = sort(data$Percent_Area)[1],
+                                                           max = sort(data$Percent_Area)[2])
+  }
+
+  # table for information (rows are sample IDs, columns are sample information) -----------------------
+  metadata_X_rq1 <- data.frame(unique((data 
+                                         # filter(., !str_detect(File, "_USSB"))
+                                       )$File))
+  colnames(metadata_X_rq1) <- c('File')
+  material <- c()
+  for (row in 1:nrow(metadata_X_rq1)) {
+    material<- c(material, unique(data[which(data$File == metadata_X_rq1[row, 'File']),]$Material))
+  }
+  metadata_X_rq1$material <- material
+  metadata_X_rq1 <- metadata_X_rq1 %>%
+    mutate(plastic_type = ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                 ifelse(str_detect(File, "Balloons"), "Balloons",
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste",
+                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    column_to_rownames(., var = "File")
+
+  return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-y <- textGrob("Number of peak remains after removal of limit observation", rot = 90, gp = gpar(fontsize = 15))
-x <- textGrob("Threshold of removal for limit observations", gp = gpar(fontsize = 15))
+df_pca <- input_df(merge_df, pkg = "PCAtools")
 
-grid.arrange(grobs = plot_b, ncol = 5, 
-             left = y,
-             bottom = x)
+# PCA with PCAtools::pca ===========
+colnames(df_pca[[2]])[2] <- c("Plastic type")
 
+# PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
+p <- PCAtools::pca(mat = df_pca[[1]], 
+                   metadata = df_pca[[2]], 
+                   # center = FALSE,
+                   scale = FALSE 
+                   )
 
-# QUALITY CONTROL C (CONFIRMATION) OF STEP 1.2B: -----------------------
-## Plotting post-removal data distribution
-data_plot_post_removal <- list() 
-j <- 1
-for (i in 31:60) { # length(list_remaining_area)
-  filter_area <- list_remaining_area[[i]]
-  data_plot_post_removal[[j]] <- ggplot(data = filter_area,
-                                        aes(x = Area)) +
-    geom_histogram(bins = 100) +
-    ggtitle(file_list[[i]]) +
-    # scale_x_continuous(limits = c(0, 2000000)) +
-    labs(x = NULL, y = NULL) + 
-    theme(legend.position = "hidden", axis.title = element_text(size = 5))
-  j <- j + 1
+# Retrieve PC and add as new variables to data frame 
+PCAtools_mergePC <- p$rotated
+
+# PCA with stats::prcomp ===========
+# stats::prcomp requires input df (columns as collapsed_compound, rows as sample name) -> change function df_pca pivot_wider(names_from=..)
+df_pca <- input_df(merge_df, pkg = "stats")
+prcomp_res <- stats::prcomp(df_pca[[1]], center = FALSE)
+stats::biplot(x = prcomp_res)
+
+# Retrieve PC and add as new variables to data frame 
+e1071_merge_PC <- as.data.frame(prcomp_res$x)
+
+# A bi-plot =================
+PCAtools::biplot(p,
+                 lab = NULL, 
+                 colby = "material", 
+                 hline = 0, vline = 0,
+                 legendPosition = 'right', labSize = 5,
+                 sizeLoadingsNames = 5,
+                 showLoadings = TRUE,
+                 showLoadingsNames = FALSE,
+                 ntopLoadings = 10,
+                 pointSize = 4, 
+                 legendLabSize = 15,
+                 legendTitleSize = 16,
+                 legendIconSize = 6)
+```
+
+## Demo RF + GBM
+
+### With all samples
+
+#### PCAtools
+
+```{r, echo=FALSE, warning = FALSE}
+library(randomForestSRC)
+
+# PCA-based feature data
+
+ptype_n_samp <- function(data, use) {
+  newdata <- data %>%
+    tibble::rownames_to_column(., var = "File") %>%
+    dplyr::mutate(plastic_type = ifelse(str_detect(File, "Balloons"), "Balloons", 
+                                 ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
+                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste", 
+                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
+                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
+                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
+    dplyr::mutate(Type = ifelse(str_detect(File, "USSB"), "Store-Bought", "Environmental")) %>%
+    dplyr::mutate(plastic_type = factor(plastic_type, levels = unique(plastic_type))) %>%
+    dplyr::mutate(Type = factor(Type, levels = unique(Type))) %>%
+    dplyr::relocate(c(Type, plastic_type), .before = 1) %>%
+    tibble::column_to_rownames(., var = "File")
+  
+  if (use == "min") {
+    # identify plastic type with minimum number of samples
+    min_samp_size <- as.numeric(newdata %>% count(plastic_type) %>% summarise(min(n)))
+    
+    # select random number of rows for each plastic type == minimum number of samples
+    newdf <- list()
+    i <- 1
+    for (plt in unique(newdata$plastic_type)) {
+      tmpdf <- newdata[which(newdata$plastic_type == plt),]
+      # random sampling within the levels of y when y is a factor to balance the class distributions within the splits.
+      idx <- caret::createDataPartition(tmpdf$Type, 
+                                        p = base::round(min_samp_size/nrow(tmpdf), 1), 
+                                        list = F)
+      newdf[[i]] <- tmpdf[idx, ]
+      i <- i + 1
+    }
+    
+    df <- bind_rows(newdf)
+  }
+  else {
+    df <- newdata
+  }
+  return(df)
+}
+rfsrc.result <- function(dat, split.ratio){
+  set.seed(1234)
+  # Partitioning train&test sets / training / predict on test set
+  plastic_idx <- caret::createDataPartition(dat$plastic_type, p = split.ratio, list = F)
+  plastic_trn <- dat[plastic_idx, ]
+  plastic_tst <- dat[-plastic_idx, ]  
+  
+  # Train
+  mergePC.rf <- rfsrc(plastic_type ~ ., 
+                      ntree=20000, 
+                      splitrule = "auc", 
+                      nodesize = 1, #Minumum size of terminal node for classification (1)
+                      # mtry = 21,
+                      importance = "permute", 
+                      samptype = "swr",
+                      membership = TRUE,
+                      perf.type="misclass",
+                      block.size = 1, # cumulative error rate on every tree
+                      data = plastic_trn
+                      )
+  print(mergePC.rf)
+  oob_error_plot <- plot(mergePC.rf)
+  
+  imp_var <- vimp(mergePC.rf, importance = "permute")$importance
+  print(get.auc(plastic_trn$plastic_type, mergePC.rf$predicted.oob))
+  # Prediction results
+  pred_res <- predict(mergePC.rf, newdata = plastic_tst, type = "prob")$predicted
+  rownames(pred_res) <- rownames(plastic_tst)
+  
+  # selection of the best feature candidates
+  # md.obj <- max.subtree(mergePC.rf)
+  # best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
+  
+  return(list(pred_res, oob_error_plot, imp_var))
 }
 
-y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 15))
-x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
-grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
+PCAtools_alldf <- ptype_n_samp(PCAtools_mergePC, use = "all")
+PCAtools_alldf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+```
 
+#### e1071
 
-# Plotting data distribution pre-removal -----------------------------------
-data_plot_pre_removal <- list() 
-i <- 1
-for (sample in unique(other_compounds_filter_area_samples$sample_name)) {
-  data_plot_pre_removal[[i]] <- ggplot(data = other_compounds_filter_area_samples %>% 
-                                         filter(., sample_name %in% sample),
-                                       aes(x = Area)) +
-    geom_histogram(bins = 50) +
-    ggtitle(sample) +
-    # scale_x_continuous() + # limits = c(0, 2000000)
-    labs(x = NULL, y = NULL) + 
-    theme(legend.position = "hidden", axis.title = element_text(size = 5))
-  i <- i + 1
-}
+```{r, echo=FALSE, warning = FALSE}
+e1071_alldf <- ptype_n_samp(e1071_merge_PC, use = "all")
+e1071_alld.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+```
 
-y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 15))
-x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
-grid.arrange(grobs = data_plot_pre_removal, ncol = 5, left = y, bottom = x)
+### With minimum sample size
 
+#### PCAtools
 
-# Plotting data distribution post-removal ------------------------------------------------
-data_plot_post_removal <- list() 
-i <- 1
-for (sample in unique(other_compounds_filter_area_samples_normalized$sample_name)) {
-  data_plot_post_removal[[i]] <- ggplot(data = other_compounds_filter_area_samples_normalized %>% 
-                                          filter(., sample_name %in% sample),
-                                        aes(x = Percent_Area)) +
-    geom_histogram(bins = 50) +
-    ggtitle(sample) +
-    # scale_x_continuous() + # limits = c(0, 2000000)
-    labs(x = NULL, y = NULL) + 
-    theme(legend.position = "hidden", axis.title = element_text(size = 5))
-  i <- i + 1
-}
+```{r, echo=FALSE, warning = FALSE}
+PCAtools_mindf <- ptype_n_samp(PCAtools_mergePC, use = "min")
+PCAtools_mindf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
+```
 
-y <- grid::textGrob("Count", rot = 90, gp = gpar(fontsize = 15))
-x <- grid::textGrob("Peak Area", gp = gpar(fontsize = 15))
-grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
+#### e1071
 
-# scipy.stats.norm.ppf function from Python 
+```{r, echo=FALSE, warning = FALSE}
+e1071_mindf <- ptype_n_samp(e1071_merge_PC, use = "min")
+e1071_mindf.RFresult <- rfsrc.result(e1071_mindf, split.ratio = 0.6)
+```
 
+## Demo SVM
