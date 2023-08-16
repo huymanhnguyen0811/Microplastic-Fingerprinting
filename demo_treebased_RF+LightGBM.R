@@ -76,19 +76,17 @@ rfsrc.result <- function(dat, split.ratio){
                       data = plastic_trn
   )
   print(mergePC.rf)
-  oob_error_plot <- plot(mergePC.rf)
-  
-  imp_var <- vimp(mergePC.rf, importance = "permute")$importance
-  print(get.auc(plastic_trn$plastic_type, mergePC.rf$predicted.oob))
+
   # Prediction results
   pred_res <- predict(mergePC.rf, newdata = plastic_tst, type = "prob")$predicted
   rownames(pred_res) <- rownames(plastic_tst)
   
+  imp_var <- vimp(mergePC.rf, importance = "permute")$importance
   # selection of the best feature candidates
   # md.obj <- max.subtree(mergePC.rf)
   # best.feature <- md.obj$topvars # extracts the names of the variables in the object md.obj
   
-  return(list(pred_res, oob_error_plot, imp_var))
+  return(list(mergePC.rf, pred_res, imp_var))
 }
 
 PCAtools_alldf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
@@ -96,41 +94,41 @@ e1071_alld.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
 PCAtools_mindf.RFresult <- rfsrc.result(PCAtools_alldf, split.ratio = 0.6)
 e1071_mindf.RFresult <- rfsrc.result(e1071_mindf, split.ratio = 0.6)
 
-my.data.RFresult <- rfsrc.result(my.data, split.ratio = 0.6)
+# my.data.RFresult <- rfsrc.result(my.data, split.ratio = 0.6)
 
-View(PCAtools_mergePC.RFresult[[1]])
-View(e1071_merge_PC.RFresult[[1]])
-
-plot.dat <- function(dat) {
-  newdat <- as.data.frame(dat) %>%
+rfsrc.plots <- function(preddat, rf.mod) {
+  newdat <- as.data.frame(preddat) %>%
     tibble::rownames_to_column(., var = "File") %>%
     tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "plastic_type", values_to = "prob")
-  return(newdat)
-}   
   
-PCAtoolsdat <- plot.dat(PCAtools_mergePC.RFresult[[1]])
-e1071dat <- plot.dat(e1071_merge_PC.RFresult[[1]])
-mydat <- plot.dat(my.data.RFresult[[1]])
+  plots <- list()
+  # Make bar graph of prediction probability -----
+  plots[[1]] <- ggplot(data = newdat) + 
+    geom_col(aes(x = File, y = prob, fill = plastic_type), 
+             position = "dodge" # separating stacking prob cols
+    ) +
+    scale_fill_brewer(palette = "Set2") +
+    scale_y_continuous(n.breaks = 10) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90))
+  
+  # plot OOB error rate against the number of trees -------
+  plots[[2]] <-plot(ggRandomForests::gg_error(rf.mod))
+  
+  # Estimate the variables importance --------
+  my.rf.vimp <- ggRandomForests::gg_vimp(rf.mod, nvar = 100) # provides the predictor's importance of top 100 predictors
+  plots[[3]] <- plot(my.rf.vimp, theme(axis.text.x = element_text(angle = 90))) # visualises the predictor’s importance
+  
+  grid.arrange(arrangeGrob(
+    plots[[3]], 
+    arrangeGrob(plots[[1]], plots[[2]]),
+    ncol=2 ,widths=c(2,1)))
+}
 
-# Make bar graph of prediction probability
-ggplot(data = mydat) + 
-  geom_col(aes(x = File, y = prob, fill = plastic_type), 
-           position = "dodge" # separating stacking prob cols
-           ) +
-  scale_fill_brewer(palette = "Set2") +
-  scale_y_continuous(n.breaks = 10) +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90))
+rfsrc.plots(preddat = PCAtools_alldf.RFresult[[2]],
+            rf.mod = PCAtools_alldf.RFresult[[1]])
 
-# plot OOB error rate against the number of trees -------
-plot(ggRandomForests::gg_error(my.rf)) 
-plot(ggRandomForests::gg_error(filled.rf)) 
-
-# Estimate the variables importance --------
-# my.rf.vimp <- ggRandomForests::gg_vimp(mergePC.rf, nvar = 100) # provides the predictor's importance of top 100 predictors
-# plot(my.rf.vimp) # visualises the predictor’s importance
- 
-# Plot the response variable against each predictor variable, we can generate partial dependance plots --------------
+# Partial dependence plots - aka. response ~ each predictor --------------
 my.rf.part.plot <- plot.variable(mergePC.rf, partial=TRUE, sorted=FALSE,
                                  show.plots=FALSE, 
                                  nvar = 10 # look at top 10 predictor's importance
@@ -139,28 +137,27 @@ gg.part <- ggRandomForests::gg_partial(my.rf.part.plot)
 plot(gg.part, xvar=names(plastic_trn[,-1]), panel=TRUE, se=TRUE)
 
 
-
-# my.rf.interaction <- find.interaction(my.rf, xvar.names=md.obj$topvars,
-                                      # importance="random", method="vimp", nrep=3) 
-
-
 # LightGBM for Multiclass Classification ==================
 library(lightgbm)
 
 lightgbm.result <- function(dat, split.ratio) {
-  
   # Must convert plastic_type from factors to numeric
   test <- copy(dat)
   test$plastic_type <- as.numeric(as.factor(test$plastic_type)) - 1L
   # Split train and test sets
   set.seed(1234)
-  plastic_idx <- caret::createDataPartition(test$plastic_type, p = split.ratio, list = F)
+  plastic_idx <- caret::createDataPartition(test$plastic_type, p = 0.6, list = F)
   plastic_trn <- as.matrix(test[plastic_idx, ])
   plastic_tst <- as.matrix(test[-plastic_idx, ])
   
-  dtrain <- lgb.Dataset(data = plastic_trn[, 2:ncol(plastic_trn)], label = plastic_trn[, 1])
-  dtest <- lgb.Dataset.create.valid(dtrain, data = plastic_tst[, 2:ncol(plastic_tst)], label = plastic_tst[, 1])
-  valids <- list(test = dtest)
+  dtrain <- lgb.Dataset(data = plastic_trn[, 3:ncol(plastic_trn)], 
+                        label = plastic_trn[, 2])
+  dtest <- lgb.Dataset.create.valid(dtrain, 
+                                    data = plastic_tst[, 3:ncol(plastic_tst)], 
+                                    label = plastic_tst[, 2])
+  
+  # Validation set to be used during training, not testing!!!
+  valids <-  list(test = dtest)
   
   # Setup parameters
   params <- list(
@@ -168,60 +165,51 @@ lightgbm.result <- function(dat, split.ratio) {
     , learning_rate = 1
     , objective = "multiclass"
     , metric = "multi_error"
-    , num_class = 6L # without Plastic_cups
+    , num_class = 7L
   ) 
   
   lgb.model <- lgb.train(params,
-                    dtrain,
-                    nrounds = 100,
-                    valids,
-                    early_stopping_rounds = 25L
-                    )
+                         dtrain,
+                         nrounds = 1000,
+                         valids, 
+                         early_stopping_rounds = 25L
+  )
   
   # prediction
-  my_preds <- round(predict(lgb.model, plastic_tst[, 2:ncol(plastic_tst)]), 3)
-  smaller_my_preds <- split(my_preds, rep(1:29, each = 6))
-  # create prediction result df
-  testing <- data.frame(matrix(nrow=0, ncol = 6))
-  for (i in 1:length(smaller_my_preds)) {
-    testing <- rbind(testing, smaller_my_preds[[i]])
-  }
+  my_preds <- round(predict(object = lgb.model, 
+                            data = plastic_tst[, 3:ncol(plastic_tst)],
+                            reshape = TRUE), 3)
 
-  colnames(testing) <- levels(dat$plastic_type)
-  rownames(testing) <- rownames(plastic_tst)
-
-  # IMportant features
-  tree_imp = lgb.importance(lgb.model, percentage = T)
-  imp_var <- lgb.plot.importance(tree_imp, measure = "Gain")
+  colnames(my_preds) <- levels(dat$plastic_type)
+  rownames(my_preds) <- rownames(plastic_tst)
   
-  return(list(testing, imp_var))
-}
+  plots <- list()
+  # Important features
+  tree_imp <- lgb.importance(lgb.model, percentage = T)
+  varimpmat <- lgb.plot.importance(tree_imp, measure = "Gain")
+  plots[[1]] <- ggplot(data = varimpmat, aes(x = Gain, y = Feature)) +
+    geom_col() +
+    title("Feature importance")
 
-
-PCAtools_mergePC.LGBMresult <- lightgbm.result(PCAtools_mergePC, split.ratio = 0.6)
-e1071_merge_PC.LGBMresult <- lightgbm.result(e1071_merge_PC, split.ratio = 0.6)
-my.data.mergePC.LGBMresult <- lightgbm.result(my.data, split.ratio = 0.6)
-
-View(PCAtools_mergePC.LGBMresult[[1]])
-View(e1071_merge_PC.LGBMresult[[1]])
-
-plot.dat <- function(dat) {
-  newdat <- as.data.frame(dat) %>%
+  newdat <- as.data.frame(my_preds) %>%
     tibble::rownames_to_column(., var = "File") %>%
     tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "plastic_type", values_to = "prob")
-  return(newdat)
-}   
+  
+  # Make bar graph of prediction probability
+  plots[[2]] <- ggplot(data = newdat) + 
+    geom_col(aes(x = File, y = prob, fill = plastic_type), 
+             position = "dodge" # separating stacking prob cols
+    ) +
+    scale_fill_brewer(palette = "Set2") +
+    scale_y_continuous(n.breaks = 10) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90))
+  
+  grid.arrange(grobs = plots,
+               ncol = 2)
+  
+  return(my_preds)
+}
 
-PCAtoolsdat <- plot.dat(PCAtools_mergePC.LGBMresult[[1]])
-e1071dat <- plot.dat(e1071_merge_PC.LGBMresult[[1]])
-mydat <- plot.dat(my.data.mergePC.LGBMresult[[1]])
-
-# Make bar graph of prediction probability
-ggplot(data = mydat) + 
-  geom_col(aes(x = File, y = prob, fill = plastic_type), 
-           position = "dodge" # separating stacking prob cols
-  ) +
-  scale_fill_brewer(palette = "Set2") +
-  scale_y_continuous(n.breaks = 10) +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90))
+PCAtools_mergePC.LGBMresult <- lightgbm.result(PCAtools_alldf, split.ratio = 0.6)
+e1071_merge_PC.LGBMresult <- lightgbm.result(e1071_alldf, split.ratio = 0.6)
