@@ -8,6 +8,9 @@ representative additives”
 
 Demo of each ML algorithms is shown below.
 
+## THE CODE PRESENTED HERE IS STILL IN PROGRESS
+## PLEASE FEEL FREE TO REPORT ANY BUGS TO ME @ huy.manh.nguyen@torontomu.ca
+
 ## Data processing
 
 You can include R code in the document as follows:
