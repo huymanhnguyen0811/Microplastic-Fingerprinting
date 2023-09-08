@@ -9,58 +9,70 @@ library(stats)
 input_df <- function(data, pkg) {
   # create sample df
   if (pkg == "PCAtools") {
-    df_X_rq1 <- data %>%
-      dplyr::select(File, collapsed_compound, Percent_Area) %>%
-      mutate(File = factor(File, levels = unique(File))) %>%
+    df_X_rq1 <- data  %>%
+      # dplyr::select(File, collapsed_compound, Values, product_cat) %>% # the options for select can be: File, plastic_type, product_cat, be careful since it will compressed obs. differently in dplyr::summarise() function subsequently
       # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, collapsed_compound) %>%
-      summarise(across(Percent_Area, mean)) %>%
-      pivot_wider(names_from = File, values_from = Percent_Area) %>%
+      group_by(product_cat, collapsed_compound) %>%
+      summarise(across(Values, mean)) %>%
+      pivot_wider(names_from = product_cat, values_from = Values) %>%
       column_to_rownames(., var = "collapsed_compound")
-    
   }
-  else {
-    df_X_rq1 <- data %>%
-      dplyr::select(File, collapsed_compound, Percent_Area) %>%
-      mutate(File = factor(File, levels = unique(File))) %>%
-      # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, collapsed_compound) %>%
-      summarise(across(Percent_Area, mean)) %>%
-      pivot_wider(names_from = collapsed_compound, values_from = Percent_Area) %>%
-      column_to_rownames(., var = "File")
-  }
+  
   for (r in 1:nrow(df_X_rq1)) {
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- runif(length(which(base::is.na(df_X_rq1[r,]))),
-                                                           min = sort(data$Percent_Area)[1],
-                                                           max = sort(data$Percent_Area)[2])
+                                                           min = sort(data$Values)[1],
+                                                           max = sort(data$Values)[2])
   }
   
   # table for information (rows are sample IDs, columns are sample information) -----------------------
-  metadata_X_rq1 <- data.frame(unique((data 
-                                       # filter(., !str_detect(File, "_USSB"))
-  )$File))
-  colnames(metadata_X_rq1) <- c('File')
-  material <- c()
-  for (row in 1:nrow(metadata_X_rq1)) {
-    material<- c(material, unique(data[which(data$File == metadata_X_rq1[row, 'File']),]$Material))
-  }
-  metadata_X_rq1$material <- material
+  # metadata_X_rq1 <- data.frame(File = colnames(df_X_rq1))
+  # #   data.frame(unique((data 
+  # #                                      # filter(., !str_detect(File, "_USE"))
+  # # )$File))
+  # product_cat <- c()
+  # for (row in 1:nrow(metadata_X_rq1)) {
+  #   product_cat<- c(product_cat, unique(data[which(data$File == metadata_X_rq1[row, 'File']),]$product_cat))
+  # }
+  # metadata_X_rq1$product_cat <- product_cat
+  # 
+  # metadata_X_rq1 <- metadata_X_rq1 %>%
+  # mutate(product_cat = ifelse(str_detect(File, "USE-01"), "Food contact materials",
+  #                              ifelse(str_detect(File, "USE-02"), "Mixed_Plastic_Waste",
+  #                                     ifelse(str_detect(File, "USE-03"), "Food contact materials",
+  #                                            ifelse(str_detect(File, "USE-05"), "Cigarettes",
+  #                                                   ifelse(str_detect(File, "USE-07"),"Food contact materials",
+  #                                                          ifelse(str_detect(File, "USE-09"),"Food contact materials",
+  #                                                                 ifelse(str_detect(File, "USE-11"),"Toys",
+  #                                                                        ifelse(str_detect(File, "USE-13"),"Food contact materials",
+  #                                                                               ifelse(str_detect(File, "USE-14"),"Food contact materials","Other")))))))))) %>%
+  # mutate(product_cat = ifelse(str_detect(File, "Balloons"), "Toys",
+  #                             ifelse(str_detect(File, "FPW_"), "Food contact materials",
+  #                                    ifelse(str_detect(File, "Pbal_Sample"), "Toys",
+  #                                           ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste",
+  #                                                  ifelse(str_detect(File, "PBBC_"), "Food contact materials",
+  #                                                         ifelse(str_detect(File, "Pbag_"),"Ziploc bags",
+  #                                                                ifelse(str_detect(File, "PDS_Sample"),"Food contact materials",
+  #                                                                       ifelse(str_detect(File, "Pcut_Sample"), "Food contact materials",
+  #                                                                              ifelse(str_detect(File, "PC_Sample"), "Food contact materials",
+  #                                                                                     ifelse(str_detect(File, "Cigs_"), "Cigarettes",
+  #                                                                                            ifelse(str_detect(File, "Cmat"), "Construction materials",
+  # ifelse(str_detect(File, "Mask_Sample"), "Clothes", "Misc"))))))))))))) %>%
+  # column_to_rownames(., var = "File")
+  
+  # IF data$plastic_type then we look at mat = 7 rows of each plastic type; if data$product_cat then mat = ~6-7 rows of each product_cat
+  # ATTENTION!!!  If group data like this, the observations are compressed and somewhat lost their variation because we calculated mean of all obs. for df_X_rq1 dataframe
+  metadata_X_rq1 <- data.frame(product_cat = colnames(df_X_rq1)) # product_cat
+  metadata_X_rq1$product_cat2 <- metadata_X_rq1$product_cat
   metadata_X_rq1 <- metadata_X_rq1 %>%
-    mutate(plastic_type = ifelse(str_detect(File, "FPW_"), "Food_Packaging_Waste",
-                                 ifelse(str_detect(File, "Balloons"), "Balloons",
-                                        ifelse(str_detect(File, "MPW_"), "Mixed_Plastic_Waste",
-                                               ifelse(str_detect(File, "PBBC_"), "Plastic_Bottles_and_Bottle_Caps",
-                                                      ifelse(str_detect(File, "PC_Sample"),"Plastic_Cups",
-                                                             ifelse(str_detect(File, "PDS_Sample"),"Plastic_Drinking_Straws", "Other"))))))) %>%
-    column_to_rownames(., var = "File")
+    column_to_rownames(., var = "product_cat")
   
   return(list(df_X_rq1 ,metadata_X_rq1))
 }
 
-df_pca <- input_df(merge_df, pkg = "PCAtools")
+df_pca <- input_df(gc_hplc, pkg = "PCAtools")
 
 # PCA with PCAtools::pca ===========
-colnames(df_pca[[2]])[2] <- c("Plastic type")
+# colnames(df_pca[[2]])[2] <- c("Plastic type")
 
 # PCAtools::pca requires mat input (columns as sample name, rows as collapsed_compound)
 p <- PCAtools::pca(mat = df_pca[[1]], 
@@ -90,8 +102,8 @@ screeplot(p, components = getComponents(p),
 
 # A bi-plot
 PCAtools::biplot(p,
-                 lab = NULL, 
-                 colby = "material", 
+                 lab = rownames(p$metadata), # NULL 
+                 colby = "product_cat2", 
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
                  sizeLoadingsNames = 5,
