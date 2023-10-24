@@ -1,5 +1,5 @@
 ---
-title: "Demo ML Microplastic"
+title: "Microplastic fingerprinting"
 output: 
   md_document:
     variant: markdown_github
@@ -29,63 +29,50 @@ library(tidyverse)
 library(dplyr)
 library(data.table)
 library(Hmisc)
+library(writexl)
 
 # Functions -------------------------------------------------------------------------------------------------------
 # Grouping compounds based on RT1, RT2, and Ion1 - Version 1
-grouping_comp_ver1 <- function(data, rtthres, mzthres, type) {
+grouping_comp <- function(data, rtthres, mzthres, type) {
   
   # create empty list, each sub-list is a compound group with following criteria:
   # rtthres: RT threshold window
   # mzthres: mz threshold window
-  dat <- copy(data)
+  dat <- data[ , , drop = FALSE]  # Shallow copy to avoid modification of original data
   
   # Initialize the compound column filled with NA values
   dat$collapsed_compound <- NA
   i <- 1
-  if (type == "ATDGCMS") {
-    for (row in 1:nrow(dat)) {
-      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-      rt <- dat[row,]$RT
-      mz <- dat[row,]$m.z
-      
-      idx <- which(dat$RT <= (rt + rtthres) & dat$RT >= (rt - rtthres) &
-                     dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
-                     is.na(dat$collapsed_compound))
-      
-      if (identical(idx, integer(0))) {
-        next
-      }
-      else {
-        dat[idx, "collapsed_compound"] <- paste0("Compound_", i, ".ATDGCMS")
-        i <- i + 1
-      }  
-    }
+
+  # Validate the 'type' parameter
+  if (!(type %in% c("ATDGCMS", "HPLCTOFMS"))) {
+    stop("Invalid type specified. Must be either 'ATDGCMS' or 'HPLCTOFMS'")
   }
-  if (type == "HPLCTOFMS") {
-    for (row in 1:nrow(dat)) {
-      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-      rt <- dat[row,]$RT
-      mz <- dat[row,]$m.z
-      
-      idx <- which(dat$RT <= (rt + rtthres) & dat$RT >= (rt - rtthres) &
-                     dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
-                     is.na(dat$collapsed_compound))
-      
-      if (identical(idx, integer(0))) {
-        next
-      }
-      else {
-        dat[idx, "collapsed_compound"] <- paste0("Compound_", i, ".HPLCTOFMS")
-        i <- i + 1
-      }  
-    }
+
+  # Loop through each row to group compounds
+  for (row in 1:nrow(dat)) {
+    # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+    rt <- base::as.numeric(dat[row, "RT"])
+    mz <- base::as.numeric(dat[row, "m.z"])
+    
+    idx <- which(
+      dat$RT <= (rt + rtthres) & dat$RT >= (rt - rtthres) &
+      dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
+      is.na(dat$collapsed_compound)
+    )
+    
+    if (length(idx) > 0) {
+      dat[idx, "collapsed_compound"] <- paste0("Compound_", i, ".", type)
+      i <- i + 1
+    }  
   }
   return(dat)
 }
 
+
 # Filtering similar and unique compound 
 
-comp_filter_ver2 <- function(data) {
+comp_filter <- function(data) {
   all_other_compounds_idx <- c()
   all_unique_compounds_idx <- c()
 
@@ -157,7 +144,7 @@ df_blank2 <- dplyr::bind_rows(df_list2_blank)
 # sampleinfo2 <- sampleinfo2 %>%
 #   filter(str_detect(Sample_ID, "USE"))
 
-# STEP 1.2B Filtering out chemical noise (aka. setting limit of observations) ---------------------------- 
+# STEP 1.2B Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
 
 # ATDGCMS
 
@@ -201,6 +188,7 @@ combined_df1 <- rbind(df1, df_blank1) %>% arrange(RT)
 # HPLCTOFMS
 df2 <- bind_rows(list2_remaining_area) %>%
   select(c("m/z", "RT", "Height", "File")) %>%
+  dplyr::mutate(File = gsub("_", "-", File)) %>%
   mutate(type = "Sample")
 
 df_blank2 <- df_blank2 %>%
@@ -218,19 +206,19 @@ colnames(combined_df2)[[1]] <- "m.z"
 # Hmisc::describe(combined_df1)
 
 # ATDGCMS
-combined_df1_grouped <- grouping_comp_ver1(combined_df1,
-                                           rtthres = 0.05,
-                                           mzthres = 0.05,
-                                           type = "ATDGCMS")
+combined_df1_grouped <- grouping_comp(combined_df1,
+                                      rtthres = 0.05,
+                                      mzthres = 0.05,
+                                      type = "ATDGCMS")
 
 # Statistical Description for selecting rtthres and mzthres
 # Hmisc::describe(combined_df2)
 
 # HPLCTOFMS
-combined_df2_grouped <- grouping_comp_ver1(combined_df2,
-                                           rtthres = 0.1,
-                                           mzthres = 0.0005,
-                                           type = "HPLCTOFMS")
+combined_df2_grouped <- grouping_comp(combined_df2,
+                                      rtthres = 0.1,
+                                      mzthres = 0.0005,
+                                      type = "HPLCTOFMS")
 
 # Step 2: Readjust compound RA (sample) by average blank RA ======================
 
@@ -295,8 +283,10 @@ for (comp in unique(combined_df2_grouped$collapsed_compound)) {
 }
 
 adjusted_df2 <- bind_rows(temp_list)
+```
 
-# STEP 3: Normalizing data accordingly to different data frames of interest on with the one with positive Area values and extracting negative values to be used as LOD -----------------------------------
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# STEP 3: Remove all detections with negative peak area and Normalizing data accordingly to different data frames of interest on with the one with positive Area values -----------------------------------
 
 # ATDGCMS
 
@@ -318,6 +308,24 @@ for (sample in unique(adjusted_df1$File)) {
 # For positive values => combine data again to 1 grand data frame
 comp_normalized1 <- dplyr::bind_rows(temp_list)
 
+transform_filename_atdgcms <- function(filename) {
+  split_name <- base::strsplit(filename, "-")[[1]]
+
+  # Remove 2nd and 3rd words and modify the 4th word (now 3rd after removal)
+  split_name <- c(split_name[-c(2, 3, 6)], paste0("rep", split_name[6]))
+
+  # Combine steps: Glue string together and add "ATDGCMS-" prefix
+  return(paste0("ATDGCMS-", paste(split_name, collapse = "-")))
+}
+
+
+comp_normalized1 <- comp_normalized1 %>%
+  group_by(File) %>%
+  mutate(NewFile = transform_filename_atdgcms(File))
+
+# Change name of Fishing Item to correct name
+comp_normalized1[which(str_detect("ATDGCMS-Fishing-1-USE-1-rep15", comp_normalized1$NewFile)),]$NewFile <- "ATDGCMS-Fishing-Items-USE-15-rep1" 
+
 # HPLCTOFMS
 
 # paste0("the number of compounds with negative Area values are: ", length(adjusted_df2$Height[adjusted_df2$Height < 0]))
@@ -338,8 +346,50 @@ for (sample in unique(adjusted_df2$File)) {
 # Then combine data again to 1 grand data frame
 comp_normalized2 <- dplyr::bind_rows(temp_list)
 
-# STEP 4: Identify shared and unique compound groups across samples ------------------------------------------------
+transform_filename_hplctofms <- function(filename) {
+  # remove the last 3 elements of the splitted name
+  split_name <- head(base::strsplit(filename, "-")[[1]], -3)
+
+  # glue the remaining elements together
+  match_phrase <- paste(split_name[c(1,2)], collapse = "-")
+  
+  # find the corresponding atdgcms file name that have the match first 6 letters -> add prefix HPLCTOFMS to filename -> Glue string together
+  return(paste0("HPLCTOFMS-", paste(c(base::strsplit(unique(comp_normalized1$File)[str_detect(unique(comp_normalized1$File), match_phrase)], "-")[[1]][[1]], split_name), collapse = "-")))
+}
+
+comp_normalized2 <- comp_normalized2 %>%
+  group_by(File) %>%
+  mutate(NewFile = transform_filename_hplctofms(File))
+```
+
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization.xlsx"
+
+# Create namedf to use as reference for changing name of file name in Table of product categorization.xlsx
+namedf <- rbind(data.frame(File = unique(comp_normalized1$File), NewFile = unique(comp_normalized1$NewFile)), 
+                data.frame(File = unique(comp_normalized2$File), NewFile = unique(comp_normalized2$NewFile)))
+
+new_excel <- list()
+for (i in 1:length(excel_sheets(path = p))) {
+  # Table of categorization
+  sampinfo <- readxl::read_excel(path = p, 
+                                 sheet = excel_sheets(path = p)[i])
+  
+  newfile <- c()
+  for (row in 1:nrow(sampinfo)) {
+    newfile <- c(newfile, namedf[match(sampinfo[row,]$File, namedf$File),]$NewFile)
+  }
+  sampinfo$NewFile <- newfile
+  new_excel[[paste0("Grouping", i)]] <- sampinfo
+}
+
+writexl::write_xlsx(x = new_excel, path = "Table of product categorization_NewFileName.xlsx")
+```
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# STEP 4: Identify shared and unique compound groups across samples ------------------------------------------------
+p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization_NewFileName.xlsx"
 
 gc_list <- list()
 hplc_list <- list()
@@ -350,25 +400,25 @@ for (i in 1:length(excel_sheets(path = p))) {
   sampinfo <- readxl::read_excel(path = p, 
                                  sheet = excel_sheets(path = p)[i])
   
-  # at least in 2 samples
+    # at least in 2 samples
   # ATDGCMS
   # joining data frame with sampinfo df
-  dat1 <- left_join(x=comp_normalized1, 
-                    y = sampinfo, 
-                    by = 'File')
+  dat1 <- left_join(x = subset(comp_normalized1, select = -c(File)), 
+                    y = subset(sampinfo, select = -c(File)), 
+                    by = 'NewFile')
   
-  idx_list_filter1 <- comp_filter_ver2(dat1) 
+  idx_list_filter1 <- comp_filter(dat1) 
   
   shared_comp1<- dat1[idx_list_filter1[[1]],]
   
   
   # HPLCTOFMS
   # joining data frame with sampinfo df
-  dat2 <- left_join(x=comp_normalized2, 
-                    y = sampinfo, 
-                    by = 'File')
+  dat2 <- left_join(x = subset(comp_normalized2, select = -c(File)), 
+                    y = subset(sampinfo, select = -c(File)),  
+                    by = 'NewFile')
   
-  idx_list_filter2 <- comp_filter_ver2(dat2)
+  idx_list_filter2 <- comp_filter(dat2)
   
   shared_comp2 <- dat2[idx_list_filter2[[1]],]
   
@@ -377,7 +427,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   
   atdgcms <- shared_comp1 %>%
     filter(., !is.na(collapsed_compound)) %>%
-    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'Percent_Area')
+    select('NewFile', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'm.z', 'RT', 'Percent_Area')
   
   colnames(atdgcms)[ncol(atdgcms)] <- 'Values'
   
@@ -388,7 +438,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   
   hplctofms <- shared_comp2 %>%
     filter(., !is.na(collapsed_compound)) %>%
-    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'Percent_Height')
+    select('NewFile', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'm.z', 'RT', 'Percent_Height')
   
   colnames(hplctofms)[ncol(hplctofms)] <- 'Values'
   
@@ -445,16 +495,18 @@ for (plt in unique(adjusted_df$plastic_type)) {
 
 ## Demo PCA
 
-```{r , echo=FALSE, warning = FALSE}
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
 library(PCAtools)
 library(stats)
+library(FactoMineR)
+library(factoextra)
+
 ```
 
 ### columns as "sample name"
 
 ```{r , echo=TRUE, warning = FALSE}
-# PCA -----------------
-# prep input
+# columns as "sample name"
 input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
@@ -480,12 +532,12 @@ input_df <- function(data) {
   metadata_X_rq1$Suspected_Polymer <- Suspected_Polymer
   metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "File")
 
-  return(list(df_X_rq1 ,metadata_X_rq1))
+  return(list(df_X_rq1, metadata_X_rq1))
 }
 ```
 
-```{r , echo=FALSE, warning = FALSE}
-df_pca <- input_df(hplc_list[[1]])
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_pca <- input_df(gc_hplc_list[[1]])
 
 # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
 p <- PCAtools::pca(mat = df_pca[[1]], 
@@ -494,9 +546,37 @@ p <- PCAtools::pca(mat = df_pca[[1]],
                    scale = FALSE 
                    )
 
+# 3D PCa plot ===============================================================================
+# FactoMineR_p <- FactoMineR::PCA(df_pca,
+#                                 scale.unit = FALSE)
+# 
+# scores <- as.data.frame(FactoMineR_p$ind$coord[,1:3]) %>%
+#   rownames_to_column(., var = "File")
+# category <- sapply(scores$File, function(f) {
+#   unique(gc_hplc_list[[1]]$Category[match(f, gc_hplc_list[[1]]$File)])
+# })
+# 
+# # Add to scores data frame
+# scores$Category <- as.factor(category)
+# 
+# rgl::plot3d(scores$Dim.1, scores$Dim.2, scores$Dim.3,
+#        col = as.integer(scores$Category),
+#        xlab = "PC1",
+#        ylab = "PC2",
+#        zlab = "PC3",
+#        type = "p")
+# 
+# # Add legend
+# rgl::legend3d("topright", legend = levels(scores$Category), col = 1:length(levels(scores$Category)), pch = 16)
+
+# factoextra::fviz_screeplot(FactoMineR_p)
+# factoextra::fviz_pca_biplot(FactoMineR_p,
+#                             habillage = unique(gc_hplc_list[[1]]$File))
+
+
 # A bi-plot =================
 PCAtools::biplot(p,
-                 lab = rownames(p$metadata),  # rownames(pcaobj$metadata)
+                 lab = rownames(p$metadata),
                  colby = "Suspected_Polymer",
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
@@ -641,7 +721,7 @@ PCAtools::biplot(p,
                  legendIconSize = 6)
 ```
 
-### Demo Hierarchical Clustering Analysis
+## Demo Hierarchical Clustering Analysis
 
 If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
 
@@ -660,30 +740,62 @@ hc_df <- gc_hplc_list[[1]] %>%
   tibble::column_to_rownames(., var = "File")
 
 for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_hplc_list[[1]]$Values)[1],
-                                                          max = sort(gc_hplc_list[[1]]$Values)[2])
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+    # stats::runif(length(which(base::is.na(hc_df[r,]))),
+    #                                                       min = sort(gc_hplc_list[[1]]$Values)[1]/10000,
+    #                                                       max = sort(gc_hplc_list[[1]]$Values)[2]/10000)
 }
+```
 
+### Clustering of samples
+```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
-
-plot(hclust(vegan::vegdist(as.matrix(hc_df), 
-                           method = "canberra")),  # Since our data is continous -> canberra // manhattan
+hca_samp <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                         method = "robust.aitchison"))
+plot(hca_samp,  # Since our data is continous -> canberra // manhattan
      # // aitchison // robust.aitchison
      # labels = FALSE, 
      hang = -1,
-     main = "Combined GC - HPLC data")
+     main = "Combined GC - HPLC data_Samples")
 ```
+
+### Clustering of compounds
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+## Dissimilarity Indices Calculated by vegan::vegdist()
+hca_comp <- hclust(vegan::vegdist(t(as.matrix(hc_df)), 
+                           method = "robust.aitchison"))
+plot(hca,  # Since our data is continous -> canberra // manhattan
+     # // aitchison // robust.aitchison
+     # labels = FALSE, 
+     hang = -1,
+     main = "Combined GC - HPLC data_Compounds")
+```
+
+A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
+
 
 For selecting Dissimilarity Indices Calculated by vegan::vegdist(), since our data is continous, not normally distributed, and the data is sparse (meaning our data has lots of NA or NULL before data imputation, This basically because there are compounds that occur in some samples and not in the others). Manhattan dissimilarity index separating ATDGCMS and HPLCTOFMS into 2 big clusters, while Canberra//Aitchison//Robust.aitchison grouped ATDGCMS as a subgroup of a part of HPLCTOFMS data.
 
 Since for each observations of each sample, the sum of values of collapsed compounds is sum up to 100%, Aitchison or Robust.Aitchison are currently the best option for dissimilarity index.
 
-***Why Aitchison or Robust.Aitchison for OUR DATA, AKA. Compositional Data?*** 
+***Why Aitchison or Robust.Aitchison for OUR DATA, AKA. Compositional Data?***
 
 Compositional data have particular characteristics and constraints that standard distance metrics like Euclidean don't handle well. Here are some reasons why Aitchison distance is more suitable:
 
 **Closure Constraint:** Because the components in compositional data sum to a constant value (like 1 or 100%), the data is subject to a closure constraint. This constraint violates the assumption of independence between variables that many standard statistical techniques rely on. Aitchison distance accounts for this constraint.
+
+*Implications of Closure Constraint* 
+*Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
+
+*Spurious Correlations:* The closure constraint can lead to spurious or misleading correlations between variables. For example, an increase in the proportion of Additive A will necessarily result in a decrease in the sum of the proportions of Additives B and C, even if there's no biological or chemical reason for them to be inversely related.
+
+*Non-Independence of Components:* In compositional data, the components are not independent of each other, violating the assumptions of independence that many statistical tests and measures (like the Euclidean distance) rely on.
+
+*Comparisons are Relative:* In compositional data, what matters is the relative sizes of the components, not their absolute sizes. Any analysis should, therefore, focus on these relative proportions rather than absolute values.
+
+For these reasons, specialized statistical methods like Aitchison distance are often used for compositional data. These methods take the closure constraint into account and focus on the relative proportions of the different components, providing a more accurate and interpretable analysis.
+
+In this workflow on tracking microplastic additives in aquatic environments, understanding the closure constraint can be pivotal. If you're looking at the relative abundances of different types of plastic additives in water samples, those abundances are compositional data subject to the closure constraint. Using standard statistical techniques without accounting for this constraint could lead to misleading conclusions.
 
 **Relative Importance:** In compositional data, what's generally important is the relative proportion between components, rather than their absolute values. The Aitchison distance is designed to capture the relationships between these relative values effectively.
 
@@ -695,7 +807,58 @@ Compositional data have particular characteristics and constraints that standard
 
 **Interpretable:** The distance measure reflects compositional difference in a way that's meaningful within the context of the data, making it easier to understand and interpret the results.
 
-#### Here, we use a non-parametric test, Wilcoxon test, because our data vioates the assumptions for other parametric test, as demonstrate below:
+## Demo 2-way HCA dendrogram
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+library(pheatmap)
+# Input matrix - sample as rows, features as columns
+pheatmap(as.matrix(hc_df),
+         cluster_rows = hclust(as.dist(vegan::vegdist(as.matrix(hc_df[55:75,50:100]), 
+                                              method = "robust.aitchison"))),
+         cluster_cols = hclust(dist(t(as.matrix(hc_df[55:75,50:100])))),
+         clustering_method = "complete",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         border_color = "grey20",
+         cellwidth = 5,
+         cellheight = 5,
+         fontsize = 7,
+         show_rownames = TRUE,
+         show_colnames = TRUE)
+
+```
+
+(12th,Oct,2023) Current Problem with two-way HCA dendrogram is that we have too many samples (n = 172) and too many compounds (n = 13046). => Proposed solution: grouping the compounds together via the function cutree(hca_comp, h = 100) and combine all compounds that belongs to a group together by taking the mean/median across all compounds that belongs to group for each sample. The process is as demonstrated below.
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+cut_tree_comp <- data.frame(group = cutree(hca_comp, h = 130))
+cut_tree_comp <- rownames_to_column(cut_tree_comp, var = "collapsed_compound")
+joined <- full_join(cut_tree_comp, 
+                    gc_hplc_list[[1]] %>%
+                      select(File, collapsed_compound, Values) %>%
+                      group_by(File, collapsed_compound) %>%
+                      summarise(mean_value = mean(Values)) %>%
+                      pivot_wider(names_from = File, values_from = mean_value), 
+                    by = "collapsed_compound") %>% column_to_rownames(., var = "collapsed_compound")
+
+# Iterating through each sample and combine values of compounds (FUN = mean) that belongs to the same grouping
+tets <- joined %>%
+  group_by(group) %>%
+  summarise(across(everything(), \(x) mean(x, na.rm = TRUE))) %>% 
+  column_to_rownames(., var = "group")  
+
+for (r in 1:nrow(tets)) {
+  tets[r, which(base::is.na(tets[r,]))] <- stats::runif(length(which(base::is.na(tets[r,]))),
+                                                          min = sort(gc_hplc_list[[1]]$Values)[1]/10000,
+                                                          max = sort(gc_hplc_list[[1]]$Values)[2]/10000)
+}
+
+hca_samp <- hclust(vegan::vegdist(t(as.matrix(tets)),
+                           method = "robust.aitchison"))
+plot(hca_samp, hang = -1)
+
+```
+So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
+
+#### Here, we use a non-parametric test, Wilcoxon test, because our data violates the assumptions for other parametric test, such as normality and equality of variance between 2 samples, as demonstrate below:
 
 ```{r , echo=FALSE, warning = FALSE}
 ### Examining for normal distribution ----------------
@@ -770,92 +933,47 @@ one way to overcome this problem is group_by(Suspected_Polymer) or Category or S
 Here, we want to find what is the optimal cut-off in HCA-cluster-tree 's Height and min_obs, which will result in the maximum number of significant compounds.
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
-hc_df <- gc_hplc_list[[1]] %>%
-  dplyr::select(File,
-                collapsed_compound, 
-                Values) %>%
-  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  dplyr::group_by(
-    File,
-    collapsed_compound) %>%
-  dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
-                     values_from = Values) %>%
-  tibble::column_to_rownames(., var = "File")
-
-for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_hplc_list[[1]]$Values)[1],
-                                                          max = sort(gc_hplc_list[[1]]$Values)[2])
-}
-
-hca <- hclust(stats::dist(as.matrix(hc_df), 
-                         method = "canberra"))
-
+library(tidyr)
 stats <- gc_hplc_list[[1]] %>%
-      select(File, collapsed_compound, Values) %>%
-      group_by(File, collapsed_compound) %>%
-      summarise(across(Values, mean)) %>%
-      pivot_wider(names_from = collapsed_compound, values_from = Values)
+  select(File, collapsed_compound, Values) %>%
+  group_by(File, collapsed_compound) %>%
+  summarise(mean_value = mean(Values)) %>%
+  pivot_wider(names_from = collapsed_compound, values_from = mean_value)
 
-sig_comp <-list()
+# Initialize variables
+sig_comp <- list()
 count <- 1
-for (ele in 62:length(hca$height)) {
-  list_hca <- list()
-  for (min_obs in 1:7){
-    t <- as.data.frame(cutree(hca,  h = ceiling(hca$height[ele])))
-    colnames(t) <- "group"
-    t <- t %>% tibble::rownames_to_column(., var = "File")
-    # Joining stats df and HCA-grouping clusters
+
+# Main loop
+for (ele in 91:length(hca$height)) {
+  list_hca <- map(1:7, function(min_obs) {
+    t <- data.frame(group = cutree(hca_samp, h = ceiling(hca_samp$height[ele])))
+    t <- rownames_to_column(t, var = "File")
     joined <- full_join(t, stats, by = "File")
-    g_df <- data.frame(compound=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
-    # Loop through each collapsed_compound (as columns)
-    for (c in 3:ncol(joined)) {
-      satisfied_group <- c()
-      # Loop through each grouping from HCA
-      for (group in unique(joined$group)) {
-        # get all group that has > min_obs
-        if (sum(!is.na(joined[which(joined$group == group), c])) > min_obs) {
-          satisfied_group <- c(satisfied_group, group)
-        } else {
-          next
-        }
-      }
-      # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-      if (length(satisfied_group) < 2) {
-        next
-      } else {
-        # looping through the combinations of product categories 
-        for (col in 1:ncol(utils::combn(satisfied_group, 2))) {
-          # extract the combinations of product category pairs
-          p_1 <- utils::combn(satisfied_group, 2)[1,col]
-          p_2 <- utils::combn(satisfied_group, 2)[2,col]
-          # calculating the p-value between each product category pair 
-          pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
-                                          joined[which(joined$group == p_2), c])$p.value
-          pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                                  joined[which(joined$group == p_2), c])$p.value
-          # assigning row information
-          g_df[nrow(g_df) + 1,] <- c(colnames(joined)[c], 
-                                     paste0(p_1, "&", p_2), 
-                                     pval_wilcox_test, 
-                                     pval_ks_test)
-        }
-      }
-    }
-    g_df$adjusted_pvalue_holm <- stats::p.adjust(g_df$pval_wilcox_test, method = "holm")
     
-    list_hca[[min_obs]] <- g_df %>%
-            filter(., adjusted_pvalue_holm < 0.05) %>%
-            arrange(adjusted_pvalue_holm)
-  }
+    g_df <- map_dfr(3:ncol(joined), function(c) {
+      satisfied_group <- unique(joined$group[sapply(joined[, c], function(x) sum(!is.na(joined[joined$group == x, c]))) > min_obs])
+      if (length(satisfied_group) < 2) return(NULL)
+      
+      pairs <- combn(satisfied_group, 2)
+      map_dfr(1:ncol(pairs), function(col) {
+        p_1 <- pairs[1, col]
+        p_2 <- pairs[2, col]
+        pval_wilcox_test <- wilcox.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        pval_ks_test <- ks.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        data.frame(compound = names(joined)[c], comparison_pair = paste0(p_1, "&", p_2), pval_wilcox_test, pval_ks_test)
+      })
+    })
+    
+    g_df$adjusted_pvalue_holm <- p.adjust(g_df$pval_wilcox_test, method = "holm")
+    filter(g_df, adjusted_pvalue_holm < 0.05) %>% arrange(adjusted_pvalue_holm)
+  })
   
-  print(paste0("The max. number of significant compounds ","at the optimal no. of obs ", which.max(lapply(list_hca, nrow)), " at HCA cut-off Height threshold of ",hca$height[ele]," is ", nrow(list_hca[[which.max(lapply(list_hca, nrow))]])))
-  print("=======================================================================")
-  # Select the cutting threshold with min_obs obs that results in the most number of significant compounds
-  sig_comp[[count]] <- list_hca[[which.max(lapply(list_hca, nrow))]]
+  # Output and update
+  max_nrow <- max(map_int(list_hca, nrow))
+  cat(sprintf("The max. number of significant compounds at optimal no. of obs is %d at HCA cut-off Height threshold of %f\n", max_nrow, hca$height[ele]))
+  sig_comp[[count]] <- list_hca[[which.max(map_int(list_hca, nrow))]]
   count <- count + 1
-  print(list_hca[[which.max(lapply(list_hca, nrow))]])
 }
 ```
 
@@ -1059,12 +1177,12 @@ Here we get all significant compounds from Suspected_Polymer that has minimum 1 
 list_suspect_pol <- list()
 for (min_obs in 1:10) {
   stats <- gc_hplc_list[[1]] %>%
-    select(File, collapsed_compound, Suspected_Polymer, Values) %>%
+    select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
     # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, Suspected_Polymer, collapsed_compound) %>%
+    group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
     summarise(across(Values, mean)) %>%
     pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "File")
+    column_to_rownames(., var = "NewFile")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
   # Loop through each collapsed_compound (as columns)
@@ -1104,14 +1222,27 @@ for (min_obs in 1:10) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  list_suspect_pol[[min_obs]] <- sp_df %>%
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
+  
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
+    idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_hplc_list[[1]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_hplc_list[[1]][idx, ]$m.z))
+  }
+  
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
   
   print(sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(comp))
 }
+
+writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer.xlsx")
 ```
 
 ##### ATDGCMS
@@ -1121,12 +1252,12 @@ list_suspect_pol <- list()
 
 for (min_obs in 1:10) {
   stats <- gc_list[[1]] %>%
-    select(File, collapsed_compound, Suspected_Polymer, Values) %>%
+    select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
     # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, Suspected_Polymer, collapsed_compound) %>%
+    group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
     summarise(across(Values, mean)) %>%
     pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "File")
+    column_to_rownames(., var = "NewFile")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
   # Loop through each collapsed_compound (as columns)
@@ -1166,14 +1297,27 @@ for (min_obs in 1:10) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  list_suspect_pol[[min_obs]] <- sp_df %>%
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
+   
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
+    idx <- base::which(gc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_list[[1]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_list[[1]][idx, ]$m.z))
+  }
+  
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
   
   print(sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(comp))
 }
+
+writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_ATDGCMS_by_Suspected_polymer.xlsx")
 ```
 
 ##### HPLCTOFMS
@@ -1182,12 +1326,12 @@ for (min_obs in 1:10) {
 list_suspect_pol <- list()
 for (min_obs in 1:10) {
   stats <- hplc_list[[1]] %>%
-    select(File, collapsed_compound, Suspected_Polymer, Values) %>%
+    select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
     # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, Suspected_Polymer, collapsed_compound) %>%
+    group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
     summarise(across(Values, mean)) %>%
     pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "File")
+    column_to_rownames(., var = "NewFile")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
   # Loop through each collapsed_compound (as columns)
@@ -1227,14 +1371,27 @@ for (min_obs in 1:10) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  list_suspect_pol[[min_obs]] <- sp_df %>%
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
+  
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
+    idx <- base::which(hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(hplc_list[[1]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(hplc_list[[1]][idx, ]$m.z))
+  }
+  
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
+  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
   
   print(sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(comp))
 }
+
+writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_HPLC_by_Suspected_polymer.xlsx")
 ```
 
 #### By Category
@@ -1249,12 +1406,12 @@ for (i in 1:length(gc_hplc_list)) {
   list_cat <- list()
   for (min_obs in 1:10) {
     stats <- gc_hplc_list[[i]] %>%
-      select(File, collapsed_compound, Category, Values) %>%
+      select(NewFile, collapsed_compound, Category, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Category, collapsed_compound) %>%
+      group_by(NewFile, Category, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     cat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1298,9 +1455,25 @@ for (i in 1:length(gc_hplc_list)) {
       arrange(adjusted_pvalue_holm)
   }
   
-  sig_comp[[i]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
-  print(sig_comp[[i]] %>% arrange(comp))
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(gc_hplc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_hplc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_hplc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category.xlsx")
 ```
 
 ##### ATDGCMS
@@ -1311,12 +1484,12 @@ for (i in 1:length(gc_list)) {
   list_cat <- list()
   for (min_obs in 1:10) {
     stats <- gc_list[[i]] %>%
-      select(File, collapsed_compound, Category, Values) %>%
+      select(NewFile, collapsed_compound, Category, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Category, collapsed_compound) %>%
+      group_by(NewFile, Category, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     cat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1360,9 +1533,25 @@ for (i in 1:length(gc_list)) {
       arrange(adjusted_pvalue_holm)
   }
   
-  sig_comp[[i]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
-  print(sig_comp[[i]] %>% arrange(comp))
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(gc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_ATDGCMS_by_Category.xlsx")
 ```
 
 ##### HPLCTOFMS
@@ -1373,12 +1562,12 @@ for (i in 1:length(hplc_list)) {
   list_cat <- list()
   for (min_obs in 1:10) {
     stats <- hplc_list[[i]] %>%
-      select(File, collapsed_compound, Category, Values) %>%
+      select(NewFile, collapsed_compound, Category, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Category, collapsed_compound) %>%
+      group_by(NewFile, Category, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     cat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1422,9 +1611,25 @@ for (i in 1:length(hplc_list)) {
       arrange(adjusted_pvalue_holm)
   }
   
-  sig_comp[[i]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
-  print(sig_comp[[i]] %>% arrange(comp))
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(hplc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(hplc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(hplc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_HPLC_by_Category.xlsx")
 ```
 
 #### By Subcategory
@@ -1439,13 +1644,13 @@ sig_comp <- list()
 for (i in 1:length(gc_hplc_list)) {
   list_subcat <- list()
   for (min_obs in 1:10) {
-    stats <- gc_hplc_list[[1]] %>%
-      select(File, collapsed_compound, Subcategory, Values) %>%
+    stats <- gc_hplc_list[[i]] %>%
+      select(NewFile, collapsed_compound, Subcategory, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Subcategory, collapsed_compound) %>%
+      group_by(NewFile, Subcategory, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     subcat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1490,12 +1695,28 @@ for (i in 1:length(gc_hplc_list)) {
 
   }
   
-  sig_comp[[i]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
-  print(sig_comp[[i]])
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(gc_hplc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_hplc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_hplc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory.xlsx")
 ```
 
-When we ran a loop to investigate the significant compounds that can be obtained from getting all product_cat that has \> 3 to 6 obs, \> 5 obs gave the highest amount of significant compound. Overall, it is not surprising that most of the significant compounds are pointing towards distinguishing Toys and Food contact materials, which, from the PCA result, are the two most separated clusters.
+When we ran a loop to investigate the significant compounds that can be obtained from getting all product_cat that has \> 3 to 6 obs, \> 5 obs gave the highest amount of significant compound. Overall, it is not surprising that most of the significant compounds are pointing towards distinguishing Toys and Food contact materials, which, from the PCA result, are the two most separated clusters. 
 
 ##### ATDGCMS
 
@@ -1505,13 +1726,13 @@ sig_comp <- list()
 for (i in 1:length(gc_list)) {
   list_subcat <- list()
   for (min_obs in 1:10) {
-    stats <- gc_list[[1]] %>%
-      select(File, collapsed_compound, Subcategory, Values) %>%
+    stats <- gc_list[[i]] %>%
+      select(NewFile, collapsed_compound, Subcategory, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Subcategory, collapsed_compound) %>%
+      group_by(NewFile, Subcategory, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     subcat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1556,9 +1777,25 @@ for (i in 1:length(gc_list)) {
     
   }
   
-  sig_comp[[i]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
-  print(sig_comp[[i]])
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(gc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(gc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(gc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_ATDGCMS_by_Subcategory.xlsx")
 ```
 
 ##### HPLCTOFMS
@@ -1570,12 +1807,12 @@ for (i in 1:length(hplc_list)) {
   list_subcat <- list()
   for (min_obs in 1:10) {
     stats <- hplc_list[[i]] %>%
-      select(File, collapsed_compound, Subcategory, Values) %>%
+      select(NewFile, collapsed_compound, Subcategory, Values) %>%
       # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-      group_by(File, Subcategory, collapsed_compound) %>%
+      group_by(NewFile, Subcategory, collapsed_compound) %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-      column_to_rownames(., var = "File")
+      column_to_rownames(., var = "NewFile")
     
     subcat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
     # Loop through each collapsed_compound (as columns)
@@ -1620,14 +1857,30 @@ for (i in 1:length(hplc_list)) {
     
   }
   
-  sig_comp[[i]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
-  print(sig_comp[[i]])
+  # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
+  sig_comp[[paste0("Grouping_", i)]] <- list_subcat[[which.max(lapply(list_subcat, nrow))]]
+  
+  # Add RT and m.z info to the significant table
+  mean_rt <- c()
+  mean_mz <- c()
+  for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
+    idx <- base::which(hplc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
+    mean_rt <- c(mean_rt, mean(hplc_list[[i]][idx, ]$RT))
+    mean_mz <- c(mean_mz, mean(hplc_list[[i]][idx, ]$m.z))
+  }
+  
+  sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+  sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+  
+  print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
 }
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_HPLC_by_Subcategory.xlsx")
 ```
 
 ## Demo RF
 
-```{r echo=FALSE, warning=FALSE}
+```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(randomForestSRC)
 
 rfsrc.result <- function(dat, split.ratio) {
@@ -1638,22 +1891,22 @@ rfsrc.result <- function(dat, split.ratio) {
   plastic_tst <- dat[-plastic_idx, ]
   
   # Train
-  rf <- rfsrc(Category ~ ., 
-              ntree=1000, 
-              splitrule = "auc", 
-              nodesize = 1, #Minumum size of terminal node for classification (1)
-              # mtry = 21,
-              importance = "permute", 
-              samptype = "swr",
-              membership = TRUE,
-              perf.type="misclass",
-              block.size = 1, # cumulative error rate on every tree
-              data = plastic_trn
+
+  rf <- randomForestSRC::rfsrc(Category ~ ., 
+                                    ntree=1000, 
+                                    splitrule = "auc", 
+                                    nodesize = 1, #Minumum size of terminal node for classification (1)
+                                    # mtry = 21,
+                                    importance = "permute", 
+                                    samptype = "swr",
+                                    membership = TRUE,
+                                    perf.type="misclass",
+                                    block.size = 1, # cumulative error rate on every tree
+                                    data = plastic_trn
   )
-  print(rf)
   
   # Prediction results
-  pred_res <- predict(rf, newdata = plastic_tst, type = "prob")$predicted
+  pred_res <- predict(rf, newdata = plastic_tst, outcome = "test")$predicted
   rownames(pred_res) <- rownames(plastic_tst)
   
   # Variable importance
@@ -1670,13 +1923,13 @@ rfsrc.result <- function(dat, split.ratio) {
 
 rfsrc.plots <- function(preddat, rf.mod) {
   newdat <- as.data.frame(preddat) %>%
-    tibble::rownames_to_column(., var = "File") %>%
+    tibble::rownames_to_column(., var = "NewFile") %>%
     tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "Category", values_to = "prob")
   
   # plots <- list()
   # Make bar graph of prediction probability -----
   a <- ggplot(data = newdat) + 
-    geom_col(aes(x = File, y = prob, fill = Category), 
+    geom_col(aes(x = NewFile, y = prob, fill = Category), 
              position = "dodge" # separating stacking prob cols
     ) +
     scale_fill_brewer(palette = "Set2") +
@@ -1701,25 +1954,25 @@ rfsrc.plots <- function(preddat, rf.mod) {
 #### Original data
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
-for (gc in gc_list) {
-  df <- gc %>%
-    dplyr::select(File, Category, collapsed_compound, Values) %>%
-    mutate(Category = factor(Category, levels = unique(Category))) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, Category, collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "File")
-  
-  for (r in 1:nrow(df)) {
-    df[r, which(base::is.na(df[r,]))] <- runif(length(which(base::is.na(df[r,]))),
-                                               min = sort(gc$Values)[1],
-                                               max = sort(gc$Values)[2])
-  }
-  
-  rfsrc.plots(preddat = rfsrc.result(dat = df, split.ratio = 0.6)[[2]],
-              rf.mod = rfsrc.result(dat = df, split.ratio = 0.6)[[1]])
+df <- gc_list[[1]] %>%
+  dplyr::select(NewFile, Category, collapsed_compound, Values) %>%
+  mutate(Category = factor(Category, levels = unique(Category))) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  group_by(NewFile, Category, collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
+  column_to_rownames(., var = "File")
+
+for (r in 1:nrow(df)) {
+  df[r, which(base::is.na(df[r,]))] <- runif(length(which(base::is.na(df[r,]))),
+                                             min = sort(gc_list[[1]]$Values)[1],
+                                             max = sort(gc_list[[1]]$Values)[2])
 }
+
+rfsrc.result(dat = df, split.ratio = 0.6)[[2]]
+
+rfsrc.plots(preddat = rfsrc.result(dat = df, split.ratio = 0.6)[[2]],
+            rf.mod = rfsrc.result(dat = df, split.ratio = 0.6)[[1]])
 
 ```
 
@@ -1822,7 +2075,7 @@ rfsrc.plots(preddat = rf_list[[4]][[2]],
 
 #### Original data
 
-```{r, echo=FALSE, warning = FALSE}
+```{r, echo=FALSE, warning = FALSE,message=FALSE}
 df <- gc_hplc_list[[1]] %>%
   dplyr::select(File, Category, collapsed_compound, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
@@ -1834,11 +2087,22 @@ df <- gc_hplc_list[[1]] %>%
 
 for (r in 1:nrow(df)) {
   df[r, which(base::is.na(df[r,]))] <- runif(length(which(base::is.na(df[r,]))),
-                                             min = sort(gc_hplc_list[[1]]$Values)[1],
-                                             max = sort(gc_hplc_list[[1]]$Values)[2])
+                                             min1 = sort(gc_hplc_list[[1]]$Values)[1],
+                                             min2 = sort(gc_hplc_list[[1]]$Values)[2])
 }
 
 RFresult <- rfsrc.result(dat = df, split.ratio = 0.6)
+
+# Make column of true Category of each row
+preddat <- base::as.data.frame(RFresult[[2]]) %>% 
+  tibble::rownames_to_column(., var = "File") 
+
+preddat$true_category <- gc_hplc_list[[1]][match(preddat$File, gc_hplc_list[[1]]$File),]$Category
+
+# For each row of prediction df, return the column name (aka. Category) with largest prediction probability
+predres<- data.frame(predict_cat = colnames(preddat[, 2:6])[apply(preddat[, 2:6], 1, which.max)], 
+                     true_cat = preddat$true_category)
+
 rfsrc.plots(preddat = RFresult[[2]],
             rf.mod = RFresult[[1]])
 ```
@@ -1912,9 +2176,10 @@ rfsrc.plots(preddat = PCAtools_alldf.RFresult[[2]],
 
 ## Demo LightGBM
 
-```{r, echo=FALSE, warning = FALSE}
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
 library(lightgbm)
 library(gridExtra)
+
 lightgbm.result <- function(dat, split.ratio) { # dat must have same format as PCATools input
   
   test <- copy(dat)
@@ -1938,10 +2203,13 @@ lightgbm.result <- function(dat, split.ratio) { # dat must have same format as P
   # Setup parameters
   params <- list(
     min_data = 1L
-    , learning_rate = 1
+    , learning_rate = 0.1
     , objective = "multiclass"
     , metric = "multi_error"
     , num_class = length(unique(dat$Category))
+    , boosting = "dart"
+    , xgboost_dart_mode ="true"
+    , num_threads = 2
   ) 
   
   lgb.model <- lgb.train(params,
@@ -1953,19 +2221,21 @@ lightgbm.result <- function(dat, split.ratio) { # dat must have same format as P
   
   # prediction
   my_preds <- round(predict(object = lgb.model, 
-                            data = plastic_tst[, 2:ncol(plastic_tst)],
-                            reshape = TRUE), 3)
+                      data = plastic_tst[, 2:ncol(plastic_tst)],
+                      # params = list(output_result = "response"),
+                      reshape = TRUE),
+                    3)
 
   colnames(my_preds) <- levels(dat$Category)
   rownames(my_preds) <- rownames(plastic_tst)
   
-  # Important features
-  tree_imp <- lgb.importance(lgb.model, percentage = T)
-  varimpmat <- lgb.plot.importance(tree_imp, measure = "Gain")
-
   newdat <- as.data.frame(my_preds) %>%
     tibble::rownames_to_column(., var = "File") %>%
     tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "Category", values_to = "prob")
+  
+  # Important features
+  tree_imp <- lgb.importance(lgb.model, percentage = T)
+  varimpmat <- lgb.plot.importance(tree_imp, measure = "Gain")
 
   return(list(my_preds, varimpmat, newdat))
 }
@@ -1975,10 +2245,10 @@ lightgbm.result <- function(dat, split.ratio) { # dat must have same format as P
 
 #### Original data
 
-```{r, echo=FALSE, warning = FALSE}
-gbm_list <- list()
-for (i in 1:length(gc_list)) {
-  df <- gc_list[[i]] %>%
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+# gbm_list <- list()
+# for (i in 1:length(gc_list)) {
+  df <- gc_list[[2]] %>%
     dplyr::select(File, Category, collapsed_compound, Values) %>%
     mutate(Category = factor(Category, levels = unique(Category))) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
@@ -1989,15 +2259,16 @@ for (i in 1:length(gc_list)) {
   
   for (r in 1:nrow(df)) {
     df[r, which(base::is.na(df[r,]))] <- runif(length(which(base::is.na(df[r,]))),
-                                               min = sort(gc_list[[i]]$Values)[1],
-                                               max = sort(gc_list[[i]]$Values)[2])
+                                               min = sort(gc_list[[2]]$Values)[1],
+                                               max = sort(gc_list[[2]]$Values)[2])
   }
   
-  gbm_list[[i]] <- lightgbm.result(df, split.ratio = 0.6)
-}
+  # gbm_list[[i]]
+gbm <- lightgbm.result(df, split.ratio = 0.6)
+# }
 
 # Make bar graph of prediction probability
-ggplot(data = gbm_list[[3]][[3]]) + 
+ggplot(data = gbm[[3]]) + 
   geom_col(aes(x = File, y = prob, fill = Category), 
            position = "dodge" # separating stacking prob cols
   ) +
