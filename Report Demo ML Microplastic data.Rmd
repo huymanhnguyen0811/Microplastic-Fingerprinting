@@ -997,8 +997,8 @@ for (ele in 1:length(hca$height)) {
   max_nrow <- max(map_int(list_hca, nrow))
   cat(sprintf("The max. number of significant compounds at optimal no. of obs is %d at HCA cut-off Height threshold of %f\n", max_nrow, hca$height[ele]))
   sig_comp[[count]] <- list_hca[[which.max(map_int(list_hca, nrow))]]
-  count <- count + 1
   print(sig_comp[[count]])
+  count <- count + 1
 }
 ```
 
@@ -1020,12 +1020,12 @@ hc_df <- gc_list[[1]] %>%
 
 for (r in 1:nrow(hc_df)) {
   hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_hplc_list[[1]]$Values)[1],
-                                                          max = sort(gc_hplc_list[[1]]$Values)[2])
+                                                          min = sort(gc_list[[1]]$Values)[1],
+                                                          max = sort(gc_list[[1]]$Values)[2])
 }
 
-hca <- hclust(stats::dist(as.matrix(hc_df), 
-                         method = "canberra"))
+hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                    method = "robust.aitchison"))
 
 stats <- gc_list[[1]] %>%
       select(NewFile, collapsed_compound, Values) %>%
@@ -1033,64 +1033,41 @@ stats <- gc_list[[1]] %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values)
 
-sig_comp <-list()
+
+# Initialize variables
+sig_comp <- list()
 count <- 1
+
+# Main loop
 for (ele in 1:length(hca$height)) {
-  list_hca <- list()
-  for (min_obs in 1:8){
-    t <- as.data.frame(cutree(hca,  h = ceiling(hca$height[ele])))
-    colnames(t) <- "group"
-    t <- t %>% tibble::rownames_to_column(., var = "NewFile")
-    # Joining stats df and HCA-grouping clusters
+  list_hca <- map(1:10, function(min_obs) {
+    t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
     joined <- full_join(t, stats, by = "NewFile")
-    g_df <- data.frame(compound=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
-    # Loop through each collapsed_compound (as columns)
-    for (c in 3:ncol(joined)) {
-      satisfied_group <- c()
-      # Loop through each grouping from HCA
-      for (group in unique(joined$group)) {
-        # get all group that has > min_obs
-        if (sum(!is.na(joined[which(joined$group == group), c])) > min_obs) {
-          satisfied_group <- c(satisfied_group, group)
-        } else {
-          next
-        }
-      }
-      # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-      if (length(satisfied_group) < 2) {
-        next
-      } else {
-        # looping through the combinations of product categories 
-        for (col in 1:ncol(utils::combn(satisfied_group, 2))) {
-          # extract the combinations of product category pairs
-          p_1 <- utils::combn(satisfied_group, 2)[1,col]
-          p_2 <- utils::combn(satisfied_group, 2)[2,col]
-          # calculating the p-value between each product category pair 
-          pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
-                                          joined[which(joined$group == p_2), c])$p.value
-          pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                                  joined[which(joined$group == p_2), c])$p.value
-          # assigning row information
-          g_df[nrow(g_df) + 1,] <- c(colnames(joined)[c], 
-                                     paste0(p_1, "&", p_2), 
-                                     pval_wilcox_test, 
-                                     pval_ks_test)
-        }
-      }
-    }
-    g_df$adjusted_pvalue_holm <- stats::p.adjust(g_df$pval_wilcox_test, method = "holm")
     
-    list_hca[[min_obs]] <- g_df %>%
-            filter(., adjusted_pvalue_holm < 0.05) %>%
-            arrange(adjusted_pvalue_holm)
-  }
+    g_df <- map_dfr(3:ncol(joined), function(c) {
+      satisfied_group <- unique(joined$group[sapply(joined[, c], function(x) sum(!is.na(joined[joined$group == x, c]))) > min_obs])
+      if (length(satisfied_group) < 2) return(NULL)
+      
+      pairs <- combn(satisfied_group, 2)
+      map_dfr(1:ncol(pairs), function(col) {
+        p_1 <- pairs[1, col]
+        p_2 <- pairs[2, col]
+        pval_wilcox_test <- wilcox.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        pval_ks_test <- ks.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        data.frame(compound = names(joined)[c], comparison_pair = paste0(p_1, "&", p_2), pval_wilcox_test, pval_ks_test)
+      })
+    })
+    
+    g_df$adjusted_pvalue_holm <- p.adjust(g_df$pval_wilcox_test, method = "holm")
+    filter(g_df, adjusted_pvalue_holm < 0.05) %>% arrange(adjusted_pvalue_holm)
+  })
   
-  print(paste0("The max. number of significant compounds ","at the optimal no. of obs ", which.max(lapply(list_hca, nrow)), " at HCA cut-off Height threshold of ",hca$height[ele]," is ", nrow(list_hca[[which.max(lapply(list_hca, nrow))]])))
-  print("=======================================================================")
-  # Select the cutting threshold with min_obs obs that results in the most number of significant compounds
-  sig_comp[[count]] <- list_hca[[which.max(lapply(list_hca, nrow))]]
+  # Output and update
+  max_nrow <- max(map_int(list_hca, nrow))
+  cat(sprintf("Only GC data_The max. number of significant compounds at optimal no. of obs is %d at HCA cut-off Height threshold of %f\n", max_nrow, hca$height[ele]))
+  sig_comp[[count]] <- list_hca[[which.max(map_int(list_hca, nrow))]]
+  print(sig_comp[[count]])
   count <- count + 1
-  print(list_hca[[which.max(lapply(list_hca, nrow))]])
 }
 ```
 
@@ -1112,12 +1089,12 @@ hc_df <- hplc_list[[1]] %>%
 
 for (r in 1:nrow(hc_df)) {
   hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_hplc_list[[1]]$Values)[1],
-                                                          max = sort(gc_hplc_list[[1]]$Values)[2])
+                                                          min = sort(hplc_list[[1]]$Values)[1],
+                                                          max = sort(hplc_list[[1]]$Values)[2])
 }
 
-hca <- hclust(stats::dist(as.matrix(hc_df), 
-                         method = "canberra"))
+hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                    method = "robust.aitchison"))
 
 stats <- hplc_list[[1]] %>%
       select(NewFile, collapsed_compound, Values) %>%
@@ -1125,64 +1102,41 @@ stats <- hplc_list[[1]] %>%
       summarise(across(Values, mean)) %>%
       pivot_wider(names_from = collapsed_compound, values_from = Values)
 
-sig_comp <-list()
+
+# Initialize variables
+sig_comp <- list()
 count <- 1
-for (ele in 26:length(hca$height)) { # first 15 heigt results in empty df
-  list_hca <- list()
-  for (min_obs in 1:8){
-    t <- as.data.frame(cutree(hca,  h = ceiling(hca$height[ele])))
-    colnames(t) <- "group"
-    t <- t %>% tibble::rownames_to_column(., var = "NewFile")
-    # Joining stats df and HCA-grouping clusters
+
+# Main loop
+for (ele in 1:length(hca$height)) {
+  list_hca <- map(1:10, function(min_obs) {
+    t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
     joined <- full_join(t, stats, by = "NewFile")
-    g_df <- data.frame(compound=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
-    # Loop through each collapsed_compound (as columns)
-    for (c in 3:ncol(joined)) {
-      satisfied_group <- c()
-      # Loop through each grouping from HCA
-      for (group in unique(joined$group)) {
-        # get all group that has > min_obs
-        if (sum(!is.na(joined[which(joined$group == group), c])) > min_obs) {
-          satisfied_group <- c(satisfied_group, group)
-        } else {
-          next
-        }
-      }
-      # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-      if (length(satisfied_group) < 2) {
-        next
-      } else {
-        # looping through the combinations of product categories 
-        for (col in 1:ncol(utils::combn(satisfied_group, 2))) {
-          # extract the combinations of product category pairs
-          p_1 <- utils::combn(satisfied_group, 2)[1,col]
-          p_2 <- utils::combn(satisfied_group, 2)[2,col]
-          # calculating the p-value between each product category pair 
-          pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
-                                          joined[which(joined$group == p_2), c])$p.value
-          pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                                  joined[which(joined$group == p_2), c])$p.value
-          # assigning row information
-          g_df[nrow(g_df) + 1,] <- c(colnames(joined)[c], 
-                                     paste0(p_1, "&", p_2), 
-                                     pval_wilcox_test, 
-                                     pval_ks_test)
-        }
-      }
-    }
-    g_df$adjusted_pvalue_holm <- stats::p.adjust(g_df$pval_wilcox_test, method = "holm")
     
-    list_hca[[min_obs]] <- g_df %>%
-            filter(., adjusted_pvalue_holm < 0.05) %>%
-            arrange(adjusted_pvalue_holm)
-  }
+    g_df <- map_dfr(3:ncol(joined), function(c) {
+      satisfied_group <- unique(joined$group[sapply(joined[, c], function(x) sum(!is.na(joined[joined$group == x, c]))) > min_obs])
+      if (length(satisfied_group) < 2) return(NULL)
+      
+      pairs <- combn(satisfied_group, 2)
+      map_dfr(1:ncol(pairs), function(col) {
+        p_1 <- pairs[1, col]
+        p_2 <- pairs[2, col]
+        pval_wilcox_test <- wilcox.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        pval_ks_test <- ks.test(joined[joined$group == p_1, c], joined[joined$group == p_2, c])$p.value
+        data.frame(compound = names(joined)[c], comparison_pair = paste0(p_1, "&", p_2), pval_wilcox_test, pval_ks_test)
+      })
+    })
+    
+    g_df$adjusted_pvalue_holm <- p.adjust(g_df$pval_wilcox_test, method = "holm")
+    filter(g_df, adjusted_pvalue_holm < 0.05) %>% arrange(adjusted_pvalue_holm)
+  })
   
-  print(paste0("The max. number of significant compounds ","at the optimal no. of obs ", which.max(lapply(list_hca, nrow)), " at HCA cut-off Height threshold of ",hca$height[ele]," is ", nrow(list_hca[[which.max(lapply(list_hca, nrow))]])))
-  print("=======================================================================")
-  # Select the cutting threshold with min_obs obs that results in the most number of significant compounds
-  sig_comp[[count]] <- list_hca[[which.max(lapply(list_hca, nrow))]]
+  # Output and update
+  max_nrow <- max(map_int(list_hca, nrow))
+  cat(sprintf("Only HPLC data_The max. number of significant compounds at optimal no. of obs is %d at HCA cut-off Height threshold of %f\n", max_nrow, hca$height[ele]))
+  sig_comp[[count]] <- list_hca[[which.max(map_int(list_hca, nrow))]]
+  print(sig_comp[[count]])
   count <- count + 1
-  print(list_hca[[which.max(lapply(list_hca, nrow))]])
 }
 ```
 
