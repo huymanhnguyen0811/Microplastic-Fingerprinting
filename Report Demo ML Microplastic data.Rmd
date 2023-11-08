@@ -925,6 +925,42 @@ When we use combine gc_hplc data, 96.9556% of the observation in the resulting s
 
 one way to overcome this problem is group_by(Suspected_Polymer) or Category or Subcategory instead of by File =\> this is stupid because then for each comp in each product_cat only have 1 values ==\> it is meaningless to do Wilcoxon test comparing just 1 obs against 1 obs. ==\> we can go through each columns (compounds) and check which product_cat has more than x values and then only do the wilcoxon/ks test with those product_cat for that specific compound. IN this case, we don't need to fill our the missing values because the default for na.action of wilcox.test function is \*\*"na.omit", meaning all the NA values of the numerical vectors resulted from slicing into each column (compound) and each product_cat
 
+## Demo K-means Clustering
+
+### With Combined GC HPLC
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+# Input numeric matrix data : sample as rows, collapsed_compounds as columns
+df <- gc_hplc_list[[1]] %>%
+  dplyr::select(NewFile,
+                collapsed_compound, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    NewFile,
+    collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  collapsed_compound,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "NewFile")
+
+for (r in 1:nrow(df)) {
+  df[r, which(base::is.na(df[r,]))] <- stats::runif(length(which(base::is.na(df[r,]))),
+                                                          min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+                                                          max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+}
+
+tot.withinss <- list()
+for (n_clus in 1:30) {
+  set.seed(round(runif(2:20, 0, 999)))
+  km.out <- stats::kmeans(df, n_clus, nstart = 50)
+  tot.withinss[[n_clus]] <- km.out$tot.withinss
+  print(paste0("The number of centers is ", n_clus, " and total within-cluster sum of square is ", km.out$tot.withinss))
+}
+
+
+```
+
+
 ## Demo Wilcoxon test
 
 ### Wilcoxon test with HCA result
@@ -973,7 +1009,7 @@ for (ele in 1:length(hca$height)) {
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
-    if (sum(joined$group == gr) < 2) {
+    if (sum(joined$group == gr) < 3) {
       next
     } else {
       satisfied_sp <- c(satisfied_sp, gr)
@@ -1252,7 +1288,7 @@ for (min_obs in 1:10) {
                                 stats[which(stats$Suspected_Polymer == p_2), c])$p.value
         # assigning row information
         sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, "&", p_2), 
+                                     paste0(p_1, " & ", p_2), 
                                      pval_wilcox_test, 
                                      pval_ks_test)
       }
@@ -1274,8 +1310,8 @@ for (min_obs in 1:10) {
   mean_mz <- c()
   for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
     idx <- base::which(hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, mean(hplc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(hplc_list[[1]][idx, ]$m.z))
+    mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 3))
+    mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 3))
   }
   
   list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
@@ -1334,7 +1370,7 @@ for (min_obs in 1:10) {
                                 stats[which(stats$Suspected_Polymer == p_2), c])$p.value
         # assigning row information
         sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, "&", p_2), 
+                                     paste0(p_1, " & ", p_2), 
                                      pval_wilcox_test, 
                                      pval_ks_test)
       }
@@ -1356,8 +1392,8 @@ for (min_obs in 1:10) {
   mean_mz <- c()
   for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
     idx <- base::which(hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, mean(hplc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(hplc_list[[1]][idx, ]$m.z))
+    mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 3))
+    mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 3))
   }
   
   list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
@@ -1415,7 +1451,7 @@ for (min_obs in 1:10) {
                                 stats[which(stats$Suspected_Polymer == p_2), c])$p.value
         # assigning row information
         sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, "&", p_2), 
+                                     paste0(p_1, " & ", p_2), 
                                      pval_wilcox_test, 
                                      pval_ks_test)
       }
@@ -1437,8 +1473,8 @@ for (min_obs in 1:10) {
   mean_mz <- c()
   for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
     idx <- base::which(hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, mean(hplc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(hplc_list[[1]][idx, ]$m.z))
+    mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 3))
+    mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 3))
   }
   
   list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
@@ -1501,7 +1537,7 @@ for (i in 1:length(gc_hplc_list)) {
                                   stats[which(stats$Category == p_2), c])$p.value
           # assigning row information
           cat_df[nrow(cat_df) + 1,] <- c(colnames(stats)[c], 
-                                         paste0(p_1, "&", p_2), 
+                                         paste0(p_1, " & ", p_2), 
                                          pval_wilcox_test, 
                                          pval_ks_test)
         }
@@ -1585,7 +1621,7 @@ for (i in 1:length(gc_list)) {
                                   stats[which(stats$Category == p_2), c])$p.value
           # assigning row information
           cat_df[nrow(cat_df) + 1,] <- c(colnames(stats)[c], 
-                                         paste0(p_1, "&", p_2), 
+                                         paste0(p_1, " & ", p_2), 
                                          pval_wilcox_test, 
                                          pval_ks_test)
         }
@@ -1669,7 +1705,7 @@ for (i in 1:length(hplc_list)) {
                                   stats[which(stats$Category == p_2), c])$p.value
           # assigning row information
           cat_df[nrow(cat_df) + 1,] <- c(colnames(stats)[c], 
-                                         paste0(p_1, "&", p_2), 
+                                         paste0(p_1, " & " ,p_2), 
                                          pval_wilcox_test, 
                                          pval_ks_test)
         }
@@ -1759,7 +1795,7 @@ for (i in 1:length(gc_hplc_list)) {
                                   stats[which(stats$Subcategory == p_2), c])$p.value
           # assigning row information
           subcat_df[nrow(subcat_df) + 1,] <- c(colnames(stats)[c], 
-                                               paste0(p_1, "&", p_2), 
+                                               paste0(p_1, " & ", p_2), 
                                                pval_wilcox_test, 
                                                pval_ks_test)
         }
@@ -1846,7 +1882,7 @@ for (i in 1:length(gc_list)) {
                                   stats[which(stats$Subcategory == p_2), c])$p.value
           # assigning row information
           subcat_df[nrow(subcat_df) + 1,] <- c(colnames(stats)[c], 
-                                               paste0(p_1, "&", p_2), 
+                                               paste0(p_1, " & ", p_2), 
                                                pval_wilcox_test, 
                                                pval_ks_test)
         }
@@ -1931,7 +1967,7 @@ for (i in 1:length(hplc_list)) {
                                   stats[which(stats$Subcategory == p_2), c])$p.value
           # assigning row information
           subcat_df[nrow(subcat_df) + 1,] <- c(colnames(stats)[c], 
-                                               paste0(p_1, "&", p_2), 
+                                               paste0(p_1, " & ", p_2), 
                                                pval_wilcox_test, 
                                                pval_ks_test)
         }
