@@ -184,7 +184,8 @@ df_blank1 <- df_blank1 %>%
   select(-c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions")) %>%
   mutate(type = "Blanks")
 
-combined_df1 <- rbind(df1, df_blank1) %>% arrange(RT)
+combined_df1 <- rbind(df1, df_blank1) %>% 
+  arrange(RT)
 
 # HPLCTOFMS
 df2 <- bind_rows(list2_remaining_area) %>%
@@ -262,7 +263,7 @@ i <- 1
 # Iterate through each collapsed_compound
 for (comp in unique(combined_df2_grouped$collapsed_compound)) {
   temp <- combined_df2_grouped[which(combined_df2_grouped$collapsed_compound == comp),]
-  # if compound does not exist in blanks then skip the compounds
+  # if compound does not have blanks then append the compound to the list and move on to the next compounds in the loop
   if (identical(which(temp$type == "Blanks"), integer(0))) {
     temp_list[[i]] <- temp
     i <- i + 1
@@ -361,31 +362,6 @@ transform_filename_hplctofms <- function(filename) {
 comp_normalized2 <- comp_normalized2 %>%
   group_by(File) %>%
   mutate(NewFile = transform_filename_hplctofms(File))
-```
-
-
-```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization.xlsx"
-# 
-# # Create namedf to use as reference for changing name of file name in Table of product categorization.xlsx
-# namedf <- rbind(data.frame(File = unique(comp_normalized1$File), NewFile = unique(comp_normalized1$NewFile)), 
-#                 data.frame(File = unique(comp_normalized2$File), NewFile = unique(comp_normalized2$NewFile)))
-# 
-# new_excel <- list()
-# for (i in 1:length(excel_sheets(path = p))) {
-#   # Table of categorization
-#   sampinfo <- readxl::read_excel(path = p, 
-#                                  sheet = excel_sheets(path = p)[i])
-#   
-#   newfile <- c()
-#   for (row in 1:nrow(sampinfo)) {
-#     newfile <- c(newfile, namedf[match(sampinfo[row,]$File, namedf$File),]$NewFile)
-#   }
-#   sampinfo$NewFile <- newfile
-#   new_excel[[paste0("Grouping", i)]] <- sampinfo
-# }
-# 
-# writexl::write_xlsx(x = new_excel, path = "Table of product categorization_NewFileName.xlsx")
 ```
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
@@ -504,34 +480,42 @@ library(factoextra)
 
 ```
 
+Since our data is compositional data, combining PCA with the Aitchison dissimilarity index (inherited from HCA for compositional data), however, is not straightforward due to the nature of compositional data. Standard PCA assumes the data does not have the constant sum constraint, which is a fundamental property of compositional data. Applying PCA directly to raw compositional data can lead to misleading results because it does not account for the compositional nature of the data.
+
+To perform PCA on compositional data while considering the Aitchison distance, you would typically follow these steps:
+
+Log-Ratio Transformation: Transform the compositional data using an appropriate log-ratio transformation, such as the Centered Log-Ratio (CLR) transformation, the Additive Log-Ratio (ALR), or the Isometric Log-Ratio (ILR) transformation. These transformations allow the data to be analyzed in real Euclidean space, where standard statistical techniques are valid.
+
 ### columns as "sample name"
 
-```{r , echo=TRUE, warning = FALSE}
+```{r , echo=TRUE, warning = FALSE, message=FALSE}
 # columns as "sample name"
 input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
-    dplyr::select(File, collapsed_compound, Values) %>%
+    dplyr::select(NewFile, collapsed_compound, Values) %>%
+    filter(., str_detect(NewFile, "USE")) %>%
+    filter(., str_detect(NewFile, "ATDGCMS")) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(File, collapsed_compound) %>%
+    dplyr::group_by(NewFile, collapsed_compound) %>%
     dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from = File, values_from = Values) %>%
+    tidyr::pivot_wider(names_from = NewFile, values_from = Values) %>%
     tibble::column_to_rownames(., var = "collapsed_compound")
   
   for (r in 1:nrow(df_X_rq1)) {
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- stats::runif(length(which(base::is.na(df_X_rq1[r,]))),
-                                                                  min = sort(data$Values)[1],
-                                                                  max = sort(data$Values)[2])
+                                                                  min = sort(data$Values)[1]/10000,
+                                                                  max = sort(data$Values)[2]/10000)
   }
 
   # table for information (rows are sample IDs, columns are sample information)
-  metadata_X_rq1 <- data.frame(File = colnames(df_X_rq1))
-  Suspected_Polymer <- c()
-  for (File in metadata_X_rq1$File) {
-    Suspected_Polymer <- c(Suspected_Polymer, unique(data[which(data$File == File),]$Suspected_Polymer))
+  metadata_X_rq1 <- data.frame(NewFile = colnames(df_X_rq1))
+  category <- c()
+  for (NewFile in metadata_X_rq1$NewFile) {
+    category <- c(category, unique(data[which(data$NewFile == NewFile),]$Category))
   }
-  metadata_X_rq1$Suspected_Polymer <- Suspected_Polymer
-  metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "File")
+  metadata_X_rq1$category <- category
+  metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "NewFile")
 
   return(list(df_X_rq1, metadata_X_rq1))
 }
@@ -547,6 +531,27 @@ p <- PCAtools::pca(mat = df_pca[[1]],
                    scale = FALSE 
                    )
 
+# A bi-plot =================
+PCAtools::biplot(p,
+                 lab = rownames(p$metadata),
+                 colby = "category",
+                 hline = 0, vline = 0,
+                 legendPosition = 'right', labSize = 5,
+                 sizeLoadingsNames = 5,
+                 showLoadings = TRUE,
+                 showLoadingsNames = FALSE,
+                 ntopLoadings = 10,
+                 pointSize = 4, 
+                 legendLabSize = 15,
+                 legendTitleSize = 16,
+                 legendIconSize = 6)
+
+# Retrieve PC and add as new variables to data frame 
+PCAtools_mergePC <- p$rotated
+
+```
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # 3D PCa plot ===============================================================================
 # FactoMineR_p <- FactoMineR::PCA(df_pca,
 #                                 scale.unit = FALSE)
@@ -573,29 +578,10 @@ p <- PCAtools::pca(mat = df_pca[[1]],
 # factoextra::fviz_screeplot(FactoMineR_p)
 # factoextra::fviz_pca_biplot(FactoMineR_p,
 #                             habillage = unique(gc_hplc_list[[1]]$File))
-
-
-# A bi-plot =================
-PCAtools::biplot(p,
-                 lab = rownames(p$metadata),
-                 colby = "Suspected_Polymer",
-                 hline = 0, vline = 0,
-                 legendPosition = 'right', labSize = 5,
-                 sizeLoadingsNames = 5,
-                 showLoadings = TRUE,
-                 showLoadingsNames = FALSE,
-                 ntopLoadings = 10,
-                 pointSize = 4, 
-                 legendLabSize = 15,
-                 legendTitleSize = 16,
-                 legendIconSize = 6)
-
-# Retrieve PC and add as new variables to data frame 
-PCAtools_mergePC <- p$rotated
-dim(PCAtools_mergePC)
 ```
 
-### columns as "Suspected_Polymer"/"Category"/"Subcategory"
+
+### columns as categorical type
 
 ```{r , echo=FALSE, warning = FALSE}
 input_df <- function(data) {
@@ -727,6 +713,7 @@ PCAtools::biplot(p,
 If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Data prep for HCA
 hc_df <- gc_hplc_list[[1]] %>%
   dplyr::select(File,
                 collapsed_compound, 
@@ -950,12 +937,16 @@ for (r in 1:nrow(df)) {
 }
 
 tot.withinss <- list()
-for (n_clus in 1:30) {
+for (n_clus in 1:nrow(df)) {
   set.seed(round(runif(2:20, 0, 999)))
   km.out <- stats::kmeans(df, n_clus, nstart = 50)
   tot.withinss[[n_clus]] <- km.out$tot.withinss
   print(paste0("The number of centers is ", n_clus, " and total within-cluster sum of square is ", km.out$tot.withinss))
 }
+
+plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
+main = "K- Means Clustering Results with K = 2",
+xlab = "", ylab = "", pch = 20, cex = 2)
 
 
 ```
