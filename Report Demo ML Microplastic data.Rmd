@@ -428,6 +428,14 @@ for (i in 1:length(excel_sheets(path = p))) {
 }
 ```
 
+
+### Export GC/HPLC/Combined df to excel as input for Python ML pipeline
+```{r , echo=FALSE, warning = FALSE}
+writexl::write_xlsx(x = gc_list, path = "gc_list_df.xlsx")
+writexl::write_xlsx(x = hplc_list, path = "hplc_list_df.xlsx")
+writexl::write_xlsx(x = gc_hplc_list, path = "gc_hplc_list_df.xlsx")
+```
+
 ### ATDGCMS - Summary of Percent_Area in each sample of merge_df1 to know how much Percent_Area we lost when we force the compounds to appear in at least 2 product categories
 
 ```{r , echo=FALSE, warning = FALSE}
@@ -470,7 +478,7 @@ for (plt in unique(adjusted_df$plastic_type)) {
 }
 ```
 
-## Demo PCA
+ ## Demo PCA
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 library(PCAtools)
