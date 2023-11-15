@@ -478,7 +478,7 @@ for (plt in unique(adjusted_df$plastic_type)) {
 }
 ```
 
- ## Demo PCA
+## Demo PCA
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 library(PCAtools)
@@ -502,8 +502,8 @@ input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(NewFile, collapsed_compound, Values) %>%
-    filter(., str_detect(NewFile, "USE")) %>%
-    filter(., str_detect(NewFile, "ATDGCMS")) %>%
+    # filter(., str_detect(NewFile, "USE")) %>%
+    # filter(., str_detect(NewFile, "HPLC")) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     dplyr::group_by(NewFile, collapsed_compound) %>%
     dplyr::summarise(across(Values, base::mean)) %>%
@@ -522,7 +522,7 @@ input_df <- function(data) {
   for (NewFile in metadata_X_rq1$NewFile) {
     category <- c(category, unique(data[which(data$NewFile == NewFile),]$Category))
   }
-  metadata_X_rq1$category <- category
+  metadata_X_rq1$Category <- category
   metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "NewFile")
 
   return(list(df_X_rq1, metadata_X_rq1))
@@ -542,7 +542,7 @@ p <- PCAtools::pca(mat = df_pca[[1]],
 # A bi-plot =================
 PCAtools::biplot(p,
                  lab = rownames(p$metadata),
-                 colby = "category",
+                 colby = "Category",
                  hline = 0, vline = 0,
                  legendPosition = 'right', labSize = 5,
                  sizeLoadingsNames = 5,
@@ -556,7 +556,6 @@ PCAtools::biplot(p,
 
 # Retrieve PC and add as new variables to data frame 
 PCAtools_mergePC <- p$rotated
-
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
@@ -596,28 +595,28 @@ input_df <- function(data) {
   # create sample df
   df_X_rq1 <- data %>%
     dplyr::select(File, 
-                  Subcategory, # Category, # Suspected_Polymer,  Subcategory
+                  Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
                   collapsed_compound, 
                   Values) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     dplyr::group_by(
-      Subcategory, # Category, # Suspected_Polymer, 
+      Suspected_Polymer, # Category, # Suspected_Polymer, 
       collapsed_compound) %>%
     dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from =  Subcategory, # Category, #Suspected_Polymer, Subcategory
+    tidyr::pivot_wider(names_from =  Suspected_Polymer, # Category, #Suspected_Polymer, Subcategory
                        values_from = Values) %>%
     tibble::column_to_rownames(., var = "collapsed_compound")
   
   for (r in 1:nrow(df_X_rq1)) {
     df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- stats::runif(length(which(base::is.na(df_X_rq1[r,]))),
-                                                                  min = sort(data$Values)[1],
-                                                                  max = sort(data$Values)[2])
+                                                                  min = sort(data$Values)[1]/100000,
+                                                                  max = sort(data$Values)[2]/100000)
   }
 
   # table for information (rows are sample IDs, columns are sample information)
-  metadata_X_rq1 <- data.frame(Subcategory # Category # Suspected_Polymer Subcategory
+  metadata_X_rq1 <- data.frame(Suspected_Polymer # Category # Suspected_Polymer Subcategory
                                = colnames(df_X_rq1))
-  Subcategory2 <- metadata_X_rq1$Subcategory # Category  # Suspected_Polymer
+  Suspected_Polymer <- metadata_X_rq1$Suspected_Polymer # Category  # Suspected_Polymer
   metadata_X_rq1$Subcategory2 <- Subcategory2
 
   metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "Subcategory" # "Category" # "Suspected_Polymer"
@@ -629,91 +628,194 @@ input_df <- function(data) {
 
 ##### "Suspected_Polymer"
 
-```{r , echo=FALSE, warning = FALSE}
-df_pca <- input_df(hplc_list[[1]]) # gc_hplc_list // gc_list
+Since Suspected Polymer is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+library("FactoMineR")
+library("factoextra")
 
-# PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-p <- PCAtools::pca(mat = df_pca[[1]], 
-                   metadata = df_pca[[2]], 
-                   # center = FALSE,
-                   scale = FALSE 
-)
+df_pca <- hplc_list[[3]] %>%
+    dplyr::select(NewFile, 
+                  Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
+                  collapsed_compound, 
+                  Values) %>%
+    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+    dplyr::group_by(
+      Suspected_Polymer, # Category, # Suspected_Polymer, 
+      collapsed_compound) %>%
+    dplyr::summarise(across(Values, base::mean)) %>%
+    tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
+                       values_from = Values) %>%
+    tibble::column_to_rownames(., var = "Suspected_Polymer")
+  
+for (r in 1:nrow(df_pca)) {
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
+                                                                min = sort(hplc_list[[3]]$Values)[1]/100000,
+                                                                max = sort(hplc_list[[3]]$Values)[2]/100000)
+}
 
-# A bi-plot =================
-PCAtools::biplot(p,
-                 lab = NULL, 
-                 colby = "Suspected_Polymer2" ,
-                 hline = 0, vline = 0,
-                 legendPosition = 'right', labSize = 5,
-                 sizeLoadingsNames = 5,
-                 showLoadings = TRUE,
-                 showLoadingsNames = FALSE,
-                 ntopLoadings = 10,
-                 pointSize = 4, 
-                 legendLabSize = 15,
-                 legendTitleSize = 16,
-                 legendIconSize = 6)
+res.pca <- FactoMineR::PCA(df_pca,
+                           scale.unit = FALSE,
+                           graph = FALSE)
+
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "ind", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = "Polymer type")
+
+
+# df_pca <- input_df(hplc_list[[1]]) # gc_hplc_list // gc_list
+# 
+# # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
+# p <- PCAtools::pca(mat = df_pca[[1]], 
+#                    metadata = df_pca[[2]], 
+#                    # center = FALSE,
+#                    scale = FALSE 
+# )
+# 
+# # A bi-plot =================
+# PCAtools::biplot(p,
+#                  lab = NULL, 
+#                  colby = "Suspected_Polymer2" ,
+#                  hline = 0, vline = 0,
+#                  legendPosition = 'right', labSize = 5,
+#                  sizeLoadingsNames = 5,
+#                  showLoadings = TRUE,
+#                  showLoadingsNames = FALSE,
+#                  ntopLoadings = 10,
+#                  pointSize = 4, 
+#                  legendLabSize = 15,
+#                  legendTitleSize = 16,
+#                  legendIconSize = 6)
+```
+
+##### "Subcategory"
+
+Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_pca <- gc_hplc_list[[2]] %>%
+    dplyr::select(NewFile, 
+                  Subcategory,
+                  collapsed_compound, 
+                  Values) %>%
+    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+    dplyr::group_by(
+      Subcategory,
+      collapsed_compound) %>%
+    dplyr::summarise(across(Values, base::mean)) %>%
+    tidyr::pivot_wider(names_from =  collapsed_compound,
+                       values_from = Values) %>%
+    tibble::column_to_rownames(., var = "Subcategory")
+  
+for (r in 1:nrow(df_pca)) {
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
+                                                                min = sort(gc_hplc_list[[2]]$Values)[1]/100000,
+                                                                max = sort(gc_hplc_list[[2]]$Values)[2]/100000)
+}
+
+res.pca <- FactoMineR::PCA(df_pca, 
+                           scale.unit = FALSE,
+                           graph = FALSE)
+
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "none", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = "Product Subcategory")
+
+# df_pca <- input_df(gc_list[[1]])
+# 
+# # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
+# p <- PCAtools::pca(mat = df_pca[[1]], 
+#                    metadata = df_pca[[2]], 
+#                    # center = FALSE,
+#                    scale = FALSE 
+# )
+# 
+# # A bi-plot =================
+# PCAtools::biplot(p,
+#                  lab = NULL, 
+#                  colby = "Subcategory2" ,
+#                  hline = 0, vline = 0,
+#                  legendPosition = 'right', labSize = 5,
+#                  sizeLoadingsNames = 5,
+#                  showLoadings = TRUE,
+#                  showLoadingsNames = FALSE,
+#                  ntopLoadings = 10,
+#                  pointSize = 4, 
+#                  legendLabSize = 15,
+#                  legendTitleSize = 16,
+#                  legendIconSize = 6)
 ```
 
 ##### "Category"
 
 ```{r , echo=FALSE, warning = FALSE}
-plt_list <- list()
-i <- 1
-for (df in hplc_list) {
-  df_pca <- input_df(df)
-  
-  # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-  p <- PCAtools::pca(mat = df_pca[[1]], 
-                     metadata = df_pca[[2]], 
-                     # center = FALSE,
-                     scale = FALSE 
-  )
-  
-  # A bi-plot =================
-  plt_list[[i]] <- PCAtools::biplot(p,
-                                    lab = NULL, 
-                                    colby = "Category2" ,
-                                    hline = 0, vline = 0,
-                                    legendPosition = 'right', labSize = 5,
-                                    sizeLoadingsNames = 5,
-                                    showLoadings = TRUE,
-                                    showLoadingsNames = FALSE,
-                                    ntopLoadings = 10,
-                                    pointSize = 4, 
-                                    legendLabSize = 15,
-                                    legendTitleSize = 16,
-                                    legendIconSize = 6)
-  i <- i + 1
+df_pca <- gc_hplc_list[[2]] %>%
+  dplyr::select(NewFile, 
+                Category,
+                collapsed_compound, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    Category,
+    collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  collapsed_compound,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "Category")
+
+for (r in 1:nrow(df_pca)) {
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
+                                                            min = sort(gc_hplc_list[[2]]$Values)[1]/100000,
+                                                            max = sort(gc_hplc_list[[2]]$Values)[2]/100000)
 }
-```
 
-##### "Subcategory"
+res.pca <- FactoMineR::PCA(df_pca, 
+                           scale.unit = FALSE,
+                           graph = FALSE)
 
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- input_df(gc_list[[1]])
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "ind", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = paste0("Combined GC-HPLC samples by Category grouping ", 2))
 
-# PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-p <- PCAtools::pca(mat = df_pca[[1]], 
-                   metadata = df_pca[[2]], 
-                   # center = FALSE,
-                   scale = FALSE 
-)
 
-# A bi-plot =================
-PCAtools::biplot(p,
-                 lab = NULL, 
-                 colby = "Subcategory2" ,
-                 hline = 0, vline = 0,
-                 legendPosition = 'right', labSize = 5,
-                 sizeLoadingsNames = 5,
-                 showLoadings = TRUE,
-                 showLoadingsNames = FALSE,
-                 ntopLoadings = 10,
-                 pointSize = 4, 
-                 legendLabSize = 15,
-                 legendTitleSize = 16,
-                 legendIconSize = 6)
+# df_pca <- input_df(df)
+  # 
+  # # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
+  # p <- PCAtools::pca(mat = df_pca[[1]], 
+  #                    metadata = df_pca[[2]], 
+  #                    # center = FALSE,
+  #                    scale = FALSE 
+  # )
+  # 
+  # # A bi-plot =================
+  # plt_list[[i]] <- PCAtools::biplot(p,
+  #                                   lab = NULL, 
+  #                                   colby = "Category2" ,
+  #                                   hline = 0, vline = 0,
+  #                                   legendPosition = 'right', labSize = 5,
+  #                                   sizeLoadingsNames = 5,
+  #                                   showLoadings = TRUE,
+  #                                   showLoadingsNames = FALSE,
+  #                                   ntopLoadings = 10,
+  #                                   pointSize = 4, 
+  #                                   legendLabSize = 15,
+  #                                   legendTitleSize = 16,
+  #                                   legendIconSize = 6)
+
 ```
 
 ## Demo Hierarchical Clustering Analysis
