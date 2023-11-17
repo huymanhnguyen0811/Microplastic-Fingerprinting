@@ -1203,7 +1203,7 @@ for (ele in 56:length(hca$height)) {
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
-    if (sum(joined$group == gr) < 2) {
+    if (sum(joined$group == gr) < 3) {
       next
     } else {
       satisfied_sp <- c(satisfied_sp, gr)
@@ -1686,7 +1686,7 @@ for (i in 1:length(gc_hplc_list)) {
 writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
 ```
 
-###### with NA imputation method
+c###### with NA imputation method
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_gchplc <- list()
@@ -1707,6 +1707,12 @@ for (i in 1:length(gc_hplc_list)) {
   }
   
   cat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+  
+  # create vector of satisfied category 
+  satisfied_cat <- c()
+  for (cat in unique(stats$Category)) {
+    satisfied_cat <- c(cat, satisfied_cat)
+  }
   # Loop through each collapsed_compound (as columns)
   for (c in 2:ncol(stats)) {
     # looping through the combinations of product categories 
