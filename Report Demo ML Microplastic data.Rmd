@@ -629,15 +629,21 @@ input_df <- function(data) {
 ##### "Suspected_Polymer"
 
 Since Suspected Polymer is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
+
+Also, here for polymer type, we remove all the "Type == Unknown", which are just a few samples in the data set and does not provide good information for plastic categorization in general.
+
 ```{r , echo=FALSE, warning = FALSE, message = FALSE}
 library("FactoMineR")
 library("factoextra")
+```
 
-df_pca <- hplc_list[[3]] %>%
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+df_pca <- gc_hplc_list[[1]] %>%
     dplyr::select(NewFile, 
                   Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
                   collapsed_compound, 
                   Values) %>%
+  filter(., Suspected_Polymer %notin% "Unknown") %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     dplyr::group_by(
       Suspected_Polymer, # Category, # Suspected_Polymer, 
@@ -649,8 +655,8 @@ df_pca <- hplc_list[[3]] %>%
   
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(hplc_list[[3]]$Values)[1]/100000,
-                                                                max = sort(hplc_list[[3]]$Values)[2]/100000)
+                                                                min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+                                                                max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -697,7 +703,7 @@ factoextra::fviz_pca_biplot(res.pca,
 Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_hplc_list[[2]] %>%
+df_pca <- gc_hplc_list[[1]] %>%
     dplyr::select(NewFile, 
                   Subcategory,
                   collapsed_compound, 
@@ -713,8 +719,8 @@ df_pca <- gc_hplc_list[[2]] %>%
   
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(gc_hplc_list[[2]]$Values)[1]/100000,
-                                                                max = sort(gc_hplc_list[[2]]$Values)[2]/100000)
+                                                                min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+                                                                max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca, 
@@ -723,7 +729,7 @@ res.pca <- FactoMineR::PCA(df_pca,
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
-                            label = "none", 
+                            label = "ind", 
                             invisible = "var", 
                             repel = TRUE,
                             labelsize = 6, 
@@ -1597,8 +1603,9 @@ writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_HPLC_by_Suspecte
 
 ##### COMBINED GC_HPLC
 
+###### with Missing-Observation method
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-sig_comp <- list()
+sig_comp_gchplc <- list()
 for (i in 1:length(gc_hplc_list)) {
   list_cat <- list()
   for (min_obs in 1:10) {
@@ -1654,29 +1661,100 @@ for (i in 1:length(gc_hplc_list)) {
   }
   
   # Select among all the min obs sub data frame to get the one that has highest number of significant compounds (assuming the one with highest number of significant compounds has nested all the subdf that has less number of compounds)
-  sig_comp[[paste0("Grouping_", i)]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
+  sig_comp_gchplc[[paste0("Grouping_", i)]] <- list_cat[[which.max(lapply(list_cat, nrow))]]
   
   # Check if the df is empty before create mean_rt and mean_mz column
-  if (dim(sig_comp[[paste0("Grouping_", i)]])[1] == 0) {
+  if (dim(sig_comp_gchplc[[paste0("Grouping_", i)]])[1] == 0) {
     next
   } else {
     # Add RT and m.z info to the significant table
     mean_rt <- c()
     mean_mz <- c()
-    for (row in 1:nrow(sig_comp[[paste0("Grouping_", i)]])) {
-      idx <- base::which(hplc_list[[i]]$collapsed_compound == sig_comp[[paste0("Grouping_", i)]][row,]$comp)
-      mean_rt <- c(mean_rt, mean(hplc_list[[i]][idx, ]$RT))
-      mean_mz <- c(mean_mz, mean(hplc_list[[i]][idx, ]$m.z))
+    for (row in 1:nrow(sig_comp_gchplc[[paste0("Grouping_", i)]])) {
+      idx <- base::which(hplc_list[[i]]$collapsed_compound == sig_comp_gchplc[[paste0("Grouping_", i)]][row,]$comp)
+      mean_rt <- c(mean_rt, mean(gc_hplc_list[[i]][idx, ]$RT))
+      mean_mz <- c(mean_mz, mean(gc_hplc_list[[i]][idx, ]$m.z))
     }
     
-    sig_comp[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
-    sig_comp[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+    sig_comp_gchplc[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+    sig_comp_gchplc[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
     
-    print(sig_comp[[paste0("Grouping_", i)]] %>% arrange(comp))
+    print(sig_comp_gchplc[[paste0("Grouping_", i)]] %>% arrange(comp))
   }
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category.xlsx")
+writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
+```
+
+###### with NA imputation method
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+sig_comp_gchplc <- list()
+
+for (i in 1:length(gc_hplc_list)) {
+  stats <- gc_hplc_list[[i]] %>%
+    select(NewFile, collapsed_compound, Category, Values) %>%
+    # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
+    group_by(NewFile, Category, collapsed_compound) %>%
+    summarise(across(Values, mean)) %>%
+    pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
+    column_to_rownames(., var = "NewFile")
+  
+  for (r in 1:nrow(stats)) {
+    stats[r, which(base::is.na(stats[r,]))] <- stats::runif(length(which(base::is.na(stats[r,]))),
+                                                            min = sort(gc_hplc_list[[i]]$Values)[1]/10000,
+                                                            max = sort(gc_hplc_list[[i]]$Values)[2]/10000)
+  }
+  
+  cat_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+  # Loop through each collapsed_compound (as columns)
+  for (c in 2:ncol(stats)) {
+    # looping through the combinations of product categories 
+    for (col in 1:ncol(utils::combn(satisfied_cat, 2))) {
+      # extract the combinations of product category pairs
+      p_1 <- utils::combn(satisfied_cat, 2)[1,col]
+      p_2 <- utils::combn(satisfied_cat, 2)[2,col]
+      # calculating the p-value between each product category pair 
+      pval_wilcox_test <- wilcox.test(stats[which(stats$Category == p_1), c], 
+                                      stats[which(stats$Category == p_2), c])$p.value
+      pval_ks_test <- ks.test(stats[which(stats$Category == p_1), c],
+                              stats[which(stats$Category == p_2), c])$p.value
+      # assigning row information
+      cat_df[nrow(cat_df) + 1,] <- c(colnames(stats)[c], 
+                                     paste0(p_1, " & ", p_2), 
+                                     pval_wilcox_test, 
+                                     pval_ks_test)
+      
+    }
+  }
+  
+  cat_df$adjusted_pvalue_holm <- stats::p.adjust(cat_df$pval_wilcox_test, method = "holm")
+  
+  sig_comp_gchplc[[paste0("Grouping_", i)]] <- cat_df %>%
+    filter(., adjusted_pvalue_holm < 0.05) %>%
+    arrange(adjusted_pvalue_holm)
+  
+  # Check if the df is empty before create mean_rt and mean_mz column
+  if (dim(sig_comp_gchplc[[paste0("Grouping_", i)]])[1] == 0) {
+    next
+  } else {
+    # Add RT and m.z info to the significant table
+    mean_rt <- c()
+    mean_mz <- c()
+    for (row in 1:nrow(sig_comp_gchplc[[paste0("Grouping_", i)]])) {
+      idx <- base::which(hplc_list[[i]]$collapsed_compound == sig_comp_gchplc[[paste0("Grouping_", i)]][row,]$comp)
+      mean_rt <- c(mean_rt, mean(gc_hplc_list[[i]][idx, ]$RT))
+      mean_mz <- c(mean_mz, mean(gc_hplc_list[[i]][idx, ]$m.z))
+    }
+    
+    sig_comp_gchplc[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
+    sig_comp_gchplc[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
+    
+    print(sig_comp_gchplc[[paste0("Grouping_", i)]] %>% arrange(comp))
+  }
+}
+
+writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
 ```
 
 ##### ATDGCMS
