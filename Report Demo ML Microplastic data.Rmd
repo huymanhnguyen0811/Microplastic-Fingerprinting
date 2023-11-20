@@ -2098,7 +2098,7 @@ for (min_obs in 1:10) {
 }
 
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_Missing-observation.xlsx")
+writexl::write_xlsx(x = list_subcat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_Missing-observation.xlsx")
 ```
 
 ###### With NA imputation method
@@ -2173,7 +2173,7 @@ if (dim(sub_cat)[1] == 0) {
 }
 
 
-writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
+writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
 ```
 
 When we ran a loop to investigate the significant compounds that can be obtained from getting all product_cat that has \> 3 to 6 obs, \> 5 obs gave the highest amount of significant compound.
