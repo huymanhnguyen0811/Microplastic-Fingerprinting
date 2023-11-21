@@ -2147,7 +2147,7 @@ for (c in 2:ncol(stats)) {
   }
 }
 
-df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
+df$adjusted_pvalue_holm <- stats::p.adjust(df$pval_wilcox_test, method = "holm")
 
 sub_cat <- df %>%
   filter(., adjusted_pvalue_holm < 0.05) %>%
