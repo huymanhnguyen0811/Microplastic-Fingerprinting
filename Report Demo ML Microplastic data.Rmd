@@ -2129,10 +2129,10 @@ for (subcat in unique(stats$Subcategory)) {
 # Loop through each collapsed_compound (as columns)
 for (c in 2:ncol(stats)) {
   # looping through the combinations of product categories 
-  for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+  for (col in 1:ncol(utils::combn(satisfied_subcat, 2))) {
     # extract the combinations of product category pairs
-    p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-    p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+    p_1 <- utils::combn(satisfied_subcat, 2)[1,col]
+    p_2 <- utils::combn(satisfied_subcat, 2)[2,col]
     # calculating the p-value between each product category pair 
     pval_wilcox_test <- wilcox.test(stats[which(stats$Subcategory == p_1), c], 
                                     stats[which(stats$Subcategory == p_2), c])$p.value
