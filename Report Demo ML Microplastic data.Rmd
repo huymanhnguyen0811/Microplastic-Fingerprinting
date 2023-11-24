@@ -139,11 +139,9 @@ df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
 
-# # Sample information HPLCMS
-# sampleinfo2 <- readxl::read_excel(paste0(getwd(), '/Plastic Product Info EF.xlsx'))
-# colnames(sampleinfo2)[1] <- 'Sample_ID'
-# sampleinfo2 <- sampleinfo2 %>%
-#   filter(str_detect(Sample_ID, "USE"))
+# Trace metal data
+
+metal <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Trace metal/Trace metal data.xlsx")
 
 # STEP 1.2B Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
 
@@ -530,32 +528,65 @@ input_df <- function(data) {
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- input_df(gc_hplc_list[[1]])
+df_pca <- gc_list[[1]] %>%
+    dplyr::select(NewFile, 
+                  collapsed_compound, 
+                  Values) %>%
+    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+    dplyr::group_by(
+      NewFile, # Category, # Suspected_Polymer, 
+      collapsed_compound) %>%
+    dplyr::summarise(across(Values, base::mean)) %>%
+    tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
+                       values_from = Values) %>%
+    tibble::column_to_rownames(., var = "NewFile")
+  
+for (r in 1:nrow(df_pca)) {
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
+                                                                min = sort(gc_list[[1]]$Values)[1]/100000,
+                                                                max = sort(gc_list[[1]]$Values)[2]/100000)
+}
 
-# PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-p <- PCAtools::pca(mat = df_pca[[1]], 
-                   metadata = df_pca[[2]], 
-                   # center = FALSE,
-                   scale = FALSE 
-                   )
+res.pca <- FactoMineR::PCA(df_pca,
+                           scale.unit = FALSE,
+                           graph = FALSE)
 
-# A bi-plot =================
-PCAtools::biplot(p,
-                 lab = rownames(p$metadata),
-                 colby = "Category",
-                 hline = 0, vline = 0,
-                 legendPosition = 'right', labSize = 5,
-                 sizeLoadingsNames = 5,
-                 showLoadings = TRUE,
-                 showLoadingsNames = FALSE,
-                 ntopLoadings = 10,
-                 pointSize = 4, 
-                 legendLabSize = 15,
-                 legendTitleSize = 16,
-                 legendIconSize = 6)
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "ind", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = "Plastic Sample")
 
-# Retrieve PC and add as new variables to data frame 
-PCAtools_mergePC <- p$rotated
+
+# df_pca <- input_df(gc_hplc_list[[1]])
+# 
+# # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
+# p <- PCAtools::pca(mat = df_pca[[1]], 
+#                    metadata = df_pca[[2]], 
+#                    # center = FALSE,
+#                    scale = FALSE 
+#                    )
+# 
+# # A bi-plot =================
+# PCAtools::biplot(p,
+#                  lab = rownames(p$metadata),
+#                  colby = "Category",
+#                  hline = 0, vline = 0,
+#                  legendPosition = 'right', labSize = 5,
+#                  sizeLoadingsNames = 5,
+#                  showLoadings = TRUE,
+#                  showLoadingsNames = FALSE,
+#                  ntopLoadings = 10,
+#                  pointSize = 4, 
+#                  legendLabSize = 15,
+#                  legendTitleSize = 16,
+#                  legendIconSize = 6)
+# 
+# # Retrieve PC and add as new variables to data frame 
+# PCAtools_mergePC <- p$rotated
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
@@ -633,12 +664,7 @@ Since Suspected Polymer is the same for all 4 different categorization "grouping
 Also, here for polymer type, we remove all the "Type == Unknown", which are just a few samples in the data set and does not provide good information for plastic categorization in general.
 
 ```{r , echo=FALSE, warning = FALSE, message = FALSE}
-library("FactoMineR")
-library("factoextra")
-```
-
-```{r , echo=FALSE, warning = FALSE, message = FALSE}
-df_pca <- gc_hplc_list[[1]] %>%
+df_pca <- hplc_list[[1]] %>%
     dplyr::select(NewFile, 
                   Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
                   collapsed_compound, 
@@ -655,8 +681,8 @@ df_pca <- gc_hplc_list[[1]] %>%
   
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
-                                                                max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+                                                                min = sort(hplc_list[[1]]$Values)[1]/100000,
+                                                                max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -703,7 +729,7 @@ factoextra::fviz_pca_biplot(res.pca,
 Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_hplc_list[[1]] %>%
+df_pca <- hplc_list[[1]] %>%
     dplyr::select(NewFile, 
                   Subcategory,
                   collapsed_compound, 
@@ -719,8 +745,8 @@ df_pca <- gc_hplc_list[[1]] %>%
   
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
-                                                                max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+                                                                min = sort(hplc_list[[1]]$Values)[1]/100000,
+                                                                max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca, 
@@ -1511,6 +1537,47 @@ if (dim(suspect_pol)[1] == 0) {
 writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
 ```
 
+###### Summary of significant compounds
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_NA imputed.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+## NA imputed
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_all_significant compounds.xlsx")
+```
+
 ##### ATDGCMS
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
@@ -1840,6 +1907,47 @@ for (i in 1:length(gc_hplc_list)) {
 writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
 ```
 
+###### Summary of significant compounds
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+## NA imputed
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_all_significant compounds.xlsx")
+```
+
 ##### ATDGCMS
 
 ###### Missing observation method
@@ -2118,7 +2226,7 @@ for (r in 1:nrow(stats)) {
                                                           max = sort(gc_hplc_list[[1]]$Values)[2]/10000)
 }
 
-df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
   
 # create vector of satisfied category 
 satisfied_subcat <- c()
@@ -2136,13 +2244,10 @@ for (c in 2:ncol(stats)) {
     # calculating the p-value between each product category pair 
     pval_wilcox_test <- wilcox.test(stats[which(stats$Subcategory == p_1), c], 
                                     stats[which(stats$Subcategory == p_2), c])$p.value
-    pval_ks_test <- ks.test(stats[which(stats$Subcategory == p_1), c],
-                            stats[which(stats$Subcategory == p_2), c])$p.value
     # assigning row information
     df[nrow(df) + 1,] <- c(colnames(stats)[c], 
                                    paste0(p_1, " & ", p_2), 
-                                   pval_wilcox_test, 
-                                   pval_ks_test)
+                                   pval_wilcox_test)
     
   }
 }
@@ -2174,6 +2279,47 @@ if (dim(sub_cat)[1] == 0) {
 
 
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
+```
+
+###### Summary of significant compounds
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+## NA imputed
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_all_significant compounds.xlsx")
 ```
 
 When we ran a loop to investigate the significant compounds that can be obtained from getting all product_cat that has \> 3 to 6 obs, \> 5 obs gave the highest amount of significant compound.
