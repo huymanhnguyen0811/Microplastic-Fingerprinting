@@ -1909,7 +1909,7 @@ for (min_obs in 1:10) {
 writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 ```
 
-###### with NA imputation method
+###### with NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 stats <- hplc_list[[1]] %>%
@@ -1958,6 +1958,8 @@ suspect_pol <- sp_df %>%
   filter(., adjusted_pvalue_holm < 0.05) %>%
   arrange(adjusted_pvalue_holm)
 
+print(suspect_pol %>% arrange(comp))
+
 # Check if the df is empty before create mean_rt and mean_mz column
 if (dim(suspect_pol)[1] == 0) {
   next
@@ -1973,8 +1975,6 @@ if (dim(suspect_pol)[1] == 0) {
   
   suspect_pol$mean_rt <- mean_rt
   suspect_pol$mean_mz <- mean_mz
-  
-  print(suspect_pol %>% arrange(comp))
 }
 
 
@@ -2231,7 +2231,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Ca
 
 ##### ATDGCMS
 
-###### with Missing-Observation method
+###### with Missing-Observation method - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_gc <- list()
 for (i in 1:length(gc_list)) {
@@ -2312,7 +2312,7 @@ for (i in 1:length(gc_list)) {
 writexl::write_xlsx(x = sig_comp_gc, path = "Wilcoxon_test_GC_data_by_Category_Missing-Observation.xlsx")
 ```
 
-###### with NA imputation method
+###### with NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_gc <- list()
@@ -2364,6 +2364,8 @@ for (i in 1:length(gc_list)) {
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
+  print(sig_comp_gc[[paste0("Grouping_", i)]] %>% arrange(comp))
+  
   # Check if the df is empty before create mean_rt and mean_mz column
   if (dim(sig_comp_gc[[paste0("Grouping_", i)]])[1] == 0) {
     next
@@ -2379,8 +2381,6 @@ for (i in 1:length(gc_list)) {
     
     sig_comp_gc[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
     sig_comp_gc[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
-    
-    print(sig_comp_gc[[paste0("Grouping_", i)]] %>% arrange(comp))
   }
 }
 
@@ -2430,7 +2430,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Category_al
 
 ##### HPLCTOFMS
 
-###### with Missing-Observation method
+###### with Missing-Observation method - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_hplc <- list()
 for (i in 1:length(hplc_list)) {
@@ -2563,6 +2563,8 @@ for (i in 1:length(hplc_list)) {
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
+  print(sig_comp_hplc[[paste0("Grouping_", i)]] %>% arrange(comp))
+  
   # Check if the df is empty before create mean_rt and mean_mz column
   if (dim(sig_comp_hplc[[paste0("Grouping_", i)]])[1] == 0) {
     next
@@ -2578,8 +2580,6 @@ for (i in 1:length(hplc_list)) {
     
     sig_comp_hplc[[paste0("Grouping_", i)]]$mean_rt <- mean_rt
     sig_comp_hplc[[paste0("Grouping_", i)]]$mean_mz <- mean_mz
-    
-    print(sig_comp_hplc[[paste0("Grouping_", i)]] %>% arrange(comp))
   }
 }
 
@@ -2751,9 +2751,8 @@ for (c in 2:ncol(stats)) {
                                     stats[which(stats$Subcategory == p_2), c])$p.value
     # assigning row information
     df[nrow(df) + 1,] <- c(colnames(stats)[c], 
-                                   paste0(p_1, " & ", p_2), 
-                                   pval_wilcox_test)
-    
+                           paste0(p_1, " & ", p_2), 
+                           pval_wilcox_test)
   }
 }
 
@@ -2762,6 +2761,8 @@ df$adjusted_pvalue_holm <- stats::p.adjust(df$pval_wilcox_test, method = "holm")
 sub_cat <- df %>%
   filter(., adjusted_pvalue_holm < 0.05) %>%
   arrange(adjusted_pvalue_holm)
+
+print(sub_cat %>% arrange(comp))
 
 # Check if the df is empty before create mean_rt and mean_mz column
 if (dim(sub_cat)[1] == 0) {
@@ -2778,8 +2779,6 @@ if (dim(sub_cat)[1] == 0) {
   
   sub_cat$mean_rt <- mean_rt
   sub_cat$mean_mz <- mean_mz
-  
-  print(sub_cat %>% arrange(comp))
 }
 
 
@@ -2831,7 +2830,7 @@ When we ran a loop to investigate the significant compounds that can be obtained
 
 ##### ATDGCMS
 
-###### With Missing Observation method
+###### With Missing Observation method - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 list_subcat <- list()
 
@@ -2960,6 +2959,8 @@ sub_cat <- df %>%
   filter(., adjusted_pvalue_holm < 0.05) %>%
   arrange(adjusted_pvalue_holm)
 
+print(sub_cat %>% arrange(comp))
+
 # Check if the df is empty before create mean_rt and mean_mz column
 if (dim(sub_cat)[1] == 0) {
   next
@@ -2975,8 +2976,6 @@ if (dim(sub_cat)[1] == 0) {
   
   sub_cat$mean_rt <- mean_rt
   sub_cat$mean_mz <- mean_mz
-  
-  print(sub_cat %>% arrange(comp))
 }
 
 
@@ -3026,7 +3025,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Subcategory
 
 ##### HPLCTOFMS
 
-###### With Missing Observation method
+###### With Missing Observation method - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 list_subcat <- list()
 
@@ -3079,6 +3078,11 @@ for (min_obs in 1:10) {
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
+  print(sp_df %>%
+    filter(., adjusted_pvalue_holm < 0.05) %>%
+    arrange(comp))
+  print(length(unique(list_subcat[[paste0("Min_obs_", min_obs)]]$comp)))
+  
   # Check if the df is empty before create mean_rt and mean_mz column
   if (nrow(list_subcat[[paste0("Min_obs_", min_obs)]]) == 0) {
     next
@@ -3095,18 +3099,13 @@ for (min_obs in 1:10) {
   list_subcat[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
   list_subcat[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
   }
-  
-  print(sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(comp))
-  print(length(unique(list_subcat[[paste0("Min_obs_", min_obs)]]$comp)))
 }
 
 
 writexl::write_xlsx(x = list_subcat, path = "Wilcoxon_test_HPLC_data_by_Subcategory_Missing-observation.xlsx")
 ```
 
-###### With NA imputation method
+###### With NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 stats <- hplc_list[[1]] %>%
@@ -3155,9 +3154,11 @@ sub_cat <- df %>%
   filter(., adjusted_pvalue_holm < 0.05) %>%
   arrange(adjusted_pvalue_holm)
 
+print(sub_cat %>% arrange(comp))
+
 # Check if the df is empty before create mean_rt and mean_mz column
 if (dim(sub_cat)[1] == 0) {
-  next
+  print("No significant compound found")
 } else {
   # Add RT and m.z info to the significant table
   mean_rt <- c()
@@ -3170,8 +3171,6 @@ if (dim(sub_cat)[1] == 0) {
   
   sub_cat$mean_rt <- mean_rt
   sub_cat$mean_mz <- mean_mz
-  
-  print(sub_cat %>% arrange(comp))
 }
 
 
