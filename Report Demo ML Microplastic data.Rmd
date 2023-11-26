@@ -2910,7 +2910,7 @@ for (min_obs in 1:10) {
 writexl::write_xlsx(x = list_subcat, path = "Wilcoxon_test_GC_data_by_Subcategory_Missing-observation.xlsx")
 ```
 
-###### With NA imputation method
+###### With NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 stats <- gc_list[[1]] %>%
@@ -3217,6 +3217,12 @@ all_unique$mean_mz <- mean_mz
 
 writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Subcategory_all_significant compounds.xlsx")
 ```
+
+#### By Trace Metal
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+
+```
+
 
 ## Demo RF
 
