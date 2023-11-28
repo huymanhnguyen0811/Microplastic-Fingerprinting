@@ -1098,7 +1098,7 @@ xlab = "", ylab = "", pch = 20, cex = 2)
 
 ### Wilcoxon test with HCA result
 
-#### With Combined GC HPLC
+#### With Combined GC HPLC - DONE
 
 Since for HCA, we operate on sample level and for each 4 subdf of each gc_hplc/gc/hplc_list, they all have the same sample column. Therefore, just using one of the subdf is enough.
 
@@ -1218,7 +1218,7 @@ all_unique$mean_mz <- mean_mz
 writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_all_significant compounds.xlsx")
 ```
 
-#### With just GC
+#### With just GC - DONE
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- gc_list[[1]] %>%
@@ -1339,7 +1339,7 @@ The code below run wilcoxcon test on NA imputed data frame and don't perform min
 
 After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data => 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
 
-#### With just HPLC
+#### With just HPLC - TBA
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- hplc_list[[1]] %>%
@@ -1371,11 +1371,11 @@ stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
 sig_comp <- list()
 
 # Main loop
-for (ele in 1:length(hca$height)) {
+for (ele in 50:length(hca$height)) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
   joined <- full_join(t, stats, by = "NewFile")
   
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
@@ -1402,13 +1402,10 @@ for (ele in 1:length(hca$height)) {
       # calculating the p-value between each product category pair 
       pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
                                       joined[which(joined$group == p_2), c])$p.value
-      pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                              joined[which(joined$group == p_2), c])$p.value
       # assigning row information
       sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
                                    paste0(p_1, "&", p_2), 
-                                   pval_wilcox_test, 
-                                   pval_ks_test)
+                                   pval_wilcox_test)
     }
   }
   
@@ -1595,7 +1592,7 @@ if (dim(suspect_pol)[1] == 0) {
 writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_NA imputed.xlsx")
@@ -1788,7 +1785,7 @@ if (dim(suspect_pol)[1] == 0) {
 writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_GC_data_by_Suspected_Polymer_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -1981,7 +1978,7 @@ if (dim(suspect_pol)[1] == 0) {
 writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -2188,7 +2185,7 @@ for (i in 1:length(gc_hplc_list)) {
 writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
@@ -2387,7 +2384,7 @@ for (i in 1:length(gc_list)) {
 writexl::write_xlsx(x = sig_comp_gc, path = "Wilcoxon_test_GC_data_by_Category_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Category_NA imputed.xlsx")
@@ -2511,7 +2508,7 @@ for (i in 1:length(hplc_list)) {
 writexl::write_xlsx(x = sig_comp_hplc, path = "Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
 ```
 
-###### with NA imputation method
+###### with NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_hplc <- list()
@@ -2586,7 +2583,7 @@ for (i in 1:length(hplc_list)) {
 writexl::write_xlsx(x = sig_comp_hplc, path = "Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
@@ -2714,7 +2711,7 @@ for (min_obs in 1:10) {
 writexl::write_xlsx(x = list_subcat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_Missing-observation.xlsx")
 ```
 
-###### With NA imputation method - TBA
+###### With NA imputation method - DONE
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 stats <- gc_hplc_list[[1]] %>%
@@ -2732,17 +2729,11 @@ for (r in 1:nrow(stats)) {
 }
 
 df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  
-# create vector of satisfied category 
-satisfied_subcat <- c()
-for (subcat in unique(stats$Subcategory)) {
-  satisfied_subcat <- c(subcat, satisfied_subcat)
-}
 
 # Loop through each collapsed_compound (as columns)
 for (c in 2:ncol(stats)) {
   # looping through the combinations of product categories 
-  for (col in 1:ncol(utils::combn(satisfied_subcat, 2))) {
+  for (col in 1:ncol(utils::combn(unique(stats$Subcategory), 2))) {
     # extract the combinations of product category pairs
     p_1 <- utils::combn(satisfied_subcat, 2)[1,col]
     p_2 <- utils::combn(satisfied_subcat, 2)[2,col]
@@ -2785,7 +2776,7 @@ if (dim(sub_cat)[1] == 0) {
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_NA imputed.xlsx")
@@ -2982,7 +2973,7 @@ if (dim(sub_cat)[1] == 0) {
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_GC_data_by_Subcategory_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Subcategory_Missing-observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Subcategory_NA imputed.xlsx")
@@ -3012,9 +3003,9 @@ all_unique <- data.frame(comp=unique(c(unique1, unique2)))
 mean_rt <- c()
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+  idx <- base::which(gc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_list[[1]][idx, ]$m.z), 4))
 }
 
 all_unique$mean_rt <- mean_rt
@@ -3177,7 +3168,7 @@ if (dim(sub_cat)[1] == 0) {
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_HPLC_data_by_Subcategory_NA imputed.xlsx")
 ```
 
-###### Summary of significant compounds
+###### Summary of significant compounds - DONE
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Subcategory_Missing-observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Subcategory_NA imputed.xlsx")
@@ -3207,9 +3198,9 @@ all_unique <- data.frame(comp=unique(c(unique1, unique2)))
 mean_rt <- c()
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+  idx <- base::which(hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
 }
 
 all_unique$mean_rt <- mean_rt
