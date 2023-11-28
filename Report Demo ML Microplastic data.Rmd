@@ -220,7 +220,7 @@ combined_df2_grouped <- grouping_comp(combined_df2,
                                       mzthres = 0.0005,
                                       type = "HPLCTOFMS")
 
-# Step 2: Readjust compound RA (sample) by average blank RA ======================
+# Step 2: Readjust compound peak area (sample) by average blank peak area ======================
 
 # ATDGCMS
 
