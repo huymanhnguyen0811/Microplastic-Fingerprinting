@@ -527,24 +527,42 @@ input_df <- function(data) {
 }
 ```
 
+#### Examining different threshold for minimum number of samples that a compound must occur in. 
+For HPLC only data, threshold >= length(unique(hplc_list[[1]]$NewFile))/2) produces PCA that can separate plastic ball into 1 cluster and PBBC into another clusters (with some FPW mixed up in it).
+
+For GC only data, threshold >= length(unique(gc_list[[1]]$NewFile))/2) produces PCA that separates plastic drinking straw (USSB-09, which is the only PDS_USSB that made out of Corn material) and the rest.
+
+For combined GC/HPLC only data, threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/4) produces PCA that can separate plastic ball into 1 cluster and the rest.
+
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_list[[1]] %>%
-    dplyr::select(NewFile, 
-                  collapsed_compound, 
-                  Values) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(
-      NewFile, # Category, # Suspected_Polymer, 
-      collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
-                       values_from = Values) %>%
-    tibble::column_to_rownames(., var = "NewFile")
-  
+comp_vec <- c()
+for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
+  idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
+  if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/4)) {
+    comp_vec <- c(comp_vec, comp)
+  }
+}
+```
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_pca <- gc_hplc_list[[1]] %>%
+  filter(., collapsed_compound %in% comp_vec) %>%
+  dplyr::select(NewFile, 
+                collapsed_compound, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    NewFile, # Category, # Suspected_Polymer, 
+    collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "NewFile")
+
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                                max = sort(gc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -553,7 +571,7 @@ res.pca <- FactoMineR::PCA(df_pca,
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
-                            label = "ind", 
+                            label = "none", 
                             invisible = "var", 
                             repel = TRUE,
                             labelsize = 6, 
@@ -665,24 +683,25 @@ Also, here for polymer type, we remove all the "Type == Unknown", which are just
 
 ```{r , echo=FALSE, warning = FALSE, message = FALSE}
 df_pca <- hplc_list[[1]] %>%
-    dplyr::select(NewFile, 
-                  Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
-                  collapsed_compound, 
-                  Values) %>%
+  # filter(., collapsed_compound %in% comp_vec) %>%
+  dplyr::select(NewFile, 
+                Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
+                collapsed_compound, 
+                Values) %>%
   filter(., Suspected_Polymer %notin% "Unknown") %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(
-      Suspected_Polymer, # Category, # Suspected_Polymer, 
-      collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
-                       values_from = Values) %>%
-    tibble::column_to_rownames(., var = "Suspected_Polymer")
-  
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    Suspected_Polymer, # Category, # Suspected_Polymer, 
+    collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "Suspected_Polymer")
+
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(hplc_list[[1]]$Values)[1]/100000,
-                                                                max = sort(hplc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(hplc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -728,25 +747,46 @@ factoextra::fviz_pca_biplot(res.pca,
 
 Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
 
+#####  Examining different threshold for minimum number of samples that a compound must occur in.
+
+For HPLC only data, threshold >= length(unique(hplc_list[[1]]$NewFile))/1.5) produces PCA that can separate plastic ball, food packaging, bottle caps, fish trays, (Polystyrene food waste + Cigar tips) into 1 cluster and the rest.
+
+For GC only data, threshold >= length(unique(gc_list[[1]]$NewFile))/2) resulted in 7 compounds, This produces PCA that separates plastic drinking straw, PDS, PB, Drink bottles, Balloons, Cigar Tips, Bottle caps (closer to plastic cups) and the rest.
+
+For combined GC/HPLC only data: 
+ = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/3) resutled in 63 compounds. This produces PCA that can separate bottle caps, Food packaging, Fishing bait trays, (PolystyreneFW + Cigar tips) into 1 cluster and the rest.
+ = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/2.5) resutled in 24 compounds. This produces PCA that can separate Cigar tips, (Food packaging + Plastic toy balls + Food containers + BOttle caps), (Fishing bait trays + PolystyFW), (PDS + Food wrappers), Ziploc bags,  Various plastic waste into 1 cluster.
+
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- hplc_list[[1]] %>%
-    dplyr::select(NewFile, 
-                  Subcategory,
-                  collapsed_compound, 
-                  Values) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(
-      Subcategory,
-      collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from =  collapsed_compound,
-                       values_from = Values) %>%
-    tibble::column_to_rownames(., var = "Subcategory")
-  
+comp_vec <- c()
+for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
+  idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
+  if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/2.5)) {
+    comp_vec <- c(comp_vec, comp)
+  }
+}
+```
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_pca <- gc_hplc_list[[1]] %>%
+  filter(., collapsed_compound %in% comp_vec) %>%
+  dplyr::select(NewFile, 
+                Subcategory,
+                collapsed_compound, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    Subcategory,
+    collapsed_compound) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  collapsed_compound,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "Subcategory")
+
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                                min = sort(hplc_list[[1]]$Values)[1]/100000,
-                                                                max = sort(hplc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca, 
@@ -854,36 +894,58 @@ factoextra::fviz_pca_biplot(res.pca,
 
 If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
 
+#####  Examining different threshold for minimum number of samples that a compound must occur in.
+
+This exercise does not seems to affect the HCa. Keep in mind that for all 3 cases of data combinations: none of them has compounds that occur in all samples. NONE of THEM!!!!!
+
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+comp_vec <- c()
+for (comp in unique(hplc_list[[1]]$collapsed_compound)) {
+  idx <- which(hplc_list[[1]]$collapsed_compound == comp)
+  if (length(unique(hplc_list[[1]][idx,]$NewFile)) >= (length(unique(hplc_list[[1]]$NewFile))/3)) {
+    comp_vec <- c(comp_vec, comp)
+  }
+}
+```
+
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 # Data prep for HCA
-hc_df <- gc_hplc_list[[1]] %>%
-  dplyr::select(File,
+hc_df <- hplc_list[[1]] %>%
+  filter(., collapsed_compound %in% comp_vec) %>%
+  dplyr::select(NewFile,
+                Subcategory,
                 collapsed_compound, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    File,
+    NewFile,
+    Subcategory,
     collapsed_compound) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
   tidyr::pivot_wider(names_from =  collapsed_compound,
-                     values_from = Values) %>%
-  tibble::column_to_rownames(., var = "File")
+                     values_from = Values) 
+  # tibble::column_to_rownames(., var = "Subcategory")
+
+names <- hc_df$Subcategory
+
+hc_df <- as.matrix(hc_df[, -c(1,2)])
 
 for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
-    # stats::runif(length(which(base::is.na(hc_df[r,]))),
-    #                                                       min = sort(gc_hplc_list[[1]]$Values)[1]/10000,
-    #                                                       max = sort(gc_hplc_list[[1]]$Values)[2]/10000)
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
+                                                          min = sort(hplc_list[[1]]$Values)[1]/10000,
+                                                          max = sort(hplc_list[[1]]$Values)[2]/10000)
 }
+
+rownames(hc_df) <- names
 ```
 
 ### Clustering of samples
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
-hca_samp <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
-                                         method = "robust.aitchison"))
-plot(hca_samp,  # Since our data is continous -> canberra // manhattan
-     # // aitchison // robust.aitchison
+hca_samp <- stats::hclust(vegan::vegdist(hc_df,
+                                         method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
+plot(hca_samp,  
      # labels = FALSE, 
      hang = -1,
      main = "Combined GC - HPLC data_Samples")
@@ -892,13 +954,12 @@ plot(hca_samp,  # Since our data is continous -> canberra // manhattan
 ### Clustering of compounds
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
-hca_comp <- hclust(vegan::vegdist(t(as.matrix(hc_df)), 
-                           method = "robust.aitchison"))
-plot(hca,  # Since our data is continous -> canberra // manhattan
-     # // aitchison // robust.aitchison
-     # labels = FALSE, 
-     hang = -1,
-     main = "Combined GC - HPLC data_Compounds")
+# hca_comp <- hclust(vegan::vegdist(t(as.matrix(hc_df)), 
+#                            method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
+# plot(hca,
+#      # labels = FALSE, 
+#      hang = -1,
+#      main = "Combined GC - HPLC data_Compounds")
 ```
 
 A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
