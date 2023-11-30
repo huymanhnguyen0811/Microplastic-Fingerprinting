@@ -8,6 +8,7 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data")
 knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(out.width='750px', dpi=200)
 ```
 
 ## Documentation
@@ -232,6 +233,9 @@ combined_df2_grouped <- grouping_comp(combined_df2,
 
 # ATDGCMS
 
+# Take the blank away from the sample that run right before it
+# If the compound appear in blank and not in sample -> negative values after blank subtraction -> remove those compounds
+
 # Create list to store temp dfs
 temp_list <- list()
 i <- 1
@@ -435,6 +439,7 @@ for (i in 1:length(excel_sheets(path = p))) {
 ```
 
 ### Export GC/HPLC/Combined df to excel as input for Python ML pipeline
+
 ```{r , echo=FALSE, warning = FALSE}
 writexl::write_xlsx(x = gc_list, path = "gc_list_df.xlsx")
 writexl::write_xlsx(x = hplc_list, path = "hplc_list_df.xlsx")
@@ -442,7 +447,9 @@ writexl::write_xlsx(x = gc_hplc_list, path = "gc_hplc_list_df.xlsx")
 ```
 
 ### Research Question with Trace metal data
-#### 1. Top10 metal with highest Concen. in each sample? aka. Significant metals to distinguish between each sample
+
+#### Data prepping
+
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization_NewFileName.xlsx"
 
@@ -464,28 +471,32 @@ for (i in 1:length(excel_sheets(path = p))) {
     relocate(NewFile, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
     pivot_longer(., cols = 5:ncol(.), names_to = "Metal_component", values_to = "Values")
 }
+```
 
+#### 1. What are the Top10 metal with highest Concen. in each sample?
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 newmetal <- metal %>% column_to_rownames(., var = "File")
 
 # Replace all NA in data frame with 0
 newmetal[is.na(newmetal)] <- 0
 
 # Extract Top 10 metal with highest concen for each sample
-top10_metal <- list()
+top_metal <- list()
 for (row in 1:nrow(newmetal)) {
-  top10_metal[[row]] <- colnames(newmetal)[order(as.numeric(newmetal[row,]), decreasing = TRUE)[1:10]]
+  top_metal[[row]] <- colnames(newmetal)[order(as.numeric(newmetal[row,]), decreasing = TRUE)[1:10]]
 }
 
 # top10_metal <- bind_cols(top10_metal)
 # colnames(top10_metal) <- rownames(newmetal)
-top10_list <- list()
+topmetal_list <- list()
 i <- 1
 for (file in unique(metal_list[[1]]$NewFile)) {
-  top10_list[[i]] <- metal_list[[1]] %>% filter(., NewFile %in% file) %>% filter(., Metal_component %in% top10_metal[[i]])
+  topmetal_list[[i]] <- metal_list[[1]] %>% filter(., NewFile %in% file) %>% filter(., Metal_component %in% top_metal[[i]])
   i <- i + 1
 }
 
-top10_plot <- bind_rows(top10_list)
+top_metal_plot <- bind_rows(topmetal_list)
 
 ### Stacked bar plot of values of  Top 10 trace metal for each metal data sample (x-axis: sample name; y-axis: metal values) --------------------------------------
 
@@ -493,7 +504,7 @@ top10_plot <- bind_rows(top10_list)
 #   group_by(NewFile, Metal_component) %>%
 #   summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
 
-ggplot(data = top10_plot, aes(x = NewFile, y = Values, fill = Metal_component)) +
+ggplot(data = top_metal_plot, aes(x = NewFile, y = Values, fill = Metal_component)) +
   geom_bar(stat = "identity") +
   # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
   #                                        ymax = mean + sd, group = Metal_component), 
@@ -504,9 +515,19 @@ ggplot(data = top10_plot, aes(x = NewFile, y = Values, fill = Metal_component)) 
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
+#### 2.1 Among the top25 trace metal, if the metal is shared among different samples, is there a significant difference in the concentration of these trace metals?
 
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+
+```
+
+#### 2.2 Among the top25 trace metal, what are the metal that uniquely occur in just 1 sample?
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+```
 
 ### Combining Trace Metal data with GC&HPLCdata - TBA
+
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # MAtch sample name with combined GC/HPLC
 for (i in gc_hplc_list) {
@@ -515,8 +536,6 @@ for (i in gc_hplc_list) {
               select(., -c(m.z, RT)), by = c("Suspected_Polymer", "Category", "Subcategory"))
 }
 ```
-
-
 
 ### ATDGCMS - Summary of Percent_Area in each sample of merge_df1 to know how much Percent_Area we lost when we force the compounds to appear in at least 2 product categories
 
@@ -611,12 +630,13 @@ input_df <- function(data) {
 }
 ```
 
-#### Examining different threshold for minimum number of samples that a compound must occur in. 
-For HPLC only data, threshold >= length(unique(hplc_list[[1]]$NewFile))/2) produces PCA that can separate plastic ball into 1 cluster and PBBC into another clusters (with some FPW mixed up in it).
+#### Examining different threshold for minimum number of samples that a compound must occur in.
 
-For GC only data, threshold >= length(unique(gc_list[[1]]$NewFile))/2) produces PCA that separates plastic drinking straw (USSB-09, which is the only PDS_USSB that made out of Corn material) and the rest.
+For HPLC only data, threshold \>= length(unique(hplc_list[[1]]\$NewFile))/2) produces PCA that can separate plastic ball into 1 cluster and PBBC into another clusters (with some FPW mixed up in it).
 
-For combined GC/HPLC only data, threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/4) produces PCA that can separate plastic ball into 1 cluster and the rest.
+For GC only data, threshold \>= length(unique(gc_list[[1]]\$NewFile))/2) produces PCA that separates plastic drinking straw (USSB-09, which is the only PDS_USSB that made out of Corn material) and the rest.
+
+For combined GC/HPLC only data, threshold \>= length(unique(gc_hplc_list[[1]]\$NewFile))/4) produces PCA that can separate plastic ball into 1 cluster and the rest.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 comp_vec <- c()
@@ -719,7 +739,6 @@ factoextra::fviz_pca_biplot(res.pca,
 # factoextra::fviz_pca_biplot(FactoMineR_p,
 #                             habillage = unique(gc_hplc_list[[1]]$File))
 ```
-
 
 ### columns as categorical type
 
@@ -831,15 +850,13 @@ factoextra::fviz_pca_biplot(res.pca,
 
 Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
 
-#####  Examining different threshold for minimum number of samples that a compound must occur in.
+##### Examining different threshold for minimum number of samples that a compound must occur in.
 
-For HPLC only data, threshold >= length(unique(hplc_list[[1]]$NewFile))/1.5) produces PCA that can separate plastic ball, food packaging, bottle caps, fish trays, (Polystyrene food waste + Cigar tips) into 1 cluster and the rest.
+For HPLC only data, threshold \>= length(unique(hplc_list[[1]]\$NewFile))/1.5) produces PCA that can separate plastic ball, food packaging, bottle caps, fish trays, (Polystyrene food waste + Cigar tips) into 1 cluster and the rest.
 
-For GC only data, threshold >= length(unique(gc_list[[1]]$NewFile))/2) resulted in 7 compounds, This produces PCA that separates plastic drinking straw, PDS, PB, Drink bottles, Balloons, Cigar Tips, Bottle caps (closer to plastic cups) and the rest.
+For GC only data, threshold \>= length(unique(gc_list[[1]]\$NewFile))/2) resulted in 7 compounds, This produces PCA that separates plastic drinking straw, PDS, PB, Drink bottles, Balloons, Cigar Tips, Bottle caps (closer to plastic cups) and the rest.
 
-For combined GC/HPLC only data: 
- = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/3) resutled in 63 compounds. This produces PCA that can separate bottle caps, Food packaging, Fishing bait trays, (PolystyreneFW + Cigar tips) into 1 cluster and the rest.
- = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/2.5) resutled in 24 compounds. This produces PCA that can separate Cigar tips, (Food packaging + Plastic toy balls + Food containers + BOttle caps), (Fishing bait trays + PolystyFW), (PDS + Food wrappers), Ziploc bags,  Various plastic waste into 1 cluster.
+For combined GC/HPLC only data: = threshold \>= length(unique(gc_hplc_list[[1]]$NewFile))/3) resutled in 63 compounds. This produces PCA that can separate bottle caps, Food packaging, Fishing bait trays, (PolystyreneFW + Cigar tips) into 1 cluster and the rest. = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/2.5) resutled in 24 compounds. This produces PCA that can separate Cigar tips, (Food packaging + Plastic toy balls + Food containers + BOttle caps), (Fishing bait trays + PolystyFW), (PDS + Food wrappers), Ziploc bags, Various plastic waste into 1 cluster.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 comp_vec <- c()
@@ -974,14 +991,82 @@ factoextra::fviz_pca_biplot(res.pca,
 
 ```
 
+### "Trace metal"
+
+#### 1. Can we use trace metal to distinguish between individual samples?
+
+```{r , echo=FALSE, warning = FALSE, fig.width=14, fig.height=9}
+df_pca <- metal_list[[1]] %>%
+  dplyr::select(NewFile, 
+                Metal_component, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    NewFile,
+    Metal_component) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Metal_component,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "NewFile")
+
+# Replace all missing values with 0
+df_pca[is.na(df_pca)] <- 0
+
+res.pca <- FactoMineR::PCA(df_pca, 
+                           scale.unit = FALSE,
+                           graph = FALSE)
+
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "ind", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = paste0("Trace metal samples grouping by samples ", 2))
+```
+
+#### 2. Can we use trace metal to distinguish between Polymer type/Category/Subcategory?
+
+```{r , echo=FALSE, warning = FALSE, fig.width=14, fig.height=9}
+df_pca <- metal_list[[4]] %>%
+  dplyr::select(NewFile, 
+                Metal_component,
+                Subcategory,
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    Subcategory,
+    Metal_component) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Metal_component,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "Subcategory")
+
+# Replace all missing values with 0
+df_pca[is.na(df_pca)] <- 0
+
+res.pca <- FactoMineR::PCA(df_pca, 
+                           scale.unit = FALSE,
+                           graph = FALSE)
+
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "ind", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 6, 
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = "Trace metal samples grouping by Subcategory") 
+```
+
 ## Demo Hierarchical Clustering Analysis
 
 If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
 
-#####  Examining different threshold for minimum number of samples that a compound must occur in.
+##### Examining different threshold for minimum number of samples that a compound must occur in.
 
 This exercise does not seems to affect the HCa. Keep in mind that for all 3 cases of data combinations: none of them has compounds that occur in all samples. NONE of THEM!!!!!
-
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 comp_vec <- c()
@@ -1025,6 +1110,7 @@ rownames(hc_df) <- names
 ```
 
 ### Clustering of samples
+
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
 hca_samp <- stats::hclust(vegan::vegdist(hc_df,
@@ -1036,6 +1122,7 @@ plot(hca_samp,
 ```
 
 ### Clustering of compounds
+
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
 # hca_comp <- hclust(vegan::vegdist(t(as.matrix(hc_df)), 
@@ -1048,7 +1135,6 @@ plot(hca_samp,
 
 A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
 
-
 For selecting Dissimilarity Indices Calculated by vegan::vegdist(), since our data is continous, not normally distributed, and the data is sparse (meaning our data has lots of NA or NULL before data imputation, This basically because there are compounds that occur in some samples and not in the others). Manhattan dissimilarity index separating ATDGCMS and HPLCTOFMS into 2 big clusters, while Canberra//Aitchison//Robust.aitchison grouped ATDGCMS as a subgroup of a part of HPLCTOFMS data.
 
 Since for each observations of each sample, the sum of values of collapsed compounds is sum up to 100%, Aitchison or Robust.Aitchison are currently the best option for dissimilarity index.
@@ -1059,8 +1145,7 @@ Compositional data have particular characteristics and constraints that standard
 
 **Closure Constraint:** Because the components in compositional data sum to a constant value (like 1 or 100%), the data is subject to a closure constraint. This constraint violates the assumption of independence between variables that many standard statistical techniques rely on. Aitchison distance accounts for this constraint.
 
-*Implications of Closure Constraint* 
-*Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
+*Implications of Closure Constraint* *Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
 
 *Spurious Correlations:* The closure constraint can lead to spurious or misleading correlations between variables. For example, an increase in the proportion of Additive A will necessarily result in a decrease in the sum of the proportions of Additives B and C, even if there's no biological or chemical reason for them to be inversely related.
 
@@ -1083,6 +1168,7 @@ In this workflow on tracking microplastic additives in aquatic environments, und
 **Interpretable:** The distance measure reflects compositional difference in a way that's meaningful within the context of the data, making it easier to understand and interpret the results.
 
 ## Demo 2-way HCA dendrogram
+
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 library(pheatmap)
 # Input matrix - sample as rows, features as columns
@@ -1101,7 +1187,7 @@ pheatmap(as.matrix(hc_df),
 
 ```
 
-(12th,Oct,2023) Current Problem with two-way HCA dendrogram is that we have too many samples (n = 172) and too many compounds (n = 13046). => Proposed solution: grouping the compounds together via the function cutree(hca_comp, h = 100) and combine all compounds that belongs to a group together by taking the mean/median across all compounds that belongs to group for each sample. The process is as demonstrated below.
+(12th,Oct,2023) Current Problem with two-way HCA dendrogram is that we have too many samples (n = 172) and too many compounds (n = 13046). =\> Proposed solution: grouping the compounds together via the function cutree(hca_comp, h = 100) and combine all compounds that belongs to a group together by taking the mean/median across all compounds that belongs to group for each sample. The process is as demonstrated below.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 cut_tree_comp <- data.frame(group = cutree(hca_comp, h = 130))
@@ -1131,6 +1217,7 @@ hca_samp <- hclust(vegan::vegdist(t(as.matrix(tets)),
 plot(hca_samp, hang = -1)
 
 ```
+
 So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
 
 #### Here, we use a non-parametric test, Wilcoxon test, because our data violates the assumptions for other parametric test, such as normality and equality of variance between 2 samples, as demonstrate below:
@@ -1202,6 +1289,7 @@ one way to overcome this problem is group_by(Suspected_Polymer) or Category or S
 ## Demo K-means Clustering
 
 ### With Combined GC HPLC
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 # Input numeric matrix data : sample as rows, collapsed_compounds as columns
 df <- gc_hplc_list[[1]] %>%
@@ -1237,7 +1325,6 @@ xlab = "", ylab = "", pch = 20, cex = 2)
 
 
 ```
-
 
 ## Demo Wilcoxon test
 
@@ -1335,6 +1422,7 @@ writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-HPLC_by_Robu
 ```
 
 ###### Summary of significant compounds
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC HPLC_by_Robust Aichitson_HCA clustering result.xlsx")
 
@@ -1452,6 +1540,7 @@ writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_GC_by_Robust Aichitson_H
 ```
 
 ###### Summary of significant compounds
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_by_Robust Aichitson_HCA clustering result.xlsx")
 
@@ -1482,7 +1571,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Su
 
 The code below run wilcoxcon test on NA imputed data frame and don't perform minimum observation method. It reports the number of significant compounds at each cutree Height.
 
-After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data => 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
+After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data =\> 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
 
 #### With just HPLC - TBA
 
@@ -1582,6 +1671,7 @@ Here we get all significant compounds from Suspected_Polymer that has minimum 1 
 ##### COMBINED GC_HPLC
 
 ###### with Missing observation method - DONE
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 list_suspect_pol <- list()
 
@@ -1738,6 +1828,7 @@ writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_S
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_NA imputed.xlsx")
@@ -1781,6 +1872,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Su
 ##### ATDGCMS
 
 ###### with Missing observation method - DONE
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 list_suspect_pol <- list()
 
@@ -1931,6 +2023,7 @@ writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_GC_data_by_Suspected_
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -1974,6 +2067,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Suspected_P
 ##### HPLCTOFMS
 
 ###### with Missing observation method - DONE
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 list_suspect_pol <- list()
 
@@ -2124,6 +2218,7 @@ writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_HPLC_data_by_Suspecte
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -2171,6 +2266,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Suspected
 ##### COMBINED GC_HPLC
 
 ###### with Missing-Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_gchplc <- list()
 for (i in 1:length(gc_hplc_list)) {
@@ -2331,6 +2427,7 @@ writexl::write_xlsx(x = sig_comp_gchplc, path = "Wilcoxon_test_COMBINED GC_HPLC_
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Category_NA imputed.xlsx")
@@ -2374,6 +2471,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Ca
 ##### ATDGCMS
 
 ###### with Missing-Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_gc <- list()
 for (i in 1:length(gc_list)) {
@@ -2530,6 +2628,7 @@ writexl::write_xlsx(x = sig_comp_gc, path = "Wilcoxon_test_GC_data_by_Category_N
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Category_NA imputed.xlsx")
@@ -2573,6 +2672,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Category_al
 ##### HPLCTOFMS
 
 ###### with Missing-Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sig_comp_hplc <- list()
 for (i in 1:length(hplc_list)) {
@@ -2729,6 +2829,7 @@ writexl::write_xlsx(x = sig_comp_hplc, path = "Wilcoxon_test_HPLC_data_by_Catego
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
@@ -2771,12 +2872,12 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Category_
 
 #### By Subcategory
 
-Since the subcategory is the same across all 4 different consumer-based perspective groupings, we only need to run one dataframe of the list of df (this principle applies for either gc_hplc_list or gc_list or hplc_list).
-##### Do we need to change Data processing-Step 4 (Subsetting Non-unique compounds), for ex At step 4, we need to subset compounds that appear in more than 2 categories instead of 2 files? =\> NO!!
+Since the subcategory is the same across all 4 different consumer-based perspective groupings, we only need to run one dataframe of the list of df (this principle applies for either gc_hplc_list or gc_list or hplc_list). \##### Do we need to change Data processing-Step 4 (Subsetting Non-unique compounds), for ex At step 4, we need to subset compounds that appear in more than 2 categories instead of 2 files? =\> NO!!
 
 ##### COMBINED GC_HPLC
 
 ###### With Missing Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 list_subcat <- list()
 
@@ -2922,6 +3023,7 @@ writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Subca
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Subcategory_NA imputed.xlsx")
@@ -2967,6 +3069,7 @@ When we ran a loop to investigate the significant compounds that can be obtained
 ##### ATDGCMS
 
 ###### With Missing Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 list_subcat <- list()
 
@@ -3119,6 +3222,7 @@ writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_GC_data_by_Subcategory_NA
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Subcategory_Missing-observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Subcategory_NA imputed.xlsx")
@@ -3162,6 +3266,7 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Subcategory
 ##### HPLCTOFMS
 
 ###### With Missing Observation method - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 list_subcat <- list()
 
@@ -3314,6 +3419,7 @@ writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_HPLC_data_by_Subcategory_
 ```
 
 ###### Summary of significant compounds - DONE
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Subcategory_Missing-observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Subcategory_NA imputed.xlsx")
@@ -3355,10 +3461,10 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Subcatego
 ```
 
 #### By Trace Metal
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 
 ```
-
 
 ## Demo RF
 
