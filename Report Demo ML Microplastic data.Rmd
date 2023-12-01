@@ -6,7 +6,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data")
+knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting")
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(out.width='750px', dpi=200)
 ```
@@ -147,10 +147,6 @@ df_list2_step1.1 <- purrr::map(file_list2, read_xls, skip = 1)
 df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
-
-# Trace metal data
-
-metal <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Trace metal/Trace metal data.xlsx")
 
 # STEP 1.2B Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
 
@@ -451,6 +447,10 @@ writexl::write_xlsx(x = gc_hplc_list, path = "gc_hplc_list_df.xlsx")
 #### Data prepping
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Trace metal data
+
+metal <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Trace metal/Trace metal data.xlsx")
+
 p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization_NewFileName.xlsx"
 
 metal_list <- list()
@@ -467,28 +467,30 @@ for (i in 1:length(excel_sheets(path = p))) {
                     by = 'File')
   
   metal_list[[i]] <- dat %>% 
-    select(., -c(File, Type)) %>%
-    relocate(NewFile, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
-    pivot_longer(., cols = 5:ncol(.), names_to = "Metal_component", values_to = "Values")
+    select(., -c(Type)) %>%
+    relocate(File, NewFile, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
+    pivot_longer(., cols = 6:ncol(.), names_to = "Metal_component", values_to = "Values") %>% 
+    # Since each sample are run in triplicates, the mean or median of the 3 reps are calculated for each type of USE-..
+    group_by(NewFile, Metal_component) %>% 
+    summarise(across(Values, stats::median)) # base::mean
 }
 ```
 
-#### 1. What are the Top10 metal with highest Concen. in each sample?
+#### 1. What are the Top metal with highest Concen. in each sample?
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-newmetal <- metal %>% column_to_rownames(., var = "File")
+
+newmetal <- metal_list[[1]] %>% tidyr::pivot_wider(names_from = Metal_component, values_from = Values) %>% column_to_rownames(., var = "NewFile")
 
 # Replace all NA in data frame with 0
 newmetal[is.na(newmetal)] <- 0
 
-# Extract Top 10 metal with highest concen for each sample
+# For each sample, Extract Top 10 metal with highest concen.
 top_metal <- list()
 for (row in 1:nrow(newmetal)) {
   top_metal[[row]] <- colnames(newmetal)[order(as.numeric(newmetal[row,]), decreasing = TRUE)[1:10]]
 }
 
-# top10_metal <- bind_cols(top10_metal)
-# colnames(top10_metal) <- rownames(newmetal)
 topmetal_list <- list()
 i <- 1
 for (file in unique(metal_list[[1]]$NewFile)) {
@@ -510,7 +512,7 @@ ggplot(data = top_metal_plot, aes(x = NewFile, y = Values, fill = Metal_componen
   #                                        ymax = mean + sd, group = Metal_component), 
   #               position = position_dodge(width = 0.9), width = 0.25) +
   labs(title = "Stacked Bar Plot", x = "Sample", y = "Value",
-       fill = "Top 10 trace metal components") +
+       fill = "Top trace metal components") +
   theme_minimal(base_size = 20) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
@@ -1032,16 +1034,16 @@ factoextra::fviz_pca_biplot(res.pca,
 df_pca <- metal_list[[4]] %>%
   dplyr::select(NewFile, 
                 Metal_component,
-                Subcategory,
+                Suspected_Polymer,
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    Subcategory,
+    Category,
     Metal_component) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
   tidyr::pivot_wider(names_from =  Metal_component,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "Subcategory")
+  tibble::column_to_rownames(., var = "Category")
 
 # Replace all missing values with 0
 df_pca[is.na(df_pca)] <- 0
@@ -3465,6 +3467,64 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Subcatego
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 
 ```
+
+## Matching Wilcoxon significant compounds from HPLC data with suspect screening from EF
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+sus_scr <- readxl::read_xlsx(path = paste0(getwd(), "/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
+
+sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
+```
+
+### 1. With HCA
+### 2. Without HCA
+#### 2.1 Polymer Type
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+## NA imputed
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+# Find in all_uniquec the compounds that match with suspects in all_unique with molecualr ions in the range of +- 0.0005
+
+for (row in all_unique) {
+  # Extract m/z
+  all_unique$mean_mz >= (all_unique$mean_mz)
+}
+```
+#### 2.2 Category
+#### 2.3 Subcategory
 
 ## Demo RF
 
