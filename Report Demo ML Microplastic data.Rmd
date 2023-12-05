@@ -99,20 +99,22 @@ comp_filter <- function(data) {
 setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/ATDGCMS")
 
 file_list1 <- list.files(pattern = '*.csv') %>%
-  .[!str_detect(., "Blank")] %>%
-  .[!str_detect(., "USE_08")] %>%
-  .[!str_detect(., "USE_10")] %>%
-  .[!str_detect(., "USE_16")] %>%
-  .[!str_detect(., "USE_17")] %>%
-  .[!str_detect(., "USE_18")] %>%
-  .[!str_detect(., "USE_19")] %>%
-  .[!str_detect(., "USE_20")] %>%
-  .[!str_detect(., "USE_21")]
+  .[!str_detect(., "2022")]
+  # .[!str_detect(., "USE_08")] %>%
+  # .[!str_detect(., "USE_10")] %>%
+  # .[!str_detect(., "USE_16")] %>%
+  # .[!str_detect(., "USE_17")] %>%
+  # .[!str_detect(., "USE_18")] %>%
+  # .[!str_detect(., "USE_19")] %>%
+  # .[!str_detect(., "USE_20")] %>%
+  # .[!str_detect(., "USE_21")]
   # .[!str_detect(., "_USE")] # exclude environmental samples
 
 # Blank samples 
+# setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/ATDGCMS/Blank_ATDGCMS")
+  
 blank_list1 <- list.files(pattern = '*.csv') %>%
-  .[str_detect(., "Blank")]
+  .[str_detect(., "2022-")]
 
 # Import samples to list
 df_list1_step1.1 <- purrr::map(file_list1, read.csv)
@@ -184,7 +186,7 @@ df1 <- bind_rows(list1_remaining_area) %>%
   mutate(type = "Sample")
 
 df_blank1 <- df_blank1 %>%
-  select(-c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions")) %>%
+  select(c("Area", "File", "m.z", "RT")) %>%
   mutate(type = "Blanks")
 
 combined_df1 <- rbind(df1, df_blank1) %>% 
@@ -247,6 +249,7 @@ for (comp in unique(combined_df1_grouped$collapsed_compound)) {
   else {
     # Calculate avg_blank for that compound across all blanks
     avg_blank <- mean(temp[which(temp$type == "Blanks"),]$Area)
+    # Then take out all the compound belong to blank from the df
     temp <- temp[which(temp$type != "Blanks"),]
     # iterate through each sample
     for (sample in unique(temp$File)) {
@@ -471,7 +474,7 @@ for (i in 1:length(excel_sheets(path = p))) {
     relocate(File, NewFile, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
     pivot_longer(., cols = 6:ncol(.), names_to = "Metal_component", values_to = "Values") %>% 
     # Since each sample are run in triplicates, the mean or median of the 3 reps are calculated for each type of USE-..
-    group_by(NewFile, Metal_component) %>% 
+    group_by(File, Metal_component) %>% 
     summarise(across(Values, stats::median)) # base::mean
 }
 ```
@@ -480,7 +483,7 @@ for (i in 1:length(excel_sheets(path = p))) {
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 
-newmetal <- metal_list[[1]] %>% tidyr::pivot_wider(names_from = Metal_component, values_from = Values) %>% column_to_rownames(., var = "NewFile")
+newmetal <- metal_list[[1]] %>% tidyr::pivot_wider(names_from = Metal_component, values_from = Values) %>% column_to_rownames(., var = "File")
 
 # Replace all NA in data frame with 0
 newmetal[is.na(newmetal)] <- 0
@@ -493,8 +496,8 @@ for (row in 1:nrow(newmetal)) {
 
 topmetal_list <- list()
 i <- 1
-for (file in unique(metal_list[[1]]$NewFile)) {
-  topmetal_list[[i]] <- metal_list[[1]] %>% filter(., NewFile %in% file) %>% filter(., Metal_component %in% top_metal[[i]])
+for (file in unique(metal_list[[1]]$File)) {
+  topmetal_list[[i]] <- metal_list[[1]] %>% filter(., File %in% file) %>% filter(., Metal_component %in% top_metal[[i]])
   i <- i + 1
 }
 
@@ -506,7 +509,7 @@ top_metal_plot <- bind_rows(topmetal_list)
 #   group_by(NewFile, Metal_component) %>%
 #   summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
 
-ggplot(data = top_metal_plot, aes(x = NewFile, y = Values, fill = Metal_component)) +
+ggplot(data = top_metal_plot, aes(x = File, y = Values, fill = Metal_component)) +
   geom_bar(stat = "identity") +
   # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
   #                                        ymax = mean + sd, group = Metal_component), 
@@ -515,6 +518,7 @@ ggplot(data = top_metal_plot, aes(x = NewFile, y = Values, fill = Metal_componen
        fill = "Top trace metal components") +
   theme_minimal(base_size = 20) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
 ```
 
 #### 2.1 Among the top25 trace metal, if the metal is shared among different samples, is there a significant difference in the concentration of these trace metals?
@@ -641,18 +645,18 @@ For GC only data, threshold \>= length(unique(gc_list[[1]]\$NewFile))/2) produce
 For combined GC/HPLC only data, threshold \>= length(unique(gc_hplc_list[[1]]\$NewFile))/4) produces PCA that can separate plastic ball into 1 cluster and the rest.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-comp_vec <- c()
-for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
-  idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
-  if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/4)) {
-    comp_vec <- c(comp_vec, comp)
-  }
-}
+# comp_vec <- c()
+# for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
+#   idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
+#   if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/4)) {
+#     comp_vec <- c(comp_vec, comp)
+#   }
+# }
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_hplc_list[[1]] %>%
-  filter(., collapsed_compound %in% comp_vec) %>%
+df_pca <- gc_list[[1]] %>%
+  # filter(., collapsed_compound %in% comp_vec) %>%
   dplyr::select(NewFile, 
                 collapsed_compound, 
                 Values) %>%
@@ -667,8 +671,8 @@ df_pca <- gc_hplc_list[[1]] %>%
 
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -787,7 +791,7 @@ Since Suspected Polymer is the same for all 4 different categorization "grouping
 Also, here for polymer type, we remove all the "Type == Unknown", which are just a few samples in the data set and does not provide good information for plastic categorization in general.
 
 ```{r , echo=FALSE, warning = FALSE, message = FALSE}
-df_pca <- hplc_list[[1]] %>%
+df_pca <- gc_list[[1]] %>%
   # filter(., collapsed_compound %in% comp_vec) %>%
   dplyr::select(NewFile, 
                 Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
@@ -805,8 +809,8 @@ df_pca <- hplc_list[[1]] %>%
 
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(hplc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(hplc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca,
@@ -871,7 +875,7 @@ for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_hplc_list[[1]] %>%
+df_pca <- gc_list[[1]] %>%
   filter(., collapsed_compound %in% comp_vec) %>%
   dplyr::select(NewFile, 
                 Subcategory,
@@ -888,8 +892,8 @@ df_pca <- gc_hplc_list[[1]] %>%
 
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca, 
@@ -930,10 +934,10 @@ factoextra::fviz_pca_biplot(res.pca,
 #                  legendIconSize = 6)
 ```
 
-##### "Category"
+##### "Category" --  4 different categorization schemes
 
 ```{r , echo=FALSE, warning = FALSE}
-df_pca <- gc_hplc_list[[2]] %>%
+df_pca <- gc_list[[1]] %>%
   dplyr::select(NewFile, 
                 Category,
                 collapsed_compound, 
@@ -949,8 +953,8 @@ df_pca <- gc_hplc_list[[2]] %>%
 
 for (r in 1:nrow(df_pca)) {
   df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_hplc_list[[2]]$Values)[1]/100000,
-                                                            max = sort(gc_hplc_list[[2]]$Values)[2]/100000)
+                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
+                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
 }
 
 res.pca <- FactoMineR::PCA(df_pca, 
