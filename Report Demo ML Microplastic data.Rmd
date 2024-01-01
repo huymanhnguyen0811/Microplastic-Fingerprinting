@@ -4645,7 +4645,7 @@ ggplot(data = mydat) +
 
 ## CONCLUSION SVM ON COMBINATION OF ANALYTICAL DATA
 
-#### =\> The same problem with RF and GBM: Almost ALL of the classes are misclassified as Food contact material -\_\_-
+#### =\> The same problem with RF and GBM: Almost ALL of the classes are misclassified as Food contact material -\__\-
 
 ## Demo Multinomial Logistic Regression
 
@@ -4679,6 +4679,18 @@ caret.multinomlog.result <- function(dat, split.ratio){
   # Prediction results
   pred_res <- round(predict(plastic_multinomlog_mod, newdata = plastic_tst, type = "prob"), 5)
   
+  # Creating the Confusion Matrix
+  cm <- confusionMatrix(pred_res, plastic_tst)
+  print(cm)
+  
+  # Visualizing the Confusion Matrix
+  ggplot(cm$table, aes(Prediction, Reference)) +
+    geom_tile(aes(fill = Freq), colour = "white") +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    geom_text(aes(label = sprintf("%0.0f", Freq)), vjust = 1) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
   # Interpreting variable importance for multinomial logistic regression - `nnet::multinom()` and `caret::varImp()`
   # https://stackoverflow.com/questions/60060292/interpreting-variable-importance-for-multinomial-logistic-regression-nnetmu
   varimp <- caret::varImp(plastic_multinomlog_mod)
@@ -4693,12 +4705,12 @@ caret.multinomlog.result <- function(dat, split.ratio){
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 df <- gc_list[[2]] %>%
-  dplyr::select(File, Category, collapsed_compound, Values) %>%
+  dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, Category, collapsed_compound) %>%
+  group_by(File, Category, Feature) %>%
   summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
+  pivot_wider(names_from = Feature, values_from = Values) %>%
   column_to_rownames(., var = "File")
 
 for (r in 1:nrow(df)) {
@@ -4818,12 +4830,12 @@ ggplot(data = mydat) +
 
 ```{r, echo=FALSE, warning = FALSE}
 df <- hplc_list[[2]] %>%
-  dplyr::select(File, Category, collapsed_compound, Values) %>%
+  dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, Category, collapsed_compound) %>%
+  group_by(File, Category, Feature) %>%
   summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
+  pivot_wider(names_from = Feature, values_from = Values) %>%
   column_to_rownames(., var = "File")
 
 for (r in 1:nrow(df)) {
@@ -4941,22 +4953,65 @@ ggplot(data = mydat) +
 #### Original data
 
 ```{r, echo=FALSE, warning = FALSE}
-df <- gc_hplc %>%
-  dplyr::select(File, product_cat, collapsed_compound, Values) %>%
-  mutate(product_cat = factor(product_cat, levels = unique(product_cat))) %>%
+df <- gc_hplc_list[[1]] %>%
+  dplyr::select(File, Category, Feature, Values) %>%
+  mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, product_cat, collapsed_compound) %>%
+  group_by(File, Category, Feature) %>%
   summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
+  pivot_wider(names_from = Feature, values_from = Values) %>%
   column_to_rownames(., var = "File")
 
 for (r in 1:nrow(df)) {
-  df[r, which(base::is.na(df[r,]))] <- runif(length(which(base::is.na(df[r,]))),
-                                             min = sort(gc_hplc$Values)[1],
-                                             max = sort(gc_hplc$Values)[2])
+  df[r, which(base::is.na(df[r,]))] <- 0 
+  # runif(length(which(base::is.na(df[r,]))),
+  #                                            min = sort(gc_hplc_list[[1]]$Values)[1],
+  #                                            max = sort(gc_hplc_list[[1]]$Values)[2])
 }
 
-gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.6)
+set.seed(1234)
+plastic_idx <- caret::createDataPartition(df$Category, p = 0.5, list = F)
+plastic_trn <- df[plastic_idx, ] %>%
+  relocate(Category, .after = 1)
+plastic_tst <- df[-plastic_idx, ] %>%
+  relocate(Category, .after = 1)
+
+plastic_multinomlog_mod <- caret::train(
+  Category ~ .,
+  data = plastic_trn,
+  method = "multinom", # Penalized Multinomial Regression -> https://remiller1450.github.io/s230f19/caret3.html
+  trControl = trainControl(method = "cv", # repeatedcv",
+                           # number = 2,
+                           # repeats = 3, # for repeated k-fold cv only
+                           verboseIter = TRUE
+  ),
+  trace = FALSE,
+  MaxNWts = 8 * (ncol(plastic_trn)) # maximum allowable number of weights
+)
+
+# Prediction results
+pred_res <- round(predict(plastic_multinomlog_mod, newdata = plastic_tst, type = "prob"), 5)
+
+# Extract the prediction label with highest probability for each sample in test set
+max_columns <- factor(unlist(apply(pred_res, 1, function(x) names(pred_res)[which.max(x)]),
+                             recursive = FALSE, use.names = FALSE)
+                      , levels = unique(plastic_tst$Category)
+                      )
+
+# Creating the Confusion Matrix
+cm <- caret::confusionMatrix(max_columns, plastic_tst$Category)
+print(cm)
+
+# Visualizing the Confusion Matrix
+ggplot(as.data.frame(cm$table), aes(Reference, Prediction)) +
+  geom_tile(aes(fill = Freq), colour = "white") +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  geom_text(aes(label = sprintf("%0.0f", Freq)), vjust = 1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+
+# gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.6)
 
 # Plot top 20 variable important
 varImp <- gc_hplc.multinomlog.result[[2]]$importance %>% 
