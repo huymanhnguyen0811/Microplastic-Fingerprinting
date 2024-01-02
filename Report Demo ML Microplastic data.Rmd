@@ -4649,7 +4649,7 @@ ggplot(data = mydat) +
 
 ## Demo Multinomial Logistic Regression
 
-```{r, echo=FALSE, warning = FALSE}
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
 library(class)
 library(caret)
 library(nnet)
@@ -4657,21 +4657,23 @@ library(nnet)
 ## Link: https://stats.oarc.ucla.edu/r/dae/multinomial-logistic-regression/
 
 # PArtitioning train&test sets / training / predict on test set
-caret.multinomlog.result <- function(dat, split.ratio){
+caret.multinomlog.result <- function(df, split.ratio){
   set.seed(1234)
-  plastic_idx <- caret::createDataPartition(dat$Category, p = split.ratio, list = F)
-  plastic_trn <- dat[plastic_idx, ]
-  plastic_tst <- dat[-plastic_idx, ]  
+  plastic_idx <- caret::createDataPartition(df$Category, p = split.ratio, list = F)
+  plastic_trn <- df[plastic_idx, ] %>%
+    relocate(Category, .after = 1)
+  plastic_tst <- df[-plastic_idx, ] %>%
+    relocate(Category, .after = 1)
   
   plastic_multinomlog_mod <- caret::train(
     Category ~ .,
     data = plastic_trn,
     method = "multinom", # Penalized Multinomial Regression -> https://remiller1450.github.io/s230f19/caret3.html
-    trControl = trainControl(method = "cv", # repeatedcv", 
-                             number = 5,
-                             # repeats = 3, # for repeated k-fold cv only 
-                             verboseIter = TRUE
-                             ),
+    trControl = caret::trainControl(method = "cv", # "cv", repeatedcv",
+                                    number = 2,
+                                    # repeats = 1, # for repeated k-fold cv only
+                                    verboseIter = TRUE
+    ),
     trace = FALSE,
     MaxNWts = 8 * (ncol(plastic_trn)) # maximum allowable number of weights
   )
@@ -4679,12 +4681,17 @@ caret.multinomlog.result <- function(dat, split.ratio){
   # Prediction results
   pred_res <- round(predict(plastic_multinomlog_mod, newdata = plastic_tst, type = "prob"), 5)
   
+  # Extract the prediction label with highest probability for each sample in test set
+  max_columns <- factor(unlist(apply(pred_res, 1, function(x) names(pred_res)[which.max(x)]),
+                               recursive = FALSE, use.names = FALSE)
+                        , levels = unique(plastic_tst$Category)
+  )
+  
   # Creating the Confusion Matrix
-  cm <- confusionMatrix(pred_res, plastic_tst)
-  print(cm)
+  caret::confusionMatrix(max_columns, plastic_tst$Category)
   
   # Visualizing the Confusion Matrix
-  ggplot(cm$table, aes(Prediction, Reference)) +
+  ggplot(as.data.frame(cm$table), aes(Reference, Prediction)) +
     geom_tile(aes(fill = Freq), colour = "white") +
     scale_fill_gradient(low = "white", high = "steelblue") +
     geom_text(aes(label = sprintf("%0.0f", Freq)), vjust = 1) +
@@ -4953,7 +4960,7 @@ ggplot(data = mydat) +
 #### Original data
 
 ```{r, echo=FALSE, warning = FALSE}
-df <- gc_hplc_list[[1]] %>%
+df <- gc_hplc_list[[2]] %>%
   dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
@@ -4969,84 +4976,42 @@ for (r in 1:nrow(df)) {
   #                                            max = sort(gc_hplc_list[[1]]$Values)[2])
 }
 
-set.seed(1234)
-plastic_idx <- caret::createDataPartition(df$Category, p = 0.5, list = F)
-plastic_trn <- df[plastic_idx, ] %>%
-  relocate(Category, .after = 1)
-plastic_tst <- df[-plastic_idx, ] %>%
-  relocate(Category, .after = 1)
+gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.5)
 
-plastic_multinomlog_mod <- caret::train(
-  Category ~ .,
-  data = plastic_trn,
-  method = "multinom", # Penalized Multinomial Regression -> https://remiller1450.github.io/s230f19/caret3.html
-  trControl = trainControl(method = "cv", # repeatedcv",
-                           # number = 2,
-                           # repeats = 3, # for repeated k-fold cv only
-                           verboseIter = TRUE
-  ),
-  trace = FALSE,
-  MaxNWts = 8 * (ncol(plastic_trn)) # maximum allowable number of weights
-)
-
-# Prediction results
-pred_res <- round(predict(plastic_multinomlog_mod, newdata = plastic_tst, type = "prob"), 5)
-
-# Extract the prediction label with highest probability for each sample in test set
-max_columns <- factor(unlist(apply(pred_res, 1, function(x) names(pred_res)[which.max(x)]),
-                             recursive = FALSE, use.names = FALSE)
-                      , levels = unique(plastic_tst$Category)
-                      )
-
-# Creating the Confusion Matrix
-cm <- caret::confusionMatrix(max_columns, plastic_tst$Category)
-print(cm)
-
-# Visualizing the Confusion Matrix
-ggplot(as.data.frame(cm$table), aes(Reference, Prediction)) +
-  geom_tile(aes(fill = Freq), colour = "white") +
-  scale_fill_gradient(low = "white", high = "steelblue") +
-  geom_text(aes(label = sprintf("%0.0f", Freq)), vjust = 1) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-
-# gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.6)
-
-# Plot top 20 variable important
-varImp <- gc_hplc.multinomlog.result[[2]]$importance %>% 
-  rownames_to_column(., var = "comp") %>%
-  filter(., Overall > 50) %>% # this is a random threshold
-  arrange(Overall)
-
-ggplot(data = varImp, 
-       aes(x=Overall,y=comp)) +
-  geom_bar(position="dodge",stat="identity",width = 0, color = "black") + 
-  geom_point(color='skyblue') + 
-  xlab(" Importance Score")+
-  ggtitle("Variable Importance") + 
-  theme(plot.title = element_text(hjust = 0.5)) +
-  theme(panel.background = element_rect(fill = 'white', colour = 'black'))
+# # Plot top 20 variable important
+# varImp <- gc_hplc.multinomlog.result[[2]]$importance %>% 
+#   rownames_to_column(., var = "comp") %>%
+#   filter(., Overall > 50) %>% # this is a random threshold
+#   arrange(Overall)
+# 
+# ggplot(data = varImp, 
+#        aes(x=Overall,y=comp)) +
+#   geom_bar(position="dodge",stat="identity",width = 0, color = "black") + 
+#   geom_point(color='skyblue') + 
+#   xlab(" Importance Score")+
+#   ggtitle("Variable Importance") + 
+#   theme(plot.title = element_text(hjust = 0.5)) +
+#   theme(panel.background = element_rect(fill = 'white', colour = 'black'))
 
 
-# Make bar graph of prediction probability
-plot.dat <- function(dat) {
-  newdat <- as.data.frame(dat) %>%
-    tibble::rownames_to_column(., var = "File") %>%
-    tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "product_cat", values_to = "prob")
-  return(newdat)
-}   
-
-mydat <- plot.dat(gc_hplc.multinomlog.result[[1]])
-
-ggplot(data = mydat) + 
-  geom_col(aes(x = File, y = prob, fill = product_cat), 
-           position = "dodge" # separating stacking prob cols
-  ) +
-  scale_fill_brewer(palette = "Set2") +
-  scale_y_continuous(n.breaks = 10) +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90))
+# # Make bar graph of prediction probability
+# plot.dat <- function(dat) {
+#   newdat <- as.data.frame(dat) %>%
+#     tibble::rownames_to_column(., var = "File") %>%
+#     tidyr::pivot_longer(., cols = 2:ncol(.), names_to = "product_cat", values_to = "prob")
+#   return(newdat)
+# }   
+# 
+# mydat <- plot.dat(gc_hplc.multinomlog.result[[1]])
+# 
+# ggplot(data = mydat) + 
+#   geom_col(aes(x = File, y = prob, fill = product_cat), 
+#            position = "dodge" # separating stacking prob cols
+#   ) +
+#   scale_fill_brewer(palette = "Set2") +
+#   scale_y_continuous(n.breaks = 10) +
+#   theme_bw() + 
+#   theme(axis.text.x = element_text(angle = 90))
 ```
 
 #### PCAtools - merged df
