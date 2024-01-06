@@ -465,7 +465,7 @@ for (i in 1:nrow(metal)) {
 }
 
 # Merge with Sample Categorization information
-metal_list <- list()
+icp_list <- list()
 
 # Merge Categorization schemes with Trace metal data
 for (i in 1:length(excel_sheets(path = p))) {
@@ -478,24 +478,30 @@ for (i in 1:length(excel_sheets(path = p))) {
                     y = sampinfo %>% select(., -NewFile), 
                     by = 'File')
   
-  metal_list[[i]] <- dat %>% 
+  icp_list[[i]] <- dat %>% 
     select(., -c(Type)) %>%
     relocate(File, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
     pivot_longer(., cols = 5:ncol(.), names_to = "Feature", values_to = "Values")
 
 }
 
-# writexl::write_xlsx(x = metal_list, path = "icp_list_df.xlsx")
+writexl::write_xlsx(x = icp_list, path = "icp_list_df.xlsx")
 ```
 
 ### Combine Trace metal data with GC & HPLC data
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+gc_icp_list <- list()
+hplc_icp_list <- list()
 gc_hplc_icp_list <- list()
-for (i in 1:length(gc_hplc_list)) {
-  gc_hplc_icp_list[[i]] <- rbind(gc_hplc_list[[i]] %>% select(., -c(m.z, RT)), metal_list[[i]])
+for (i in 1:4) {
+  gc_icp_list[[i]] <- rbind(gc_list[[i]] %>% select(., -c(m.z, RT)), icp_list[[i]])
+  hplc_icp_list[[i]] <- rbind(hplc_list[[i]] %>% select(., -c(m.z, RT)), icp_list[[i]])
+  gc_hplc_icp_list[[i]] <- rbind(gc_hplc_list[[i]] %>% select(., -c(m.z, RT)), icp_list[[i]])
 }
 
-# writexl::write_xlsx(x = gc_hplc_icp_list, path = "gc_hplc_icp_list_df.xlsx")
+writexl::write_xlsx(x = gc_icp_list, path = "gc_icp_list_df.xlsx")
+writexl::write_xlsx(x = hplc_icp_list, path = "hplc_icp_list_df.xlsx")
+writexl::write_xlsx(x = gc_hplc_icp_list, path = "gc_hplc_icp_list_df.xlsx")
 ```
 
 #### 1. What are the Top metal with highest Concen. in each sample?
@@ -549,17 +555,6 @@ ggplot(data = top_metal_plot, aes(x = File, y = Values, fill = Metal_component))
 #### 2.2 Among the top25 trace metal, what are the metal that uniquely occur in just 1 sample?
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-```
-
-### Combining Trace Metal data with GC&HPLCdata - TBA
-
-```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# MAtch sample name with combined GC/HPLC
-for (i in gc_hplc_list) {
-  full_join(x = metal_list[[i]],
-            y = gc_hplc_list[[i]] %>% 
-              select(., -c(m.z, RT)), by = c("Suspected_Polymer", "Category", "Subcategory"))
-}
 ```
 
 ### ATDGCMS - Summary of Percent_Area in each sample of merge_df1 to know how much Percent_Area we lost when we force the compounds to appear in at least 2 product categories
@@ -1131,8 +1126,8 @@ hc_df <- as.matrix(hc_df[, -c(1,2)])
 
 for (r in 1:nrow(hc_df)) {
   hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(hplc_list[[1]]$Values)[1]/10000,
-                                                          max = sort(hplc_list[[1]]$Values)[2]/10000)
+                                                          min = sort(hplc_list[[1]]$Values)[1]/100000,
+                                                          max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
 rownames(hc_df) <- names
@@ -1148,18 +1143,6 @@ plot(hca_samp,
      # labels = FALSE, 
      hang = -1,
      main = "Combined GC - HPLC data_Samples")
-```
-
-### Clustering of compounds
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-## Dissimilarity Indices Calculated by vegan::vegdist()
-# hca_comp <- hclust(vegan::vegdist(t(as.matrix(hc_df)), 
-#                            method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
-# plot(hca,
-#      # labels = FALSE, 
-#      hang = -1,
-#      main = "Combined GC - HPLC data_Compounds")
 ```
 
 A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
@@ -1349,8 +1332,8 @@ for (n_clus in 1:nrow(df)) {
 }
 
 plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
-main = "K- Means Clustering Results with K = 2",
-xlab = "", ylab = "", pch = 20, cex = 2)
+     main = "K- Means Clustering Results with K = 2",
+     xlab = "", ylab = "", pch = 20, cex = 2)
 
 
 ```
@@ -4653,13 +4636,18 @@ ggplot(data = mydat) +
 library(class)
 library(caret)
 library(nnet)
+library(parallel)
+library(doParallel)
 
 ## Link: https://stats.oarc.ucla.edu/r/dae/multinomial-logistic-regression/
 
 # PArtitioning train&test sets / training / predict on test set
 caret.multinomlog.result <- function(df, split.ratio){
+  cl <- parallel::makeCluster(parallel::detectCores() - 1)
+  doParallel::registerDoParallel(cl)
+  
   set.seed(1234)
-  plastic_idx <- caret::createDataPartition(df$Category, p = split.ratio, list = F)
+  plastic_idx <- caret::createDataPartition(df$Category, p = 0.5, list = F)
   plastic_trn <- df[plastic_idx, ] %>%
     relocate(Category, .after = 1)
   plastic_tst <- df[-plastic_idx, ] %>%
@@ -4670,12 +4658,13 @@ caret.multinomlog.result <- function(df, split.ratio){
     data = plastic_trn,
     method = "multinom", # Penalized Multinomial Regression -> https://remiller1450.github.io/s230f19/caret3.html
     trControl = caret::trainControl(method = "cv", # "cv", repeatedcv",
-                                    number = 2,
+                                    # number = 1,
                                     # repeats = 1, # for repeated k-fold cv only
                                     verboseIter = TRUE
     ),
     trace = FALSE,
-    MaxNWts = 8 * (ncol(plastic_trn)) # maximum allowable number of weights
+    allowParallel= TRUE,
+    MaxNWts = 6*ncol(plastic_trn) # maximum allowable number of weights
   )
   
   # Prediction results
@@ -4688,7 +4677,8 @@ caret.multinomlog.result <- function(df, split.ratio){
   )
   
   # Creating the Confusion Matrix
-  caret::confusionMatrix(max_columns, plastic_tst$Category)
+  cm <- caret::confusionMatrix(max_columns, plastic_tst$Category)
+  print(cm)
   
   # Visualizing the Confusion Matrix
   ggplot(as.data.frame(cm$table), aes(Reference, Prediction)) +
@@ -4960,7 +4950,7 @@ ggplot(data = mydat) +
 #### Original data
 
 ```{r, echo=FALSE, warning = FALSE}
-df <- gc_hplc_list[[2]] %>%
+df <- gc_hplc_list[[1]] %>%
   dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
