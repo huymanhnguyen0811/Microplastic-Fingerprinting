@@ -952,16 +952,16 @@ factoextra::fviz_pca_biplot(res.pca,
 
 ```{r , echo=FALSE, warning = FALSE}
 df_pca <- gc_list[[1]] %>%
-  dplyr::select(NewFile, 
+  dplyr::select(File, 
                 Category,
-                collapsed_compound, 
+                Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
     Category,
-    collapsed_compound) %>%
+    Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
+  tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
   tibble::column_to_rownames(., var = "Category")
 
@@ -1700,6 +1700,13 @@ for (file in files) {
     sus_pol_combined[[sheet]] <- read_excel(path = file, sheet = sheet)
   }
 }
+
+unique_values_list <- lapply(sus_pol_combined, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique <- unique(unlist(unique_values_list))
+
+all_unique <- data.frame(comp=unique)
 ```
 
 ### Wilcoxon test without HCA clustering precursor
@@ -4950,7 +4957,10 @@ ggplot(data = mydat) +
 #### Original data
 
 ```{r, echo=FALSE, warning = FALSE}
-df <- gc_hplc_list[[1]] %>%
+cl <- parallel::makeCluster(parallel::detectCores() - 1)
+doParallel::registerDoParallel(cl)
+
+df <- gc_list[[2]] %>%
   dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
@@ -4966,7 +4976,53 @@ for (r in 1:nrow(df)) {
   #                                            max = sort(gc_hplc_list[[1]]$Values)[2])
 }
 
-gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.5)
+set.seed(1234)
+plastic_idx <- caret::createDataPartition(df$Category, p = 0.5, list = F)
+plastic_trn <- df[plastic_idx, ] %>%
+  relocate(Category, .after = 1)
+plastic_tst <- df[-plastic_idx, ] %>%
+  relocate(Category, .after = 1)
+
+table(plastic_trn$Category)
+table(plastic_tst$Category)
+
+system.time(plastic_multinomlog_mod <- caret::train(
+  Category ~ .,
+  data = plastic_trn,
+  method = "multinom", # Penalized Multinomial Regression -> https://remiller1450.github.io/s230f19/caret3.html
+  trControl = caret::trainControl(method = "cv", # "cv", repeatedcv",
+                                  # number = 1,
+                                  # repeats = 1, # for repeated k-fold cv only
+                                  verboseIter = TRUE
+  ),
+  trace = FALSE,
+  allowParallel= TRUE,
+  MaxNWts = 8*ncol(plastic_trn) # maximum allowable number of weights
+)
+)
+
+# Prediction results
+pred_res <- round(predict(plastic_multinomlog_mod, newdata = plastic_tst, type = "prob"), 5)
+
+# Extract the prediction label with highest probability for each sample in test set
+max_columns <- factor(unlist(apply(pred_res, 1, function(x) names(pred_res)[which.max(x)]),
+                             recursive = FALSE, use.names = FALSE)
+                      , levels = unique(plastic_tst$Category)
+)
+
+# Creating the Confusion Matrix
+cm <- caret::confusionMatrix(max_columns, plastic_tst$Category)
+print(cm)
+
+# Visualizing the Confusion Matrix
+ggplot(as.data.frame(cm$table), aes(Reference, Prediction)) +
+  geom_tile(aes(fill = Freq), colour = "white") +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  geom_text(aes(label = sprintf("%0.0f", Freq)), vjust = 1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# gc_hplc.multinomlog.result <- caret.multinomlog.result(df, split.ratio = 0.5)
 
 # # Plot top 20 variable important
 # varImp <- gc_hplc.multinomlog.result[[2]]$importance %>% 
