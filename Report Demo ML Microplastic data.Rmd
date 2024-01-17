@@ -4904,6 +4904,12 @@ sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
 ### 1. With HCA
 ### 2. Without HCA
 #### 2.1 Polymer Type level
+[Update 17 Jan 2024:]
+- For HPLC only data, we found the same 6 Suspects as with the "Category" level (Section 2.2 below)
+[1] "4-Aminophenol"                       "2,6-dimethyl-benzenamine"           
+[3] "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide"
+[5] "TEP / Triethyl phosphate"            "N,N'-diphenyl-guanidine" 
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -4930,26 +4936,54 @@ unique2 <- unique(unlist(unique_values_list2))
 
 all_unique <- data.frame(comp=unique(c(unique1, unique2)))
 
+# Adding RT and molecular ions info of significant compounds:
 mean_rt <- c()
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
 }
 
 all_unique$mean_rt <- mean_rt
 all_unique$mean_mz <- mean_mz
 
 # Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
-
 for (row in all_unique) {
   # Extract m/z
   all_unique$mean_mz >= (all_unique$mean_mz)
 }
+
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
+# Initiate list of df
+df_list <- list()
+i <- 1
+# Go through each row of sig.comp df
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- all_unique[idx,]$comp
+    df_list[[i]] <- temp
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr <- bind_rows(df_list)
+
+# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Polymer_Type_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
 
 #### 2.2 Category level
+[Update 17 Jan 2024:]
+- For HPLC only data, we found also 6 suspect hits that match with Eric Fries's suspect screening excel file:
+[1] "4-Aminophenol"                       "2,6-dimethyl-benzenamine"           
+[3] "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide"
+[5] "TEP / Triethyl phosphate"            "N,N'-diphenyl-guanidine" 
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
@@ -5008,7 +5042,7 @@ for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
 
 all_matching_sus_scr <- bind_rows(df_list)
 
-writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Category_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
 
 #### 2.3 Subcategory level
