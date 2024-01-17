@@ -4910,9 +4910,13 @@ sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
 [3] "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide"
 [5] "TEP / Triethyl phosphate"            "N,N'-diphenyl-guanidine" 
 
+- For GC + HPLC data, we found 4 suspects, all 4 of them are nested in the HPLC-only case ==> GC+HPLC found less suspect hit than HPLC-only data:
+[1] "2,6-dimethyl-benzenamine"    "Acetaminophen (Paracetemol)" "TEP / Triethyl phosphate"   
+[4] "N,N'-diphenyl-guanidine"
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed.xlsx")
 
 ## Missing observation
 sheet_names1 <- excel_sheets(path = p1)
@@ -4940,9 +4944,9 @@ all_unique <- data.frame(comp=unique(c(unique1, unique2)))
 mean_rt <- c()
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
+  idx <- base::which(gc_hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
 }
 
 all_unique$mean_rt <- mean_rt
@@ -5042,7 +5046,7 @@ for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
 
 all_matching_sus_scr <- bind_rows(df_list)
 
-writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Category_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Category_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
 
 #### 2.3 Subcategory level
