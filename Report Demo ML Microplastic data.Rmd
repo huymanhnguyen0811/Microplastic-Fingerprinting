@@ -485,6 +485,9 @@ for (i in 1:length(excel_sheets(path = p))) {
 
 }
 
+```
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 writexl::write_xlsx(x = icp_list, path = "icp_list_df.xlsx")
 ```
 
@@ -498,7 +501,9 @@ for (i in 1:4) {
   hplc_icp_list[[i]] <- rbind(hplc_list[[i]] %>% select(., -c(m.z, RT)), icp_list[[i]])
   gc_hplc_icp_list[[i]] <- rbind(gc_hplc_list[[i]] %>% select(., -c(m.z, RT)), icp_list[[i]])
 }
+```
 
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 writexl::write_xlsx(x = gc_icp_list, path = "gc_icp_list_df.xlsx")
 writexl::write_xlsx(x = hplc_icp_list, path = "hplc_icp_list_df.xlsx")
 writexl::write_xlsx(x = gc_hplc_icp_list, path = "gc_hplc_icp_list_df.xlsx")
@@ -1350,7 +1355,7 @@ plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
 
 ### Wilcoxon test with HCA result
 
-#### With Combined GC HPLC - DONE
+#### With Combined GC HPLC - TBA (ZeroImputed_Jan 15 2024) 
 
 Since for HCA, we operate on sample level and for each 4 subdf of each gc_hplc/gc/hplc_list, they all have the same sample column. Therefore, just using one of the subdf is enough.
 
@@ -1358,39 +1363,42 @@ Here, we want to find what is the optimal cut-off in HCA-cluster-tree 's Height 
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- gc_hplc_list[[1]] %>%
-  dplyr::select(NewFile,
-                collapsed_compound, 
+  # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
+  dplyr::select(File,
+                Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    NewFile,
-    collapsed_compound) %>%
+    File,
+    Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
+  tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "NewFile")
+  tibble::column_to_rownames(., var = "File")
 
 for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
-                                                          max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(gc_hplc_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(gc_hplc_list[[1]]$Values)[2]/100000)
 }
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
+print(hca$height)
 
-stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
-
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
-sig_comp <- list()
+# sig_comp_CO160_171 <- list()
+# sig_comp_CO130_159 <- list()
 
 # Main loop
-for (ele in 1:length(hca$height)) {
-  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
-  joined <- full_join(t, stats, by = "NewFile")
+for (ele in 130:159) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
   
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
@@ -1415,20 +1423,17 @@ for (ele in 1:length(hca$height)) {
         # calculating the p-value between each product category pair 
         pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
                                         joined[which(joined$group == p_2), c])$p.value
-        pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                                joined[which(joined$group == p_2), c])$p.value
         # assigning row information
         sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
                                      paste0(p_1, "&", p_2), 
-                                     pval_wilcox_test, 
-                                     pval_ks_test)
+                                     pval_wilcox_test)
       }
     }
     
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1438,90 +1443,253 @@ for (ele in 1:length(hca$height)) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result.xlsx")
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
 ```
 
 ###### Summary of significant compounds
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO151-162_06Dec2023.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO161-172_06Dec2023.xlsx")
+p <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC HPLC_by_Robust Aichitson_HCA clustering result.xlsx")
 
-sheet_names1 <- excel_sheets(path = p1)
-sus_pol_combined1 <- list()
+sheet_names <- excel_sheets(path = p)
+sus_pol_combined <- lapply(sheet_names, function(sheet) read_excel(path = p, sheet = sheet))
 
-for (sheet in sheet_names1) {
-  sus_pol_combined1[[sheet]] <- read_excel(path = p1, sheet = sheet)
-} 
+# Using lapply to get unique values from each data frame
+unique_values_list <- lapply(sus_pol_combined, function(df) unique(df$comp))
 
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- list()
+# Unlisting and then finding unique values across all data frames
+unique <- unique(unlist(unique_values_list))
 
-for (sheet in sheet_names2) {
-  sus_pol_combined2[[sheet]] <- read_excel(path = p2, sheet = sheet)
+all_unique <- data.frame(comp=unique)
+
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
 }
 
-all <- c(sus_pol_combined1, sus_pol_combined2)
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
 
-# # Using lapply to get unique values from each data frame
-# unique_values_list <- lapply(sus_pol_combined, function(df) unique(df$comp))
-# 
-# # Unlisting and then finding unique values across all data frames
-# unique <- unique(unlist(unique_values_list))
-# 
-# all_unique <- data.frame(comp=unique)
-# 
-# mean_rt <- c()
-# mean_mz <- c()
-# for (row in 1:nrow(all_unique)) {
-#   idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-#   mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-#   mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
-# }
-# 
-# all_unique$mean_rt <- mean_rt
-# all_unique$mean_mz <- mean_mz
-
-# writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_all_significant compounds.xlsx")
+writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_all_significant compounds.xlsx")
 ```
 
-#### With just GC - DONE
 
+#### With Combined GC ICP - TBA (ZeroImputed_Jan 15 2024) 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
-hc_df <- gc_list[[1]] %>%
-  dplyr::select(NewFile,
-                collapsed_compound, 
+hc_df <- gc_icp_list[[1]] %>%
+  # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
+  dplyr::select(File,
+                Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    NewFile,
-    collapsed_compound) %>%
+    File,
+    Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
+  tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "NewFile")
+  tibble::column_to_rownames(., var = "File")
 
 for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                          max = sort(gc_list[[1]]$Values)[2]/100000)
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(gc_icp_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(gc_icp_list[[1]]$Values)[2]/100000)
+}
+
+hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                    method = "robust.aitchison"))
+print(hca$height)
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
+
+# Initialize variables
+# sig_comp_CO160_171 <- list()
+# sig_comp_CO130_159 <- list()
+
+# Main loop
+for (ele in 130:159) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
+  
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
+  satisfied_sp <- c()
+  for (gr in unique(joined$group)) {
+    # if the group only have 1 member, then that group is excluded from wilcoxon test
+    if (sum(joined$group == gr) < 3) {
+      next
+    } else {
+      satisfied_sp <- c(satisfied_sp, gr)
+    }
+  }
+  
+  if (length(satisfied_sp) < 2) {
+    next
+  } else {
+    # Loop through each collapsed_compound (as columns)
+    
+    for (c in 3:ncol(joined)) {
+      # looping through the combinations of product categories 
+      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+        # extract the combinations of product category pairs
+        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
+        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+        # calculating the p-value between each product category pair 
+        pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
+                                        joined[which(joined$group == p_2), c])$p.value
+        # assigning row information
+        sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
+                                     paste0(p_1, "&", p_2), 
+                                     pval_wilcox_test)
+      }
+    }
+    
+    
+    sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
+    
+    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
+      filter(., adjusted_pvalue_holm < 0.05) %>%
+      arrange(adjusted_pvalue_holm)
+    
+    print(sp_df %>%
+            filter(., adjusted_pvalue_holm < 0.05) %>%
+            arrange(adjusted_pvalue_holm))
+  }
+}
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-ICP_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
+```
+
+#### With Combined HPLC ICP - TBA (ZeroImputed_Jan 15 2024) 
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+hc_df <- hplc_icp_list[[1]] %>%
+  # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
+  dplyr::select(File,
+                Feature, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    File,
+    Feature) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "File")
+
+for (r in 1:nrow(hc_df)) {
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(hplc_icp_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(hplc_icp_list[[1]]$Values)[2]/100000)
 }
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
 
+print(hca$height)
+
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
+
+# Initialize variables
+# sig_comp_CO160_171 <- list()
+# sig_comp_CO130_159 <- list()
+
+# Main loop
+for (ele in 130:159) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
+  
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
+  satisfied_sp <- c()
+  for (gr in unique(joined$group)) {
+    # if the group only have 1 member, then that group is excluded from wilcoxon test
+    if (sum(joined$group == gr) < 3) {
+      next
+    } else {
+      satisfied_sp <- c(satisfied_sp, gr)
+    }
+  }
+  
+  if (length(satisfied_sp) < 2) {
+    next
+  } else {
+    # Loop through each collapsed_compound (as columns)
+    
+    for (c in 3:ncol(joined)) {
+      # looping through the combinations of product categories 
+      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+        # extract the combinations of product category pairs
+        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
+        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+        # calculating the p-value between each product category pair 
+        pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
+                                        joined[which(joined$group == p_2), c])$p.value
+        # assigning row information
+        sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
+                                     paste0(p_1, "&", p_2), 
+                                     pval_wilcox_test)
+      }
+    }
+    
+    
+    sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
+    
+    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
+      filter(., adjusted_pvalue_holm < 0.05) %>%
+      arrange(adjusted_pvalue_holm)
+    
+    print(sp_df %>%
+            filter(., adjusted_pvalue_holm < 0.05) %>%
+            arrange(adjusted_pvalue_holm))
+  }
+}
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined HPLC-ICP_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
+```
+
+#### With just GC - TBA (ZeroImputed_Jan 15 2024) 
+
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+hc_df <- gc_list[[1]] %>%
+  # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
+  dplyr::select(File,
+                Feature, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    File,
+    Feature) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "File")
+
+for (r in 1:nrow(hc_df)) {
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(gc_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(gc_list[[1]]$Values)[2]/100000)
+}
+
+hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                    method = "robust.aitchison"))
+print(hca$height)
+
 stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
 
 
 # Initialize variables
-sig_comp <- list()
+# sig_comp_CO56_75 <- list()
+sig_comp_CO0_55<- list()
 
 # Main loop
-for (ele in 56:length(hca$height)) {
-  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
-  joined <- full_join(t, stats, by = "NewFile")
+for (ele in 6:55) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
   
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
@@ -1548,20 +1716,17 @@ for (ele in 56:length(hca$height)) {
       # calculating the p-value between each product category pair 
       pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
                                       joined[which(joined$group == p_2), c])$p.value
-      pval_ks_test <- ks.test(joined[which(joined$group == p_1), c],
-                              joined[which(joined$group == p_2), c])$p.value
       # assigning row information
       sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
                                    paste0(p_1, "&", p_2), 
-                                   pval_wilcox_test, 
-                                   pval_ks_test)
+                                   pval_wilcox_test)
     }
   }
   
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  sig_comp[[paste0("Cut height_", ele)]] <- sp_df %>%
+  sig_comp_CO0_55[[paste0("Cut height_", ele)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
@@ -1570,7 +1735,10 @@ for (ele in 56:length(hca$height)) {
     arrange(adjusted_pvalue_holm))
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_GC_by_Robust Aichitson_HCA clustering result.xlsx")
+# combine cut off dataframe
+sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_GC_by_Robust Aichitson_HCA clustering result_zeroimputed_15Jan2024.xlsx")
 ```
 
 ###### Summary of significant compounds
@@ -1607,31 +1775,33 @@ The code below run wilcoxcon test on NA imputed data frame and don't perform min
 
 After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data =\> 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
 
-#### With just HPLC - DONE
+#### With just HPLC - TBA (ZeroImputed_Jan 15 2024) 
+After cutoff element [[45]], we dont see anymore significant compound from Wilcoxon test
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- hplc_list[[1]] %>%
-  dplyr::select(NewFile,
-                collapsed_compound, 
+  dplyr::select(File,
+                Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    NewFile,
-    collapsed_compound) %>%
+    File,
+    Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
+  tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "NewFile")
+  tibble::column_to_rownames(., var = "File")
 
 for (r in 1:nrow(hc_df)) {
-  hc_df[r, which(base::is.na(hc_df[r,]))] <- stats::runif(length(which(base::is.na(hc_df[r,]))),
-                                                          min = sort(hplc_list[[1]]$Values)[1]/100000,
-                                                          max = sort(hplc_list[[1]]$Values)[2]/100000)
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(hplc_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-
+print(hca$height)
 stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
 
 
@@ -1639,15 +1809,15 @@ stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
 sig_comp <- list()
 
 # Main loop
-for (ele in 50:length(hca$height)) {
-  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "NewFile")
-  joined <- full_join(t, stats, by = "NewFile")
+for (ele in 35:44) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
   satisfied_sp <- c()
   for (gr in unique(joined$group)) {
-    # if the group only have 1 member, then that group is excluded from wilcoxon test
-    if (sum(joined$group == gr) < 2) {
+    # if the group less than 2 members, then that group is excluded from wilcoxon test b/c Wilcoxon required at least 3 members for significant calculation
+    if (sum(joined$group == gr) < 3) {
       next
     } else {
       satisfied_sp <- c(satisfied_sp, gr)
@@ -1689,32 +1859,98 @@ for (ele in 50:length(hca$height)) {
     arrange(adjusted_pvalue_holm))
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result.xlsx")
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO35-44_zeroimputed_s15Jan2024.xlsx")
 ```
 
-###### Summary of significant compounds - DONE
+#### With just ICP - TBA (ZeroImputed_Jan 15 2024) 
 
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/Wilcoxon test results")
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+hc_df <- icp_list[[1]] %>%
+  # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
+  dplyr::select(File,
+                Feature, 
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    File,
+    Feature) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var = "File")
 
-files <- list.files(pattern = '*.xlsx') %>%
-  .[str_detect(., "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO")]
-
-sus_pol_combined <- list()
-for (file in files) {
-  print(file)
-  sheet_names <- excel_sheets(path = paste0(getwd(), "/", file))
-  for (sheet in sheet_names) {
-    sus_pol_combined[[sheet]] <- read_excel(path = file, sheet = sheet)
-  }
+for (r in 1:nrow(hc_df)) {
+  hc_df[r, which(base::is.na(hc_df[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(hc_df[r,]))),
+  #                                                         min = sort(icp_list[[1]]$Values)[1]/100000,
+  #                                                         max = sort(icp_list[[1]]$Values)[2]/100000)
 }
 
-unique_values_list <- lapply(sus_pol_combined, function(df) unique(df$comp))
+hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
+                                    method = "robust.aitchison"))
+print(hca$height)
+stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
 
-# Unlisting and then finding unique values across all data frames
-unique <- unique(unlist(unique_values_list))
 
-all_unique <- data.frame(comp=unique)
+# Initialize variables
+# sig_comp_CO56_75 <- list()
+sig_comp_CO0_55<- list()
+
+# Main loop
+for (ele in 6:55) {
+  t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
+  joined <- full_join(t, stats, by = "File")
+  
+  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
+  satisfied_sp <- c()
+  for (gr in unique(joined$group)) {
+    # if the group only have 1 member, then that group is excluded from wilcoxon test
+    if (sum(joined$group == gr) < 3) {
+      next
+    } else {
+      satisfied_sp <- c(satisfied_sp, gr)
+    }
+  }
+  
+  if (length(satisfied_sp) < 2) {
+    next
+  } else {
+    
+  }
+  # Loop through each collapsed_compound (as columns)
+  
+  for (c in 3:ncol(joined)) {
+    # looping through the combinations of product categories 
+    for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+      # extract the combinations of product category pairs
+      p_1 <- utils::combn(satisfied_sp, 2)[1,col]
+      p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+      # calculating the p-value between each product category pair 
+      pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
+                                      joined[which(joined$group == p_2), c])$p.value
+      # assigning row information
+      sp_df[nrow(sp_df) + 1,] <- c(colnames(joined)[c], 
+                                   paste0(p_1, "&", p_2), 
+                                   pval_wilcox_test)
+    }
+  }
+  
+  
+  sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
+  
+  sig_comp_CO0_55[[paste0("Cut height_", ele)]] <- sp_df %>%
+    filter(., adjusted_pvalue_holm < 0.05) %>%
+    arrange(adjusted_pvalue_holm)
+  
+  print(sp_df %>%
+    filter(., adjusted_pvalue_holm < 0.05) %>%
+    arrange(adjusted_pvalue_holm))
+}
+
+# combine cut off dataframe
+sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
+
+writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_ICP_by_Robust Aichitson_HCA clustering result_zeroimputed_15Jan2024.xlsx")
 ```
 
 ### Wilcoxon test without HCA clustering precursor
@@ -4656,17 +4892,18 @@ print(sub_cat %>% arrange(comp))
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_ICP_data_by_Subcategory_NA imputed_zeroimputed_12Jan2024.xlsx")
 ```
 
-## Matching Wilcoxon significant compounds from HPLC data with suspect screening from EF
+### Matching HPLC Wilcoxon significant compounds from HPLC suspect screening hits -=EF
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-sus_scr <- readxl::read_xlsx(path = paste0(getwd(), "/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
+sus_scr <- readxl::read_xlsx(path = paste0(getwd(), "/data/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
 
+# Remove all legacy empty rows from Eric's Excel file 
 sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
 ```
 
 ### 1. With HCA
 ### 2. Without HCA
-#### 2.1 Polymer Type
+#### 2.1 Polymer Type level
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
 p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
@@ -4704,15 +4941,80 @@ for (row in 1:nrow(all_unique)) {
 all_unique$mean_rt <- mean_rt
 all_unique$mean_mz <- mean_mz
 
-# Find in all_uniquec the compounds that match with suspects in all_unique with molecualr ions in the range of +- 0.0005
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
 
 for (row in all_unique) {
   # Extract m/z
   all_unique$mean_mz >= (all_unique$mean_mz)
 }
 ```
-#### 2.2 Category
-#### 2.3 Subcategory
+
+#### 2.2 Category level
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+## NA imputed
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+
+# Adding RT and molecular ions info of significant compounds:
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
+# Initiate list of df
+df_list <- list()
+i <- 1
+# Go through each row of sig.comp df
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- all_unique[idx,]$comp
+    df_list[[i]] <- temp
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr <- bind_rows(df_list)
+
+writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+```
+
+#### 2.3 Subcategory level
+[UPDATE 17 Jan 2024:] 
+- For HPLC only resulted in ZERO significant compounds from Wilcoxon tests so we don't include it in this summary
+- For GC + HPLC data, there are 4 compounds but they all ATDGCMS so we also don't include it in this summary 
 
 ## Demo RF
 
@@ -5962,10 +6264,10 @@ icp_list (1,2,3,4): DONE
 gc_icp_list (1,2,3,4): DONE
 
 ```{r, echo=FALSE, warning = FALSE}
-cl <- parallel::makeCluster(parallel::detectCores() - 1)
-doParallel::registerDoParallel(cl)
+# cl <- parallel::makeCluster(parallel::detectCores() /2)
+# doParallel::registerDoParallel(cl)
 
-df <- gc_icp_list[[1]] %>%
+df <- hplc_list[[2]] %>%
   dplyr::select(File, Category, Feature, Values) %>%
   mutate(Category = factor(Category, levels = unique(Category))) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
@@ -6001,8 +6303,8 @@ system.time(plastic_multinomlog_mod <- caret::train(
                                   verboseIter = TRUE
   ),
   trace = FALSE,
-  allowParallel= TRUE,
-  MaxNWts = 6*ncol(plastic_trn) # maximum allowable number of weights
+  # allowParallel= TRUE,
+  MaxNWts = 9*ncol(plastic_trn) # maximum allowable number of weights
 )
 )
 
