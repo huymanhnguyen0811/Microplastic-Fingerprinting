@@ -148,7 +148,7 @@ df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
 
-# STEP 1.2B Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
+# STEP 1.2 Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
 
 # ATDGCMS
 
@@ -224,6 +224,18 @@ combined_df2_grouped <- grouping_comp(combined_df2,
                                       rtthres = 0.1,
                                       mzthres = 0.0005,
                                       type = "HPLCTOFMS")
+
+# Step 1.3C: Remove all the benchmark compounds for HPLC (4) and GC (1 - Toluene)
+benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+benchmark_idx <- c()
+# Search for compound in combined_df2_grouped that fall in the window of benchmark' molecular ions
+for (mz in benchmark_mz) {
+  idx <- which(combined_df2_grouped$m.z <= (mz + 0.0005) & combined_df2_grouped$m.z >= (mz - 0.0005))
+  # collect all these indices of benchmark compounds
+  benchmark_idx <- c(benchmark_idx, idx)
+}
+
+combined_df2_grouped <- combined_df2_grouped[-benchmark_idx,]
 
 # Step 2: Readjust compound peak area (sample) by average blank peak area ======================
 
@@ -1385,16 +1397,15 @@ for (r in 1:nrow(hc_df)) {
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-print(hca$height)
 
 stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
 # sig_comp_CO160_171 <- list()
-# sig_comp_CO130_159 <- list()
+sig_comp_CO120_159 <- list()
 
 # Main loop
-for (ele in 130:159) {
+for (ele in 120:159) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1433,7 +1444,7 @@ for (ele in 130:159) {
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO120_159[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1443,7 +1454,7 @@ for (ele in 130:159) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO120_159, path = "Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO120-159_zeroimputed_15Jan2024.xlsx")
 ```
 
 ###### Summary of significant compounds
@@ -1502,15 +1513,15 @@ for (r in 1:nrow(hc_df)) {
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-print(hca$height)
+
 stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
 # sig_comp_CO160_171 <- list()
-# sig_comp_CO130_159 <- list()
+sig_comp_CO60_98 <- list()
 
 # Main loop
-for (ele in 130:159) {
+for (ele in 60:98) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1549,7 +1560,7 @@ for (ele in 130:159) {
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO60_98[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1559,7 +1570,7 @@ for (ele in 130:159) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined GC-ICP_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO60_98, path = "Wilcoxon_test_Combined GC-ICP_by_Robust Aichitson_HCA clustering result_CO60-98_zeroimputed_15Jan2024.xlsx")
 ```
 
 #### With Combined HPLC ICP - TBA (ZeroImputed_Jan 15 2024) 
@@ -1588,16 +1599,14 @@ for (r in 1:nrow(hc_df)) {
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
 
-print(hca$height)
-
 stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
 # sig_comp_CO160_171 <- list()
-# sig_comp_CO130_159 <- list()
+sig_comp_CO100_130 <- list()
 
 # Main loop
-for (ele in 130:159) {
+for (ele in 100:130) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1636,7 +1645,7 @@ for (ele in 130:159) {
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp_CO130_159[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO100_130[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1646,10 +1655,11 @@ for (ele in 130:159) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_Combined HPLC-ICP_by_Robust Aichitson_HCA clustering result_CO130-159_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO100_130, path = "Wilcoxon_test_Combined HPLC-ICP_by_Robust Aichitson_HCA clustering result_CO100-130_zeroimputed_15Jan2024.xlsx")
 ```
 
-#### With just GC - TBA (ZeroImputed_Jan 15 2024) 
+#### With just GC - TBA (ZeroImputed_Jan 15 2024)
+(Update 18 Jan 2024:) To maximise runtime, this will be run on Huy's Laptop
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- gc_list[[1]] %>%
@@ -1675,17 +1685,16 @@ for (r in 1:nrow(hc_df)) {
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-print(hca$height)
 
-stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 
 # Initialize variables
 # sig_comp_CO56_75 <- list()
-sig_comp_CO0_55<- list()
+sig_comp_CO1_63<- list()
 
 # Main loop
-for (ele in 6:55) {
+for (ele in 1:63) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1726,7 +1735,7 @@ for (ele in 6:55) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  sig_comp_CO0_55[[paste0("Cut height_", ele)]] <- sp_df %>%
+  sig_comp_CO1_63[[paste0("Cut height_", ele)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
@@ -1736,9 +1745,9 @@ for (ele in 6:55) {
 }
 
 # combine cut off dataframe
-sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
+# sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_GC_by_Robust Aichitson_HCA clustering result_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO1_63, path = "Wilcoxon_test_GC_by_Robust Aichitson_HCA clustering result_CO1-63_zeroimputed_15Jan2024.xlsx")
 ```
 
 ###### Summary of significant compounds
@@ -1776,7 +1785,7 @@ The code below run wilcoxcon test on NA imputed data frame and don't perform min
 After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data =\> 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
 
 #### With just HPLC - TBA (ZeroImputed_Jan 15 2024) 
-After cutoff element [[45]], we dont see anymore significant compound from Wilcoxon test
+(Update 18 Jan 2024:) To maximise runtime, this will be run on Huy's Laptop
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- hplc_list[[1]] %>%
@@ -1801,15 +1810,15 @@ for (r in 1:nrow(hc_df)) {
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-print(hca$height)
-stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
+
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 
 # Initialize variables
-sig_comp <- list()
+sig_comp_CO40_64 <- list()
 
 # Main loop
-for (ele in 35:44) {
+for (ele in 40:64) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1850,7 +1859,7 @@ for (ele in 35:44) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  sig_comp[[paste0("Cut height_", ele)]] <- sp_df %>%
+  sig_comp_CO40_64[[paste0("Cut height_", ele)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
@@ -1859,10 +1868,11 @@ for (ele in 35:44) {
     arrange(adjusted_pvalue_holm))
 }
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO35-44_zeroimputed_s15Jan2024.xlsx")
+# writexl::write_xlsx(x = sig_comp_CO65_95, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO65-95_zeroimputed_15Jan2024.xlsx")
 ```
 
 #### With just ICP - TBA (ZeroImputed_Jan 15 2024) 
+(Update 18 Jan 2024:) To maximise runtime, this will be run on Huy's Laptop
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- icp_list[[1]] %>%
@@ -1888,16 +1898,16 @@ for (r in 1:nrow(hc_df)) {
 
 hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
                                     method = "robust.aitchison"))
-print(hca$height)
-stats <- hc_df %>% tibble::rownames_to_column(., var = "NewFile")
+
+stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 
 # Initialize variables
 # sig_comp_CO56_75 <- list()
-sig_comp_CO0_55<- list()
+sig_comp_CO0_34<- list()
 
 # Main loop
-for (ele in 6:55) {
+for (ele in 0:34) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1938,7 +1948,7 @@ for (ele in 6:55) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  sig_comp_CO0_55[[paste0("Cut height_", ele)]] <- sp_df %>%
+  sig_comp_CO0_34[[paste0("Cut height_", ele)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
@@ -1948,9 +1958,9 @@ for (ele in 6:55) {
 }
 
 # combine cut off dataframe
-sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
+# sig_comp <- c(sig_comp_CO0_55, sig_comp_CO56_75)
 
-writexl::write_xlsx(x = sig_comp, path = "Wilcoxon_test_ICP_by_Robust Aichitson_HCA clustering result_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO0_34, path = "Wilcoxon_test_ICP_by_Robust Aichitson_HCA clustering result_CO0-34_zeroimputed_15Jan2024.xlsx")
 ```
 
 ### Wilcoxon test without HCA clustering precursor
@@ -4902,6 +4912,83 @@ sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
 ```
 
 ### 1. With HCA
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO130-159_18Dec2023.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO151-162_06Dec2023.xlsx")
+p3 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO161-172_06Dec2023.xlsx")
+
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(unlist(unique_values_list1))
+
+sheet_names2 <- excel_sheets(path = p2)
+sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique2 <- unique(unlist(unique_values_list2))
+
+sheet_names3 <- excel_sheets(path = p3)
+sus_pol_combined3 <- lapply(sheet_names3, function(sheet) read_excel(path = p3, sheet = sheet))
+
+# Using lapply to get unique values from each data frame
+unique_values_list3 <- lapply(sus_pol_combined3, function(df) unique(df$comp))
+
+# Unlisting and then finding unique values across all data frames
+unique3 <- unique(unlist(unique_values_list3))
+
+all_unique <- data.frame(comp=unique(c(unique1, unique2, unique3))) %>%
+  # get rid off all GC compounds since EF is HPLC
+  filter(., str_detect(comp,"HPLCTOFMS"))
+
+# Adding RT and molecular ions info of significant compounds:
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(gc_hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
+for (row in all_unique) {
+  # Extract m/z
+  all_unique$mean_mz >= (all_unique$mean_mz)
+}
+
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
+# Initiate list of df
+df_list <- list()
+i <- 1
+# Go through each row of sig.comp df
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- all_unique[idx,]$comp
+    df_list[[i]] <- temp
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr <- bind_rows(df_list)
+
+# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Polymer_Type_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+```
+
 ### 2. Without HCA
 #### 2.1 Polymer Type level
 [Update 17 Jan 2024:]
