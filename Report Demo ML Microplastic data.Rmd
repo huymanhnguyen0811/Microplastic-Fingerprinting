@@ -716,6 +716,7 @@ factoextra::fviz_pca_biplot(res.pca,
                             invisible = "var", 
                             repel = TRUE,
                             labelsize = 6, 
+                            addEllipses = TRUE,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
                             title = "Plastic Sample")
 
@@ -850,10 +851,12 @@ res.pca <- FactoMineR::PCA(df_pca,
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
-                            label = "ind", 
+                            label = "none", 
                             invisible = "var", 
                             repel = TRUE,
-                            labelsize = 6, 
+                            labelsize = 6,
+                            habillage = df_pca$Suspected_Polymer,
+                            addEllipses = TRUE,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
                             title = "Polymer type")
 
@@ -933,10 +936,12 @@ res.pca <- FactoMineR::PCA(df_pca,
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
-                            label = "ind", 
+                            label = "none", # ind 
                             invisible = "var", 
                             repel = TRUE,
-                            labelsize = 6, 
+                            labelsize = 6,
+                            habillage = df_pca$Subcategory,
+                            addEllipses = TRUE,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
                             title = "Product Subcategory")
 
@@ -994,10 +999,12 @@ res.pca <- FactoMineR::PCA(df_pca,
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
-                            label = "ind", 
+                            label = "none", 
                             invisible = "var", 
                             repel = TRUE,
-                            labelsize = 6, 
+                            labelsize = 6,
+                            habillage = df_pca$Category,
+                            addEllipses = TRUE,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
                             title = paste0("Combined GC-HPLC samples by Category grouping ", 2))
 
@@ -1784,8 +1791,10 @@ The code below run wilcoxcon test on NA imputed data frame and don't perform min
 
 After running the code with NA imputed data, it generates significant compounds (at best case for GCMS data =\> 31 significant compounds) as compared to Zero significant compounds if using Missing-Observation Method. Therefore, from now on, for Wilcoxon on HCA results, we impute both the HCA input and the Wilcoxon input in the same way.
 
-#### With just HPLC - TBA (ZeroImputed_Jan 18 2024) 
-(Update 18 Jan 2024:) To maximise runtime, this will be run on Huy's Laptop
+#### With just HPLC - DONE (ZeroImputed_Jan 18 2024) 
+(Update 18 Jan 2024:) To maximise runtime, this will be run on Huy's Laptop.
+
+(Update 21 Jan 2024:) Finally finished HPLC ZeroImputed from 18 Jan 2024, here from Cute_height [1] to Cut_height[15], we have cases of less than 2 satisfied_grp, so in th eif conditioning, we jump out of the current for loop and go to the Cut_height[16] to Cut_height[94] (aka. the final Cut_height since Cut_Height[95], aka. top Cut_Height only have 1 group)
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- hplc_list[[1]] %>%
@@ -1823,17 +1832,17 @@ for (ele in 1:95) {
   joined <- full_join(t, stats, by = "File")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  satisfied_sp <- c()
+  satisfied_grp <- c()
   for (gr in unique(joined$group)) {
     # if the group less than 2 members, then that group is excluded from wilcoxon test b/c Wilcoxon required at least 3 members for significant calculation
     if (sum(joined$group == gr) < 3) {
       next
     } else {
-      satisfied_sp <- c(satisfied_sp, gr)
+      satisfied_grp <- c(satisfied_grp, gr)
     }
   }
-  
-  if (length(satisfied_sp) < 2) {
+  # after filtering out groups that have less than 2 members, if we have less than 2 satisfied group, then jump to the next cutoff's height
+  if (length(satisfied_grp) < 2) {
     next
   } else {
     
@@ -1842,10 +1851,10 @@ for (ele in 1:95) {
   
   for (c in 3:ncol(joined)) {
     # looping through the combinations of product categories 
-    for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+    for (col in 1:ncol(utils::combn(satisfied_grp, 2))) {
       # extract the combinations of product category pairs
-      p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-      p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+      p_1 <- utils::combn(satisfied_grp, 2)[1,col]
+      p_2 <- utils::combn(satisfied_grp, 2)[2,col]
       # calculating the p-value between each product category pair 
       pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
                                       joined[which(joined$group == p_2), c])$p.value
@@ -1868,7 +1877,7 @@ for (ele in 1:95) {
     arrange(adjusted_pvalue_holm))
 }
 
-writexl::write_xlsx(x = sig_comp_CO1_95, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO1-95_zeroimputed_18Jan2024.xlsx")
+# writexl::write_xlsx(x = sig_comp_CO1_95, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO1-79_zeroimputed_18Jan2024.xlsx")
 ```
 
 #### With just ICP - DONE (ZeroImputed_Jan 18 2024) 
