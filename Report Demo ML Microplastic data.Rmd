@@ -525,7 +525,7 @@ writexl::write_xlsx(x = gc_hplc_icp_list, path = "gc_hplc_icp_list_df.xlsx")
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 
-newmetal <- metal_list[[1]] %>% tidyr::pivot_wider(names_from = Metal_component, values_from = Values) %>% column_to_rownames(., var = "File")
+newmetal <- icp_list[[1]] %>% tidyr::pivot_wider(names_from = Feature, values_from = Values) %>% column_to_rownames(., var = "File")
 
 # Replace all NA in data frame with 0
 newmetal[is.na(newmetal)] <- 0
@@ -538,20 +538,31 @@ for (row in 1:nrow(newmetal)) {
 
 topmetal_list <- list()
 i <- 1
-for (file in unique(metal_list[[1]]$File)) {
-  topmetal_list[[i]] <- metal_list[[1]] %>% filter(., File %in% file) %>% filter(., Metal_component %in% top_metal[[i]])
+for (file in unique(icp_list[[1]]$File)) {
+  topmetal_list[[i]] <- icp_list[[1]] %>% filter(., File %in% file) %>% filter(., Feature %in% top_metal[[i]])
   i <- i + 1
 }
 
-top_metal_plot <- bind_rows(topmetal_list)
-
+top_metal_plot_df <- bind_rows(topmetal_list) %>%
+   mutate(Category = ifelse(str_detect(File, "USE-01"), "Polystyrene food packaging", 
+                                  ifelse(str_detect(File, "USE-02"), "Mixed plastic waste",
+                                         ifelse(str_detect(File, "USE-03"), "Plastic drinking straws", 
+                                                ifelse(str_detect(File, "USE-05"), "Cigarettes tips", 
+                                                       ifelse(str_detect(File, "USE-06"), "Face masks", 
+                                                              ifelse(str_detect(File, "USE-07"), "Food containers", 
+                                                                     ifelse(str_detect(File, "USE-09"), "Food wrappers",
+                                                                            ifelse(str_detect(File, "USE-11"), "Plastic toy balls", 
+                                                                                   ifelse(str_detect(File, "USE-12"), "Ziploc bags", 
+                                                                                          ifelse(str_detect(File, "USE-13"), "Food packaging",
+                                                                                                 ifelse(str_detect(File, "USE-14"), "Bottle caps", "Fishing bait trays"))))))))))))
+                                                              
 ### Stacked bar plot of values of  Top 10 trace metal for each metal data sample (x-axis: sample name; y-axis: metal values) --------------------------------------
 
 # data_summary <- top10_plot %>%
 #   group_by(NewFile, Metal_component) %>%
 #   summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
 
-ggplot(data = top_metal_plot, aes(x = File, y = Values, fill = Metal_component)) +
+ggplot(data = top_metal_plot_df, aes(x = Category, y = Values, fill = Feature)) +
   geom_bar(stat = "identity") +
   # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
   #                                        ymax = mean + sd, group = Metal_component), 
@@ -563,34 +574,22 @@ ggplot(data = top_metal_plot, aes(x = File, y = Values, fill = Metal_component))
   
 ```
 
-#### 2.1 Among the top25 trace metal, if the metal is shared among different samples, is there a significant difference in the concentration of these trace metals?
+#### 2.1 Among the top trace metal, if the metal is shared among different samples, is there a significant difference in the concentration of these trace metals?
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 
 ```
 
-#### 2.2 Among the top25 trace metal, what are the metal that uniquely occur in just 1 sample?
+#### 2.2 Among the top trace metal, what are the metal that uniquely occur in just 1 sample?
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 ```
 
-### ATDGCMS - Summary of Percent_Area in each sample of merge_df1 to know how much Percent_Area we lost when we force the compounds to appear in at least 2 product categories
+### ATD-GCMS data:
 
-```{r , echo=FALSE, warning = FALSE}
-for (file in unique(merge_df1$File)) {
-  print(paste0("The remaining Percent Area of ", file, " is ", sum(merge_df1[which(merge_df1$File == file),]$Percent_Area)))
-}
-```
+### HPLC-TOFMS data:
 
-### HPLCTOFMS - Summary of Percent_Area in each sample of merge_df1 to know how much Percent_Area we lost when we force the compounds to appear in at least 2 product categories
-
-```{r , echo=FALSE, warning = FALSE}
-for (file in unique(shared_comp_product_cat2$File)) {
-  print(paste0("The remaining Percent Height of ", file, " is ", sum(shared_comp_product_cat2[which(shared_comp_product_cat2$File == file),]$Percent_Height)))
-}
-```
-
-### For each plastic type, What are compounds that only appear in USSB and not USE?
+#### For each plastic type, What are compounds that only appear in USSB and not USE?
 
 ```{r, echo=FALSE, warning = FALSE}
 # compdiff <- list()
@@ -604,7 +603,7 @@ for (plt in unique(adjusted_df$plastic_type)) {
 }
 ```
 
-### For each plastic product, What are the compounds that consistently appear in both USSB & USE?
+#### For each plastic product, What are the compounds that consistently appear in both USSB & USE?
 
 ```{r, echo=FALSE, warning = FALSE}
 for (plt in unique(adjusted_df$plastic_type)) {
@@ -614,6 +613,98 @@ for (plt in unique(adjusted_df$plastic_type)) {
                 adjusted_df[which(adjusted_df$plastic_type == plt &
                                     str_detect(adjusted_df$File, "USE")),]$collapsed_compound))
 }
+```
+
+#### What are the top compounds that have highest abundance in each plastic "Subcategory" and what are their identity (matched with EF suspect screening)
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Extract top compounds for each sample from HPLC only data ----------------------------------------------------------
+hplc <- hplc_list[[1]] %>% 
+  dplyr::select(Subcategory, Feature, Values) %>%
+  dplyr::group_by(Subcategory, Feature) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from = Feature, 
+                     values_from = Values) 
+
+# Replace all NA in data frame with 0
+hplc[is.na(hplc)] <- 0
+
+# For each sample, Extract Top x compounds with highest concen.
+top_hplc <- list()
+for (row in 1:nrow(hplc)) {
+  # go through each subcategory and Extract Top x compounds with highest concen.
+  top_hplc[[hplc[row,]$Subcategory]] <- colnames(hplc)[order(as.numeric(hplc[row,]), decreasing = TRUE)[1:1000]]
+}
+
+top_hplc_list <- list()
+i <- 1
+for (subcat in unique(hplc_list[[1]]$Subcategory)) {
+  top_hplc_list[[i]] <- hplc_list[[1]] %>% filter(., Subcategory %in% subcat) %>% filter(., Feature %in% top_hplc[[i]])
+  i <- i + 1
+}
+
+top_hplc_plot_df <- bind_rows(top_hplc_list) 
+
+# Matching all the top compounds with EF's Suspect Screening ---------------------------------------------------------
+all_unique <- data.frame(comp=unique(top_hplc_plot_df$Feature))
+
+# Adding RT and molecular ions info of significant compounds:
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+
+# Find in all_unique the compounds that match with suspect hit list in all_unique with molecular ions in the range of +- 0.0005
+# Initiate list of df
+df_list <- list()
+i <- 1
+# Go through each row of sig.comp df
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
+    df_list[[i]] <- temp[1,] # here we just need 1 row of suspect name and corresponding Feature
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr <- bind_rows(df_list)
+
+# Replace all the compounds in plot_df with suspect screening matches ------------------------------------------------
+joined <- left_join(top_hplc_plot_df %>%
+                      dplyr::select(Subcategory, Feature, Values), 
+                    all_matching_sus_scr %>%
+                      dplyr::select(Feature, `Suspect Name`), by = "Feature") %>%
+  dplyr::filter(!is.na(`Suspect Name`)) %>%
+  # group and calculate the mean of Features with same subcategory
+  group_by(Feature, `Suspect Name`, Subcategory) %>%
+  dplyr::summarise(across(Values, base::mean))
+
+
+### Stacked bar plot of values of  Top 10 trace metal for each metal data sample (x-axis: sample name; y-axis: metal values) --------------------------------------
+
+# data_summary <- top10_plot %>%
+#   group_by(NewFile, Metal_component) %>%
+#   summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
+
+ggplot(data = joined, aes(x = Subcategory, y = Values, fill = `Suspect Name`)) +
+  geom_bar(stat = "identity") +
+  # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
+  #                                        ymax = mean + sd, group = Metal_component), 
+  #               position = position_dodge(width = 0.9), width = 0.25) +
+  labs(title = "Stacked Bar Plot", x = "Plastic products", y = "Normalized Peak Abundance (%)",
+       fill = "Top HPLC features") +
+  theme_minimal(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
 ## Demo PCA
@@ -1495,7 +1586,10 @@ writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Su
 ```
 
 
-#### With Combined GC ICP - TBA (ZeroImputed_Jan 15 2024) 
+#### With Combined GC ICP - DONE (ZeroImputed_Jan 21 2024) 
+
+(Update 21 Jan 2024:) Finally finished GC-ICP ZeroImputed, here from Cute_height [1] to Cut_height[13], we have cases of less than 2 satisfied_grp, so in the if conditioning, we jump out of the current for loop and go to the Cut_height[14] to Cut_height[97] (aka. the final Cut_height since Cut_Height[98], aka. top Cut_Height only have 1 group)
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- gc_icp_list[[1]] %>%
   # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
@@ -1524,36 +1618,35 @@ hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
 stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
-# sig_comp_CO160_171 <- list()
-sig_comp_CO60_98 <- list()
+sig_comp_CO1_98 <- list()
 
 # Main loop
-for (ele in 60:98) {
+for (ele in 1:98) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
   sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  satisfied_sp <- c()
+  satisfied_grp <- c()
   for (gr in unique(joined$group)) {
     # if the group only have 1 member, then that group is excluded from wilcoxon test
     if (sum(joined$group == gr) < 3) {
       next
     } else {
-      satisfied_sp <- c(satisfied_sp, gr)
+      satisfied_grp <- c(satisfied_grp, gr)
     }
   }
   
-  if (length(satisfied_sp) < 2) {
+  if (length(satisfied_grp) < 2) {
     next
   } else {
     # Loop through each collapsed_compound (as columns)
     
     for (c in 3:ncol(joined)) {
       # looping through the combinations of product categories 
-      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
+      for (col in 1:ncol(utils::combn(satisfied_grp, 2))) {
         # extract the combinations of product category pairs
-        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
+        p_1 <- utils::combn(satisfied_grp, 2)[1,col]
+        p_2 <- utils::combn(satisfied_grp, 2)[2,col]
         # calculating the p-value between each product category pair 
         pval_wilcox_test <- wilcox.test(joined[which(joined$group == p_1), c], 
                                         joined[which(joined$group == p_2), c])$p.value
@@ -1567,7 +1660,7 @@ for (ele in 60:98) {
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp_CO60_98[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO1_98[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1577,10 +1670,15 @@ for (ele in 60:98) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp_CO60_98, path = "Wilcoxon_test_Combined GC-ICP_by_Robust Aichitson_HCA clustering result_CO60-98_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO1_98, path = "Wilcoxon_test_Combined GC-ICP_by_Robust Aichitson_HCA clustering result_CO14-97_zeroimputed_21Jan2024.xlsx")
 ```
 
-#### With Combined HPLC ICP - TBA (ZeroImputed_Jan 15 2024) 
+#### With Combined HPLC ICP - TBA (ZeroImputed_Jan 21 2024) 
+
+(Update 21 Jan 2024:) Start runnig HPLC-ICP HCA Wilcoxon tests
+
+(Update 25 Jan 2024:) Fucking Microsoft update! I have run this wilcoxon test again, but now i am starting from CUT 20 so we don't waste time.
+
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 hc_df <- hplc_icp_list[[1]] %>%
   # filter(., File %notin% "ATDGCMS-Blank-repNA") %>%
@@ -1609,11 +1707,10 @@ hca <- stats::hclust(vegan::vegdist(as.matrix(hc_df),
 stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 # Initialize variables
-# sig_comp_CO160_171 <- list()
-sig_comp_CO100_130 <- list()
+sig_comp_CO20_130 <- list()
 
 # Main loop
-for (ele in 100:130) {
+for (ele in 20:130) {
   t <- data.frame(group = cutree(hca, h = ceiling(hca$height[ele]))) %>% tibble::rownames_to_column(., var = "File")
   joined <- full_join(t, stats, by = "File")
   
@@ -1652,7 +1749,7 @@ for (ele in 100:130) {
     
     sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
     
-    sig_comp_CO100_130[[paste0("Cut height_", ele)]] <- sp_df %>%
+    sig_comp_CO20_130[[paste0("Cut height_", ele)]] <- sp_df %>%
       filter(., adjusted_pvalue_holm < 0.05) %>%
       arrange(adjusted_pvalue_holm)
     
@@ -1662,7 +1759,7 @@ for (ele in 100:130) {
   }
 }
 
-writexl::write_xlsx(x = sig_comp_CO100_130, path = "Wilcoxon_test_Combined HPLC-ICP_by_Robust Aichitson_HCA clustering result_CO100-130_zeroimputed_15Jan2024.xlsx")
+writexl::write_xlsx(x = sig_comp_CO20_130, path = "Wilcoxon_test_Combined HPLC-ICP_by_Robust Aichitson_HCA clustering result_CO20-130_zeroimputed_25Jan2024.xlsx")
 ```
 
 #### With just GC - DONE (ZeroImputed_Jan 18 2024)
@@ -1824,7 +1921,7 @@ stats <- hc_df %>% tibble::rownames_to_column(., var = "File")
 
 
 # Initialize variables
-sig_comp_CO1_95 <- list()
+sig_comp_CO16_94 <- list()
 
 # Main loop
 for (ele in 1:95) {
@@ -1868,7 +1965,7 @@ for (ele in 1:95) {
   
   sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
   
-  sig_comp_CO1_95[[paste0("Cut height_", ele)]] <- sp_df %>%
+  sig_comp_CO16_94[[paste0("Cut height_", ele)]] <- sp_df %>%
     filter(., adjusted_pvalue_holm < 0.05) %>%
     arrange(adjusted_pvalue_holm)
   
@@ -1877,7 +1974,7 @@ for (ele in 1:95) {
     arrange(adjusted_pvalue_holm))
 }
 
-# writexl::write_xlsx(x = sig_comp_CO1_95, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO1-79_zeroimputed_18Jan2024.xlsx")
+# writexl::write_xlsx(x = sig_comp_CO16_94, path = "Wilcoxon_test_HPLC_by_Robust Aichitson_HCA clustering result_CO1-79_zeroimputed_18Jan2024.xlsx")
 ```
 
 #### With just ICP - DONE (ZeroImputed_Jan 18 2024) 
@@ -4909,7 +5006,7 @@ print(sub_cat %>% arrange(comp))
 writexl::write_xlsx(x = sub_cat, path = "Wilcoxon_test_ICP_data_by_Subcategory_NA imputed_zeroimputed_12Jan2024.xlsx")
 ```
 
-### Matching HPLC Wilcoxon significant compounds from HPLC suspect screening hits -=EF
+### Matching HPLC Wilcoxon significant compounds from HPLC suspect screening hits (EF)
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 sus_scr <- readxl::read_xlsx(path = paste0(getwd(), "/data/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
@@ -4919,59 +5016,48 @@ sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
 ```
 
 ### 1. With HCA
+
+(Update 26 Jan 2024:) Huy is recording the maximum number of significant compounds from HCA clustering of all data combinations that include HPLC data and record the number of suspect that matches in each HPLC data combination
+
+1. HPLC only - Zeroimputed: AMong 2737 significant compounds -> we found 13 compounds that matches with EF's Suspect Screening
+ [1] "4-ethenyl-cyclohexene"                             "4-Aminophenol"                                     "1,2,3,4-tetrahydro-naphthalene"                   
+ [4] "1,1'-oxybis[2-methoxy-ethane]"                     "Benzothiazole"                                     "Acetaminophen (Paracetemol)"                      
+ [7] "1-methyl-1-phenylethylhydroperoxide"               "Hexahydro-1,3-isobenzofurandione"                  "1,2-benzisothiazol-3(2H)-one 1,1-dioxide"         
+[10] "2-amino-5-methyl-benzenesulfonic acid"             "Dibutyl ester phosphoric acid"                     "2,2'-(1,2-diazenediyl)bis[2-methyl-butanenitrile]"
+[13] "2-(2H-benzotriazol-2-yl)-4-methyl-phenol"  
+
+
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO130-159_18Dec2023.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO151-162_06Dec2023.xlsx")
-p3 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO161-172_06Dec2023.xlsx")
+p1 <- paste0(getwd(), "/Wilcoxon test results/old test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO130-159_18Dec2023.xlsx")
+p2 <- paste0(getwd(), "/Wilcoxon test results/old test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO151-162_06Dec2023.xlsx")
+p3 <- paste0(getwd(), "/Wilcoxon test results/old test results/Wilcoxon_test_Combined GC-HPLC_by_Robust Aichitson_HCA clustering result_CO161-172_06Dec2023.xlsx")
 
 sheet_names1 <- excel_sheets(path = p1)
 sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
 
-# Using lapply to get unique values from each data frame
-unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+# Inspect which subdf has maximum number of significant compounds
+lapply(sus_pol_combined1, dim)
+# Get the no of unique compounds in that subdf
+length(unique(sus_pol_combined1[[]]$comp))
 
 # Unlisting and then finding unique values across all data frames
-unique1 <- unique(unlist(unique_values_list1))
+unique1 <- unique(unique(sus_pol_combined1[[71]]$comp))
 
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique2 <- unique(unlist(unique_values_list2))
-
-sheet_names3 <- excel_sheets(path = p3)
-sus_pol_combined3 <- lapply(sheet_names3, function(sheet) read_excel(path = p3, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list3 <- lapply(sus_pol_combined3, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique3 <- unique(unlist(unique_values_list3))
-
-all_unique <- data.frame(comp=unique(c(unique1, unique2, unique3))) %>%
-  # get rid off all GC compounds since EF is HPLC
+all_unique <- data.frame(comp=unique(c(unique1))) %>%
+  # get rid off all GC compounds if HPLC is in combination with other data sources.
   filter(., str_detect(comp,"HPLCTOFMS"))
 
 # Adding RT and molecular ions info of significant compounds:
 mean_rt <- c()
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$Feature == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
+  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
 }
 
 all_unique$mean_rt <- mean_rt
 all_unique$mean_mz <- mean_mz
-
-# Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
-for (row in all_unique) {
-  # Extract m/z
-  all_unique$mean_mz >= (all_unique$mean_mz)
-}
 
 # Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
 # Initiate list of df
@@ -4981,17 +5067,20 @@ i <- 1
 for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
   # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
   idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  # print(idx)
   if (base::identical(idx, integer(0))) {
     next
   } else {
+    # print(sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),])
     temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
-    temp$Feature <- all_unique[idx,]$comp
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
     df_list[[i]] <- temp
     i <- i + 1
   }
 }
 
 all_matching_sus_scr <- bind_rows(df_list)
+unique(all_matching_sus_scr$`Suspect Name`)
 
 # writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Polymer_Type_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
@@ -5047,10 +5136,97 @@ all_unique$mean_rt <- mean_rt
 all_unique$mean_mz <- mean_mz
 
 # Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
-for (row in all_unique) {
-  # Extract m/z
-  all_unique$mean_mz >= (all_unique$mean_mz)
+# Initiate list of df
+df_list <- list()
+i <- 1
+# Go through each row of sig.comp df
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the sus_scr fall into the windows +-0.0005 of the sig comp, then report the sig comp and the fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
+    df_list[[i]] <- temp
+    i <- i + 1
+  }
 }
+
+all_matching_sus_scr <- bind_rows(df_list)
+
+# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Polymer_Type_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+```
+
+#### 2.2 Category level
+(Update 26 Jan 2024:) Huy is recording the maximum number of significant compounds from "Category" of all data combinations that include HPLC data and record the number of suspect that matches in each HPLC data combination
+
+1. HPLC only - MO method: Among 24 significant compounds -> we found 3 compounds that matches with EF's Suspect Screening
+ "2,6-dimethyl-benzenamine"    "Acetaminophen (Paracetemol)" "TEP / Triethyl phosphate"    "N,N'-diphenyl-guanidine"
+ 
+2. HPLC only - Zeroimputed: Among 664 significant compounds -> we found 11 compounds that matches with EF's Suspect Screening
+[1] "N-methyl-benzenamine"                              "4-Aminophenol"                                     "1,3,5-Triazine-2,4,6-triamine"                    
+ [4] "1,2,3,4-tetrahydro-naphthalene"                    "Acetaminophen (Paracetemol)"                       "1-methyl-1-phenylethylhydroperoxide"              
+ [7] "Hexahydro-1,3-isobenzofurandione"                  "TEP / Triethyl phosphate"                          "1,2-benzisothiazol-3(2H)-one 1,1-dioxide"         
+[10] "2,2'-(1,2-diazenediyl)bis[2-methyl-butanenitrile]" "2-(2H-benzotriazol-2-yl)-4-methyl-phenol"
+
+3. HPLC + ICP - MO method:
+[1] "2,6-dimethyl-benzenamine"    "Acetaminophen (Paracetemol)" "TEP / Triethyl phosphate"    "N,N'-diphenyl-guanidine"      
+
+4. HPLC + ICP - zeroimputed method:
+ [1] "N-methyl-benzenamine"                              "4-Aminophenol"                                     "1,3,5-Triazine-2,4,6-triamine"                    
+ [4] "1,2,3,4-tetrahydro-naphthalene"                    "Acetaminophen (Paracetemol)"                       "1-methyl-1-phenylethylhydroperoxide"              
+ [7] "Hexahydro-1,3-isobenzofurandione"                  "1,2-benzisothiazol-3(2H)-one 1,1-dioxide"          "2,2'-(1,2-diazenediyl)bis[2-methyl-butanenitrile]"
+[10] "2-(2H-benzotriazol-2-yl)-4-methyl-phenol" 
+
+5. HPLC + GC - MO method:
+[1] "2,6-dimethyl-benzenamine"    "Acetaminophen (Paracetemol)" "TEP / Triethyl phosphate"    "N,N'-diphenyl-guanidine"   
+
+6. HPLC + GC - Zeroimputed method:
+ [1] "N-methyl-benzenamine"                              "4-Aminophenol"                                     "1H-Benzotriazole"                                 
+ [4] "1,3,5-Triazine-2,4,6-triamine"                     "Acetaminophen (Paracetemol)"                       "1-methyl-1-phenylethylhydroperoxide"              
+ [7] "Hexahydro-1,3-isobenzofurandione"                  "TEP / Triethyl phosphate"                          "2,2'-(1,2-diazenediyl)bis[2-methyl-butanenitrile]"
+[10] "Oxybenzone (Benzophenone-3)" 
+
+7. HPLC + GC + ICP - MO method:
+[1] "2,6-dimethyl-benzenamine"    "Acetaminophen (Paracetemol)" "TEP / Triethyl phosphate"    "N,N'-diphenyl-guanidine"    
+
+8.HPLC + GC + ICP - zeroimputed method:
+[1] "N-methyl-benzenamine"                              "4-Aminophenol"                                     "1,3,5-Triazine-2,4,6-triamine"                    
+[4] "Acetaminophen (Paracetemol)"                       "1-methyl-1-phenylethylhydroperoxide"               "Hexahydro-1,3-isobenzofurandione"                 
+[7] "2,2'-(1,2-diazenediyl)bis[2-methyl-butanenitrile]"
+
+[Update 17 Jan 2024:]
+- For HPLC only data, we found also 6 suspect hits that match with Eric Fries's suspect screening excel file:
+[1] "4-Aminophenol"                       "2,6-dimethyl-benzenamine"           
+[3] "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide"
+[5] "TEP / Triethyl phosphate"            "N,N'-diphenyl-guanidine" 
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+p1 <- paste0(getwd(), "/Wilcoxon test results/Zeroimputed_HPLCbenchmarksremoved/Wilcoxon_test_COMBINED GC_ICP_by_Subcategory_NA imputed_zeroimputed_18Jan2024.xlsx")
+
+## Missing observation
+sheet_names1 <- excel_sheets(path = p1)
+sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
+lapply(sus_pol_combined1, dim)
+
+# Unlisting and then finding unique values across all data frames
+unique1 <- unique(sus_pol_combined1[[1]]$comp)
+
+all_unique <- data.frame(comp=unique(c(unique1))) %>%
+   filter(., str_detect(comp,"HPLCTOFMS"))
+
+# Adding RT and molecular ions info of significant compounds:
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(hplc_list[[1]]$Feature == all_unique[row,]) # Here we use just hplc_list because when we merge hplc data with other data, the compounds stay the same anyway
+  mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
 
 # Find in all_unique the compounds that match with suspect hit list in all_unique with molecualr ions in the range of +- 0.0005
 # Initiate list of df
@@ -5064,49 +5240,61 @@ for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
     next
   } else {
     temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
-    temp$Feature <- all_unique[idx,]$comp
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
     df_list[[i]] <- temp
     i <- i + 1
   }
 }
 
 all_matching_sus_scr <- bind_rows(df_list)
+unique(all_matching_sus_scr$`Suspect Name`)
 
-# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Polymer_Type_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
+# writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Category_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
 
-#### 2.2 Category level
-[Update 17 Jan 2024:]
-- For HPLC only data, we found also 6 suspect hits that match with Eric Fries's suspect screening excel file:
-[1] "4-Aminophenol"                       "2,6-dimethyl-benzenamine"           
-[3] "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide"
-[5] "TEP / Triethyl phosphate"            "N,N'-diphenyl-guanidine" 
+#### 2.3 Subcategory level
+(Update 26 Jan 2024:) Huy is recording the maximum number of significant compounds from "Subcategory" of all data combinations that include HPLC data and record the number of suspect that matches in each HPLC data combination
+
+1. HPLC only - MO method: Among 24 total significant compounds -> we found 5 compounds that matches with EF's Suspect Screening
+[1] "2,6-dimethyl-benzenamine"            "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide" "TEP / Triethyl phosphate"           
+[5] "N,N'-diphenyl-guanidine"
+
+2. HPLC only - Zeroimputed: There is ZERO significant compound
+
+3. HPLC + ICP - MO method: 
+[1] "2,6-dimethyl-benzenamine"            "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide" "TEP / Triethyl phosphate"           
+[5] "N,N'-diphenyl-guanidine" 
+
+4. HPLC + ICP - zeroimputed method: There is ZERO significant compound
+
+5. HPLC + GC - MO method:
+[1] "2,6-dimethyl-benzenamine"            "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide" "TEP / Triethyl phosphate"           
+[5] "N,N'-diphenyl-guanidine" 
+
+6. HPLC + GC - Zeroimputed method: There is ZERO significant compound
+
+7. HPLC + GC + ICP - MO method:
+[1] "2,6-dimethyl-benzenamine"            "Acetaminophen (Paracetemol)"         "1-methyl-1-phenylethylhydroperoxide" "TEP / Triethyl phosphate"           
+[5] "N,N'-diphenyl-guanidine"  
+
+8. HPLC + Gc + ICP - zeroimputed method: There is ZERO significant compound
+
+[UPDATE 17 Jan 2024:] 
+- For HPLC only resulted in ZERO significant compounds from Wilcoxon tests so we don't include it in this summary
+- For GC + HPLC data, there are 4 compounds but they all ATDGCMS so we also don't include it in this summary 
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_Missing-Observation.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Category_NA imputed.xlsx")
+p1 <- paste0(getwd(), "/Wilcoxon test results/Zeroimputed_HPLCbenchmarksremoved/Wilcoxon_test_COMBINED GC_HPLC_ICP_by_Subcategory_Missing-observation_zeroimputedbatch_18Jan2024.xlsx")
 
 ## Missing observation
 sheet_names1 <- excel_sheets(path = p1)
 sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
+lapply(sus_pol_combined1, dim)
 
 # Unlisting and then finding unique values across all data frames
-unique1 <- unique(unlist(unique_values_list1))
+unique1 <- unique(sus_pol_combined1[[7]]$comp)
 
-## NA imputed
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique2 <- unique(unlist(unique_values_list2))
-
-all_unique <- data.frame(comp=unique(c(unique1, unique2)))
+all_unique <- data.frame(comp=unique(c(unique1)))
 
 # Adding RT and molecular ions info of significant compounds:
 mean_rt <- c()
@@ -5132,21 +5320,17 @@ for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
     next
   } else {
     temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
-    temp$Feature <- all_unique[idx,]$comp
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
     df_list[[i]] <- temp
     i <- i + 1
   }
 }
 
 all_matching_sus_scr <- bind_rows(df_list)
+unique(all_matching_sus_scr$`Suspect Name`)
 
 # writexl::write_xlsx(x = all_matching_sus_scr, path = "Wilcoxon_test_HPLC_data_by_Category_matching_with_EF_Suspect_screening_17Jan2024.xlsx")
 ```
-
-#### 2.3 Subcategory level
-[UPDATE 17 Jan 2024:] 
-- For HPLC only resulted in ZERO significant compounds from Wilcoxon tests so we don't include it in this summary
-- For GC + HPLC data, there are 4 compounds but they all ATDGCMS so we also don't include it in this summary 
 
 ## Demo RF
 
