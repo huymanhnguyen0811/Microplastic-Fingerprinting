@@ -32,8 +32,18 @@ library(data.table)
 library(Hmisc)
 library(writexl)
 library(tidyr)
+library(grid)
+library(gridExtra)
+library(PCAtools)
+library(stats)
+library(FactoMineR)
+library(factoextra)
+library(compositions)
+
 
 # Functions -------------------------------------------------------------------------------------------------------
+'%notin%' <- Negate('%in%')
+
 # Grouping compounds based on RT1, RT2, and Ion1 - Version 1
 grouping_comp <- function(data, rtthres, mzthres, type) {
   
@@ -149,6 +159,49 @@ df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
 
 # STEP 1.2 Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
+# QUALITY CONTROL A OF STEP 1.2: Plot Percentage coverage after removal of limit observation----------------------------
+plot_a <- list()
+j <- 1
+for (i in 1:length(df_list2_step1.1)) {
+  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+    df_filter_area <- df_list2_step1.1[[i]] %>%
+      filter(., Height >= threshold)
+    coverage <- sum(df_filter_area$Height)*100/sum(df_list2_step1.1[[i]]$Height)
+    coverage_drop <- 100 - coverage
+    df <- data.frame(thres = threshold, coverage = coverage, 
+                     coverage_drop = coverage_drop, file = unique(df_list2_step1.1[[i]]$File))
+    plot_a[[j]] <- df
+    j <- j+1
+  }
+}
+
+# Examine the Average percentage coverage at each threshold of removal
+View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage, base::mean)) %>% mutate(coverage = round(coverage, 3)))
+
+# Examine the Average drop from original data (without any removal) in percentage coverage at each threshold of removal
+View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage_drop, base::mean)) %>% mutate(coverage_drop = round(coverage_drop, 3)))
+
+# QUALITY CONTROL B OF STEP 1.2: Plot number of peak remains after removal of limit observation----------------------------
+plot_b <- list()
+j <- 1
+for (i in 1:length(df_list2_step1.1)) {
+  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+    df_filter_area <- df_list2_step1.1[[i]] %>%
+      filter(., Height >= threshold)
+    peak_remain <- dim(df_filter_area)[1]
+    peaknumber_drop <- dim(df_list2_step1.1[[i]])[1] - peak_remain
+    df <- data.frame(thres = threshold, peak_remain = peak_remain, 
+                     peaknumber_drop = peaknumber_drop, file = unique(df_list2_step1.1[[i]]$File))
+    plot_b[[j]] <- df
+    j <- j + 1
+  }
+}
+
+# Examine the average number of Average percentage coverage at each threshold of removal
+View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peak_remain, base::mean)) %>% mutate(peak_remain = round(peak_remain, 0)))
+
+# Examine the average number of Average percentage coverage at each threshold of removal
+View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peaknumber_drop, base::mean)) %>% mutate(peaknumber_drop = round(peaknumber_drop, 0)))
 
 # ATDGCMS
 
@@ -237,7 +290,7 @@ for (mz in benchmark_mz) {
 
 combined_df2_grouped <- combined_df2_grouped[-benchmark_idx,]
 
-# Step 2: Readjust compound peak area (sample) by average blank peak area ======================
+# Step 2: Readjust compound peak area (sample) by substracting it by average blank peak area ======================
 
 # ATDGCMS
 
@@ -524,8 +577,9 @@ writexl::write_xlsx(x = gc_hplc_icp_list, path = "gc_hplc_icp_list_df.xlsx")
 #### 1. What are the Top metal with highest Concen. in each sample?
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-
-newmetal <- icp_list[[1]] %>% tidyr::pivot_wider(names_from = Feature, values_from = Values) %>% column_to_rownames(., var = "File")
+newmetal <- icp_list[[1]] %>% 
+  tidyr::pivot_wider(names_from = Feature, values_from = Values) %>% 
+  column_to_rownames(., var = "File")
 
 # Replace all NA in data frame with 0
 newmetal[is.na(newmetal)] <- 0
@@ -567,11 +621,10 @@ ggplot(data = top_metal_plot_df, aes(x = Category, y = Values, fill = Feature)) 
   # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
   #                                        ymax = mean + sd, group = Metal_component), 
   #               position = position_dodge(width = 0.9), width = 0.25) +
-  labs(title = "Stacked Bar Plot", x = "Sample", y = "Value",
-       fill = "Top trace metal components") +
+  labs(title = "ICP-MS Trace metal data", x = "Plastic product types", y = "Normalized Abundance (%)",
+       fill = "Top trace metals") +
   theme_minimal(base_size = 20) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  
 ```
 
 #### 2.1 Among the top trace metal, if the metal is shared among different samples, is there a significant difference in the concentration of these trace metals?
@@ -625,14 +678,11 @@ hplc <- hplc_list[[1]] %>%
   tidyr::pivot_wider(names_from = Feature, 
                      values_from = Values) 
 
-# Replace all NA in data frame with 0
-hplc[is.na(hplc)] <- 0
-
 # For each sample, Extract Top x compounds with highest concen.
 top_hplc <- list()
 for (row in 1:nrow(hplc)) {
   # go through each subcategory and Extract Top x compounds with highest concen.
-  top_hplc[[hplc[row,]$Subcategory]] <- colnames(hplc)[order(as.numeric(hplc[row,]), decreasing = TRUE)[1:1000]]
+  top_hplc[[hplc[row,]$Subcategory]] <- colnames(hplc)[order(as.numeric(hplc[row,]), decreasing = TRUE)[1:10]]
 }
 
 top_hplc_list <- list()
@@ -701,21 +751,24 @@ ggplot(data = joined, aes(x = Subcategory, y = Values, fill = `Suspect Name`)) +
   # geom_errorbar(data = data_summary, aes(x = NewFile, ymin = mean - sd, 
   #                                        ymax = mean + sd, group = Metal_component), 
   #               position = position_dodge(width = 0.9), width = 0.25) +
-  labs(title = "Stacked Bar Plot", x = "Plastic products", y = "Normalized Peak Abundance (%)",
-       fill = "Top HPLC features") +
+  labs(title = "Non-targeted HPLC-qTOF-MS data", x = "Plastic product types", y = "Normalized Peak Abundance (%)",
+       fill = "Top hit from HPLC PMT Suspect Screening") +
   theme_minimal(base_size = 20) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Beyond-PMT Suspect Screening -------------------------------------------------
+# Filter all the top HPLC compounds that "beyond" the PMT suspect screening list
+beyond_pmt <- top_hplc_plot_df %>%
+  filter(Feature %notin% unique(joined$Feature)) %>%
+  select(Feature, RT, m.z) %>%
+  group_by(Feature) %>%
+  summarise(across(c(RT, m.z), base::mean))
+
+# Export "beyond-PMT-Suspect Screening" list to excel
+writexl::write_xlsx(x=beyond_pmt, path = "Top10_HPLC_data_beyond_pmt_suspect Screening.xlsx")
 ```
 
 ## Demo PCA
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-library(PCAtools)
-library(stats)
-library(FactoMineR)
-library(factoextra)
-
-```
 
 Since our data is compositional data, combining PCA with the Aitchison dissimilarity index (inherited from HCA for compositional data), however, is not straightforward due to the nature of compositional data. Standard PCA assumes the data does not have the constant sum constraint, which is a fundamental property of compositional data. Applying PCA directly to raw compositional data can lead to misleading results because it does not account for the compositional nature of the data.
 
@@ -779,25 +832,28 @@ For combined GC/HPLC only data, threshold \>= length(unique(gc_hplc_list[[1]]\$N
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 df_pca <- gc_list[[1]] %>%
   # filter(., collapsed_compound %in% comp_vec) %>%
-  dplyr::select(NewFile, 
-                collapsed_compound, 
+  dplyr::select(File, 
+                Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
-    NewFile, # Category, # Suspected_Polymer, 
-    collapsed_compound) %>%
+    File,
+    Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
+  tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "NewFile")
+  tibble::column_to_rownames(., var = "File")
 
 for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- 0 # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
+    # stats::runif(length(which(base::is.na(df_pca[r,]))),
+    #                                                         min = sort(gc_list[[1]]$Values)[1]/100000,
+    #                                                         max = sort(gc_list[[1]]$Values)[2]/100000)
 }
 
-res.pca <- FactoMineR::PCA(df_pca,
+clr_transformed_pca <- compositions::clr(df_pca)
+
+res.pca <- FactoMineR::PCA(df_pca, # clr_transformed_pca
                            scale.unit = FALSE,
                            graph = FALSE)
 
@@ -809,6 +865,7 @@ factoextra::fviz_pca_biplot(res.pca,
                             labelsize = 6, 
                             addEllipses = TRUE,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            # habillage = row.names(df_pca),
                             title = "Plastic Sample")
 
 
@@ -1063,41 +1120,51 @@ factoextra::fviz_pca_biplot(res.pca,
 
 ##### "Category" --  4 different categorization schemes
 
+(Update 04 Feb 2024:) Most common theme in comparison PCA biplot of zero versus. LOD imputation is that Zero imputation provides better higher percentage of data variation explained by PC1 and PC2 than LOD imputation.
+
 ```{r , echo=FALSE, warning = FALSE}
-df_pca <- gc_list[[1]] %>%
+df_pca <- hplc_list[[1]] %>%
   dplyr::select(File, 
                 Category,
                 Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
+    File,
     Category,
     Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
   tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "Category")
+  tibble::column_to_rownames(., var="File") %>%
+  relocate(Category, .after =1)
+  
 
 for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- 0
+  # stats::runif(length(which(base::is.na(df_pca[r,]))),
+  #                                                           min = sort(hplc_list[[1]]$Values)[1]/100000,
+  #                                                           max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
-res.pca <- FactoMineR::PCA(df_pca, 
+clr_transformed_pca <- compositions::clr(df_pca[, -1])
+
+res.pca <- FactoMineR::PCA(clr_transformed_pca, # df_pca[, -1], 
                            scale.unit = FALSE,
                            graph = FALSE)
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
                             label = "none", 
-                            invisible = "var", 
+                            invisible = "var",
                             repel = TRUE,
                             labelsize = 6,
-                            habillage = df_pca$Category,
+                            habillage = factor(df_pca$Category),
                             addEllipses = TRUE,
-                            ggtheme = ggplot2::theme_minimal(base_size = 15),
-                            title = paste0("Combined GC-HPLC samples by Category grouping ", 2))
+                            ellipse.level=0.95,
+                            ggtheme = ggplot2::theme_minimal(base_size = 15)
+                            # title = paste0("Combined GC-HPLC samples by Category grouping ", 2)
+                            )
 
 
 # df_pca <- input_df(df)
@@ -1460,6 +1527,43 @@ plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
 
 
 ```
+
+## Normality and Homogeneity of Variance
+
+Before running multiple Wilcoxon tests, it is recommended to examine whether criteria for univariate parametric test, such as t-test, are violated. If yes, then it is safe to proceed using non-parametric univariate test, such as Wilcoxon test.
+
+First, equal variance and normally distributed between plastic product types were examined using histogram, Q-Q plots. Here, all plastic product types are NOT normally distributed.
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+GasData <- as.vector(t(cat_5[,c(1:21)])) 
+DieselData <- as.vector(t(cat_5[,c(22:25)]))
+
+# Histogram
+hist(GasData, col='steelblue', main='Gas')
+hist(DieselData, col='steelblue', main='Diesel')
+
+# Q-Q plots aka. Normal Probability plots
+stats::qqnorm(GasData, main='Gas')
+stats::qqline(GasData)
+
+stats::qqnorm(DieselData, main='Diesel')
+stats::qqline(DieselData)
+```
+
+Then, equality of variance between Gas and Diesel populations can be examined using Levene's test and Fligner-Killeen test for non-normally distributed data. Here, for both tests, p values are \< 0.05, and thus, there is significant difference in variances between Gas and Diesel populations.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Levene’s test-non-normally distributed data
+library(car)
+data <- c(GasData, DieselData)
+group <- as.factor(c(rep("Gas", times = length(GasData)), rep("Diesel", times = length(DieselData))))
+non_norm_dist_data <- data.frame(data, group)
+car::leveneTest(data ~ group, data = non_norm_dist_data)
+
+# Fligner-Killeen test
+stats::fligner.test(data ~ group, data = non_norm_dist_data)
+```
+Here, multiple Wilcoxon tests followed by p-value correction for multiple testing was done. Different method for p-value correction from function *p.adjust* from package **stats** were used. After p-value correction, the threshold for p-value can be set (for example,p.adjust \< 0.05 or \< 0.1), to see how it affects the number of significant compounds that can be found. Importantly, the threshold should be set so that it can include as many ASTM reference compounds in the list of significant compounds as possible. For example here, no significant compounds can be found with adjusted p-value \< 0.05. But when adjusted p-value is \< 0.1, 127 significant compounds are found.
 
 ## Demo Wilcoxon test
 
