@@ -39,6 +39,7 @@ library(stats)
 library(FactoMineR)
 library(factoextra)
 library(compositions)
+library(ggforce)
 
 
 # Functions -------------------------------------------------------------------------------------------------------
@@ -158,51 +159,52 @@ df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
 
-# STEP 1.2 Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks) ---------------------------- 
+
 # QUALITY CONTROL A OF STEP 1.2: Plot Percentage coverage after removal of limit observation----------------------------
-plot_a <- list()
-j <- 1
-for (i in 1:length(df_list2_step1.1)) {
-  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
-    df_filter_area <- df_list2_step1.1[[i]] %>%
-      filter(., Height >= threshold)
-    coverage <- sum(df_filter_area$Height)*100/sum(df_list2_step1.1[[i]]$Height)
-    coverage_drop <- 100 - coverage
-    df <- data.frame(thres = threshold, coverage = coverage, 
-                     coverage_drop = coverage_drop, file = unique(df_list2_step1.1[[i]]$File))
-    plot_a[[j]] <- df
-    j <- j+1
-  }
-}
+# plot_a <- list()
+# j <- 1
+# for (i in 1:length(df_list2_step1.1)) {
+#   for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+#     df_filter_area <- df_list2_step1.1[[i]] %>%
+#       filter(., Height >= threshold)
+#     coverage <- sum(df_filter_area$Height)*100/sum(df_list2_step1.1[[i]]$Height)
+#     coverage_drop <- 100 - coverage
+#     df <- data.frame(thres = threshold, coverage = coverage, 
+#                      coverage_drop = coverage_drop, file = unique(df_list2_step1.1[[i]]$File))
+#     plot_a[[j]] <- df
+#     j <- j+1
+#   }
+# }
+# 
+# # Examine the Average percentage coverage at each threshold of removal
+# View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage, base::mean)) %>% mutate(coverage = round(coverage, 3)))
+# 
+# # Examine the Average drop from original data (without any removal) in percentage coverage at each threshold of removal
+# View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage_drop, base::mean)) %>% mutate(coverage_drop = round(coverage_drop, 3)))
+# 
+# # QUALITY CONTROL B OF STEP 1.2: Plot number of peak remains after removal of limit observation----------------------------
+# plot_b <- list()
+# j <- 1
+# for (i in 1:length(df_list2_step1.1)) {
+#   for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+#     df_filter_area <- df_list2_step1.1[[i]] %>%
+#       filter(., Height >= threshold)
+#     peak_remain <- dim(df_filter_area)[1]
+#     peaknumber_drop <- dim(df_list2_step1.1[[i]])[1] - peak_remain
+#     df <- data.frame(thres = threshold, peak_remain = peak_remain, 
+#                      peaknumber_drop = peaknumber_drop, file = unique(df_list2_step1.1[[i]]$File))
+#     plot_b[[j]] <- df
+#     j <- j + 1
+#   }
+# }
+# 
+# # Examine the average number of Average percentage coverage at each threshold of removal
+# View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peak_remain, base::mean)) %>% mutate(peak_remain = round(peak_remain, 0)))
+# 
+# # Examine the average number of Average percentage coverage at each threshold of removal
+# View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peaknumber_drop, base::mean)) %>% mutate(peaknumber_drop = round(peaknumber_drop, 0)))
 
-# Examine the Average percentage coverage at each threshold of removal
-View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage, base::mean)) %>% mutate(coverage = round(coverage, 3)))
-
-# Examine the Average drop from original data (without any removal) in percentage coverage at each threshold of removal
-View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage_drop, base::mean)) %>% mutate(coverage_drop = round(coverage_drop, 3)))
-
-# QUALITY CONTROL B OF STEP 1.2: Plot number of peak remains after removal of limit observation----------------------------
-plot_b <- list()
-j <- 1
-for (i in 1:length(df_list2_step1.1)) {
-  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
-    df_filter_area <- df_list2_step1.1[[i]] %>%
-      filter(., Height >= threshold)
-    peak_remain <- dim(df_filter_area)[1]
-    peaknumber_drop <- dim(df_list2_step1.1[[i]])[1] - peak_remain
-    df <- data.frame(thres = threshold, peak_remain = peak_remain, 
-                     peaknumber_drop = peaknumber_drop, file = unique(df_list2_step1.1[[i]]$File))
-    plot_b[[j]] <- df
-    j <- j + 1
-  }
-}
-
-# Examine the average number of Average percentage coverage at each threshold of removal
-View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peak_remain, base::mean)) %>% mutate(peak_remain = round(peak_remain, 0)))
-
-# Examine the average number of Average percentage coverage at each threshold of removal
-View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peaknumber_drop, base::mean)) %>% mutate(peaknumber_drop = round(peaknumber_drop, 0)))
-
+# STEP 1.2 Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks)----
 # ATDGCMS
 
 list1_remaining_area <- list()
@@ -210,7 +212,7 @@ list1_removed_area <- list()
 for (i in 1:length(df_list1_step1.1)) {
   list1_remaining_area[[i]] <- df_list1_step1.1[[i]] %>%
     filter(., Area > 100000)
-  
+
   list1_removed_area[[i]] <- df_list1_step1.1[[i]] %>%
     filter(., Area <= 100000)
 }
@@ -221,7 +223,7 @@ list2_removed_area <- list()
 for (i in 1:length(df_list2_step1.1)) {
   list2_remaining_area[[i]] <- df_list2_step1.1[[i]] %>%
     filter(., Height > 5000)
-  
+
   list2_removed_area[[i]] <- df_list2_step1.1[[i]] %>%
     filter(., Height <= 5000)
 }
@@ -258,7 +260,7 @@ combined_df2 <- rbind(df2, df_blank2) %>%
 
 colnames(combined_df2)[[1]] <- "m.z"
 
-# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold
+# STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold --------------------------
 
 # Statistical Description for selecting rtthres and mzthres
 # Hmisc::describe(combined_df1)
@@ -830,32 +832,42 @@ For combined GC/HPLC only data, threshold \>= length(unique(gc_hplc_list[[1]]\$N
 ```
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_list[[1]] %>%
-  # filter(., collapsed_compound %in% comp_vec) %>%
-  dplyr::select(File, 
+df_pca <- icp_list[[1]] %>%
+  dplyr::select(File,
+                Subcategory,
                 Feature, 
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
     File,
+    Subcategory,
     Feature) %>%
   dplyr::summarise(across(Values, base::mean)) %>%
   tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
-  tibble::column_to_rownames(., var = "File")
+  tibble::column_to_rownames(., var="File") %>%
+  relocate(Subcategory, .after =1)
 
-for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- 0 # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
+# Remove columns with more than 90% NAs
+test <- df_pca %>% 
+  purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=90)
+
+
+for (r in 1:nrow(test)) {
+  test[r, which(base::is.na(test[r,]))] <- 0
+  # sort(gc_list[[2]]$Values)[1] # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
     # stats::runif(length(which(base::is.na(df_pca[r,]))),
-    #                                                         min = sort(gc_list[[1]]$Values)[1]/100000,
-    #                                                         max = sort(gc_list[[1]]$Values)[2]/100000)
+    #                                                         min = sort(hplc_list[[2]]$Values)[1],
+    #                                                         max = sort(hplc_list[[2]]$Values)[2])
 }
 
-clr_transformed_pca <- compositions::clr(df_pca)
+# clr_transformed_pca <- compositions::clr(test[, -1])
 
-res.pca <- FactoMineR::PCA(df_pca, # clr_transformed_pca
-                           scale.unit = FALSE,
-                           graph = FALSE)
+res.pca <- FactoMineR::PCA(
+  test[, -1],
+  # clr_transformed_pca,
+  scale.unit = FALSE,
+  graph = FALSE)
 
 factoextra::fviz_pca_biplot(res.pca,  
                             geom = c("point", "text"),
@@ -863,11 +875,17 @@ factoextra::fviz_pca_biplot(res.pca,
                             invisible = "var", 
                             repel = TRUE,
                             labelsize = 6, 
-                            addEllipses = TRUE,
+                            habillage = factor(df_pca$Subcategory),
+                            # addEllipses = TRUE,
+                            # ellipse.level=0.95,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
-                            # habillage = row.names(df_pca),
-                            title = "Plastic Sample")
-
+                            title = "Plastic Sample") + 
+  # if has error "Too few points to calculate an ellipse"
+  ggforce::geom_mark_ellipse(aes(fill = Groups,
+                                 color = Groups),
+                             label.buffer = unit(40, 'mm')) +
+  theme(legend.position = 'bottom') +
+  coord_equal()
 
 # df_pca <- input_df(gc_hplc_list[[1]])
 # 
@@ -1120,10 +1138,10 @@ factoextra::fviz_pca_biplot(res.pca,
 
 ##### "Category" --  4 different categorization schemes
 
-(Update 04 Feb 2024:) Most common theme in comparison PCA biplot of zero versus. LOD imputation is that Zero imputation provides better higher percentage of data variation explained by PC1 and PC2 than LOD imputation.
+(Update 04 Feb 2024:) Most common theme in comparison PCA biplot of zero versus. LOD imputation is that Zero imputation provides better higher percentage of data variation explained by PC1 and PC2 than LOD imputation. AND also original data is giving out better percentage variation explained than the compositional data transformed data (like with CLR)
 
 ```{r , echo=FALSE, warning = FALSE}
-df_pca <- hplc_list[[1]] %>%
+df_pca <- hplc_icp_list[[1]] %>%
   dplyr::select(File, 
                 Category,
                 Feature, 
@@ -1147,7 +1165,7 @@ for (r in 1:nrow(df_pca)) {
   #                                                           max = sort(hplc_list[[1]]$Values)[2]/100000)
 }
 
-clr_transformed_pca <- compositions::clr(df_pca[, -1])
+transformed_pca <- compositions::clr(df_pca[, -1])
 
 res.pca <- FactoMineR::PCA(clr_transformed_pca, # df_pca[, -1], 
                            scale.unit = FALSE,
@@ -1272,20 +1290,23 @@ If we filter unique compounds by File (compounds appear in at least 2 files), th
 
 This exercise does not seems to affect the HCa. Keep in mind that for all 3 cases of data combinations: none of them has compounds that occur in all samples. NONE of THEM!!!!!
 
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-##### Examining different threshold for minimum number of samples that a compound must occur in.
-comp_vec <- c()
-for (comp in unique(hplc_list[[1]]$collapsed_compound)) {
-  idx <- which(hplc_list[[1]]$collapsed_compound == comp)
-  if (length(unique(hplc_list[[1]][idx,]$NewFile)) >= (length(unique(hplc_list[[1]]$NewFile))/3)) {
-    comp_vec <- c(comp_vec, comp)
-  }
-}
-```
+### Clustering of samples
+
+(Jan 11th 2024): 
+\ICP only data shows misgrouping between the following Subcategories: 
+- Cigarillo tip//Bottle caps
+- Food wrapper// Food packaging// Food containers//plastic drinking straws//Various plastic waste
+
+\GC+ICP data show clear separation between GC and ICP data into 2 clusters. From ICP cluster, the misgrouping between the following Subcategories is the same as the case of ICP only. From the GC cluster, the grouping is more or less the same as the case of GC only.
+
+\HPLC+ICP data, the cluster of both ICP and HPLC side change a bit. However for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For HPLC side, the organization of the sample into grouping change a bit as the plastic toy balls are separated into their own top cluster (same height level with ICP and rest of HPLC branches) 
+
+\GC+HPLC+ICP data, for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For GC + HPLC side, it looks almost exactly like the case of GC+HPLC.
+
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-# Data prep for HCA
-hc_df <- gc_hplc_icp_list[[1]] %>%
+# Data prep for HCA ---------------------
+hc_df <- icp_list[[1]] %>%
   # filter(., Feature %in% comp_vec) %>%
   dplyr::select(File,
                 Subcategory, # !! Subcategory to easier visualize the samples characteristic in HCA plot
@@ -1309,22 +1330,7 @@ for (r in 1:nrow(hc_df)) {
 }
 
 rownames(hc_df) <- names
-```
 
-### Clustering of samples
-
-(Jan 11th 2024): 
-\ICP only data shows misgrouping between the following Subcategories: 
-- Cigarillo tip//Bottle caps
-- Food wrapper// Food packaging// Food containers//plastic drinking straws//Various plastic waste
-
-\GC+ICP data show clear separation between GC and ICP data into 2 clusters. From ICP cluster, the misgrouping between the following Subcategories is the same as the case of ICP only. From the GC cluster, the grouping is more or less the same as the case of GC only.
-
-\HPLC+ICP data, the cluster of both ICP and HPLC side change a bit. However for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For HPLC side, the organization of the sample into grouping change a bit as the plastic toy balls are separated into their own top cluster (same height level with ICP and rest of HPLC branches) 
-
-\GC+HPLC+ICP data, for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For GC + HPLC side, it looks almost exactly like the case of GC+HPLC.
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
 hca_samp <- stats::hclust(vegan::vegdist(hc_df,
                                          method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
@@ -1334,6 +1340,7 @@ plot(hca_samp,
      hang = -1,
      main = "")
 ```
+
 
 A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
 
@@ -2172,614 +2179,6 @@ writexl::write_xlsx(x = sig_comp_CO1_34, path = "Wilcoxon_test_ICP_by_Robust Aic
 ```
 
 ### Wilcoxon test without HCA clustering precursor
-
-Previously, when using "product_cat" as the grouping factor, even with the p-value threshold of 0.5, we only get 4 compounds that significant between product_cat ==\> This means that most of the values between product_cat are really subtle and cannot really be detect with just Wilcoxon test. To examine the number of significant compounds that can be achieve through gradual "branching" of different levels of sample grouping, we first group them by Suspected_Polymer, then by Category, then finally by Subcategory
-
-First we examined the Wilcoxon test of Suspect_POlymer // Category // Subcategory individually (not using gradual "branching"):
-
-#### By Suspect_Polymer
-
-Here we get all significant compounds from Suspected_Polymer that has minimum 1 -\> 6 obs and see how the number of significant compounds change (from at least 2 obs -\> maximum number of obs in category in stats df)
-
-##### COMBINED GC_HPLC
-
-###### with Missing observation method - DONE
-
-```{r, echo=FALSE, warning = FALSE, message=FALSE}
-list_suspect_pol <- list()
-
-stats <- gc_hplc_list[[1]] %>%
-    select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
-    # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
-    summarise(across(Values, mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "NewFile")
-
-for (min_obs in 1:10) {
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer(), pval_ks_test=integer())
-  # Loop through each collapsed_compound (as columns)
-  for (c in 2:ncol(stats)) {
-    satisfied_sp <- c()
-    # Loop through each suspected_polymer
-    for (sus_p in unique(stats$Suspected_Polymer)) {
-      # get all Suspected_Polymer that has > n obs
-      if (sum(!is.na(stats[which(stats$Suspected_Polymer == sus_p), c])) > min_obs) {
-        satisfied_sp <- c(satisfied_sp, sus_p)
-      } else {
-        next
-      }
-    }
-    # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-    if (length(satisfied_sp) < 2) {
-      next
-    } else {
-      # looping through the combinations of product categories 
-      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-        # extract the combinations of product category pairs
-        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-        # calculating the p-value between each product category pair 
-        pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                        stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-        pval_ks_test <- ks.test(stats[which(stats$Suspected_Polymer == p_1), c],
-                                stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-        # assigning row information
-        sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, " & ", p_2), 
-                                     pval_wilcox_test, 
-                                     pval_ks_test)
-      }
-    }
-  }
-  
-  sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(adjusted_pvalue_holm)
-  
-  # Check if the df is empty before create mean_rt and mean_mz column
-  if (nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]]) == 0) {
-    next
-  } else {
-    # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
-    idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 3))
-    mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 3))
-  }
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
-  }
-  
-  print(sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(comp))
-  print(length(unique(list_suspect_pol[[paste0("Min_obs_", min_obs)]]$comp)))
-}
-
-writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
-```
-
-###### with NA imputation method - DONE
-
-[UPdate 15th Dec 2023]: When we impute the missing data with 0 instead of stochaistic LOD, we have shit load more significant compounds (1095 versus. ~100)
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-stats <- gc_hplc_list[[1]] %>%
-  select(File, collapsed_compound, Suspected_Polymer, Values) %>%
-  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, Suspected_Polymer, collapsed_compound) %>%
-  summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-  column_to_rownames(., var = "File")
-  
-for (r in 1:nrow(stats)) {
-  stats[r, which(base::is.na(stats[r,]))] <- 0
-    # stats::runif(length(which(base::is.na(stats[r,]))),
-    #                                                       min = sort(gc_hplc_list[[1]]$Values)[1]/10000,
-    #                                                       max = sort(gc_hplc_list[[1]]$Values)[2]/10000)
-}
-
-sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  
-# create vector of satisfied category 
-satisfied_sp <- c()
-for (cat in unique(stats$Suspected_Polymer)) {
-  satisfied_sp <- c(cat, satisfied_sp)
-}
-
-# Loop through each collapsed_compound (as columns)
-for (c in 2:ncol(stats)) {
-  # looping through the combinations of product categories 
-  for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-    # extract the combinations of product category pairs
-    p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-    p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-    # calculating the p-value between each product category pair 
-    pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                    stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-    # assigning row information
-    sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                   paste0(p_1, " & ", p_2), 
-                                   pval_wilcox_test)
-    
-  }
-}
-
-sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-
-suspect_pol <- sp_df %>%
-  filter(., adjusted_pvalue_holm < 0.05) %>%
-  arrange(adjusted_pvalue_holm)
-
-print(sp_df %>%
-  filter(., adjusted_pvalue_holm < 0.05) %>%
-  arrange(adjusted_pvalue_holm))
-
-# Check if the df is empty before create mean_rt and mean_mz column
-if (dim(suspect_pol)[1] == 0) {
-  next
-} else {
-  # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(suspect_pol)) {
-    idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == suspect_pol[row,]$comp)
-    mean_rt <- c(mean_rt, mean(gc_hplc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(gc_hplc_list[[1]][idx, ]$m.z))
-  }
-  
-  suspect_pol$mean_rt <- mean_rt
-  suspect_pol$mean_mz <- mean_mz
-}
-
-
-writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_NA imputed_15thDec2023.xlsx")
-```
-
-###### Summary of significant compounds - DONE
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_Missing-Observation.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_polymer_NA imputed.xlsx")
-
-## Missing observation
-sheet_names1 <- excel_sheets(path = p1)
-sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-# unique1 <- unique(unlist(unique_values_list1))
-
-## NA imputed
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
-
-View(c(unique_values_list1, unique_values_list2))
-
-# Unlisting and then finding unique values across all data frames
-# unique2 <- unique(unlist(unique_values_list2))
-
-# all_unique <- data.frame(comp=unique(c(unique1, unique2)))
-# 
-# mean_rt <- c()
-# mean_mz <- c()
-# for (row in 1:nrow(all_unique)) {
-#   idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-#   mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-#   mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
-# }
-# 
-# all_unique$mean_rt <- mean_rt
-# all_unique$mean_mz <- mean_mz
-# 
-# writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_COMBINED GC_HPLC_by_Suspected_Polymer_all_significant compounds.xlsx")
-```
-
-##### ATDGCMS
-
-###### with Missing observation method - DONE
-
-[Update 15th Dec 2023]: The dimension of the stats only 64 rows, which means byh updating the Blank files from Davie Jones, we effectively remove 12 samples from the pool of samples (previously 76 samples in total; now 64).
-
-```{r, echo=FALSE, warning = FALSE, message=FALSE}
-list_suspect_pol <- list()
-
-stats <- gc_list[[1]] %>%
-    select(File, collapsed_compound, Suspected_Polymer, Values) %>%
-    # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(File, Suspected_Polymer, collapsed_compound) %>%
-    summarise(across(Values, mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "File")
-
-for (min_obs in 1:10) {
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  # Loop through each collapsed_compound (as columns)
-  for (c in 2:ncol(stats)) {
-    satisfied_sp <- c()
-    # Loop through each suspected_polymer
-    for (sus_p in unique(stats$Suspected_Polymer)) {
-      # get all Suspected_Polymer that has > n obs
-      if (sum(!is.na(stats[which(stats$Suspected_Polymer == sus_p), c])) > min_obs) {
-        satisfied_sp <- c(satisfied_sp, sus_p)
-      } else {
-        next
-      }
-    }
-    # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-    if (length(satisfied_sp) < 2) {
-      next
-    } else {
-      # looping through the combinations of product categories 
-      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-        # extract the combinations of product category pairs
-        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-        # calculating the p-value between each product category pair 
-        pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                        stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-        # assigning row information
-        sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, " & ", p_2), 
-                                     pval_wilcox_test)
-      }
-    }
-  }
-  
-  sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(adjusted_pvalue_holm)
-  
-  print(list_suspect_pol[[paste0("Min_obs_", min_obs)]])
-  
-  # Check if the df is empty before create mean_rt and mean_mz column
-  if (nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]]) == 0) {
-    next
-  } else {
-    # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
-    idx <- base::which(gc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, round(mean(gc_list[[1]][idx, ]$RT), 3))
-    mean_mz <- c(mean_mz, round(mean(gc_list[[1]][idx, ]$m.z), 3))
-  }
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
-  }
-
-}
-
-writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_GC_data_by_Suspected_polymer_Missing-Observation_15Dec2023.xlsx")
-```
-
-###### with NA imputation method - DONE
-
-[UPdate 15th Dec 2023]: Note that the Total percentage of each file (aka. row) in the stats data frame is not = 100% because at the last step of the data processing, we remove all the unique compounds that only appear in that one sample.s
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-stats <- gc_list[[1]] %>%
-  select(File, collapsed_compound, Suspected_Polymer, Values) %>%
-  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(File, Suspected_Polymer, collapsed_compound) %>%
-  summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-  column_to_rownames(., var = "File")
-  
-for (r in 1:nrow(stats)) {
-  stats[r, which(base::is.na(stats[r,]))] <- 0
-    # stats::runif(length(which(base::is.na(stats[r,]))),
-    #                                                       min = sort(gc_list[[1]]$Values)[1]/100000,
-    #                                                       max = sort(gc_list[[1]]$Values)[2]/100000)
-}
-
-sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  
-# create vector of satisfied category 
-satisfied_sp <- c()
-for (cat in unique(stats$Suspected_Polymer)) {
-  satisfied_sp <- c(cat, satisfied_sp)
-}
-
-# Loop through each collapsed_compound (as columns)
-for (c in 2:ncol(stats)) {
-  # looping through the combinations of product categories 
-  for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-    # extract the combinations of product category pairs
-    p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-    p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-    # calculating the p-value between each product category pair 
-    pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                    stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-    # assigning row information
-    sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                   paste0(p_1, " & ", p_2), 
-                                   pval_wilcox_test)
-    
-  }
-}
-
-sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-
-suspect_pol <- sp_df %>%
-  filter(., adjusted_pvalue_holm < 0.05) %>%
-  arrange(adjusted_pvalue_holm)
-
-print(suspect_pol %>% arrange(comp))
-
-# Check if the df is empty before create mean_rt and mean_mz column
-if (dim(suspect_pol)[1] == 0) {
-  next
-} else {
-  # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(suspect_pol)) {
-    idx <- base::which(gc_list[[1]]$collapsed_compound == suspect_pol[row,]$comp)
-    mean_rt <- c(mean_rt, mean(gc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(gc_list[[1]][idx, ]$m.z))
-  }
-  
-  suspect_pol$mean_rt <- mean_rt
-  suspect_pol$mean_mz <- mean_mz
-}
-
-
-writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_GC_data_by_Suspected_Polymer_NA imputed_15Dec2023.xlsx")
-```
-
-###### Summary of significant compounds - DONE
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_polymer_Missing-Observation.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_GC_data_by_Suspected_Polymer_NA imputed.xlsx")
-
-## Missing observation
-sheet_names1 <- excel_sheets(path = p1)
-sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique1 <- unique(unlist(unique_values_list1))
-
-## NA imputed
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique2 <- unique(unlist(unique_values_list2))
-
-all_unique <- data.frame(comp=unique(c(unique1, unique2)))
-
-mean_rt <- c()
-mean_mz <- c()
-for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
-}
-
-all_unique$mean_rt <- mean_rt
-all_unique$mean_mz <- mean_mz
-
-writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_GC_data_by_Suspected_Polymer_all_significant compounds.xlsx")
-```
-
-##### HPLCTOFMS
-
-###### with Missing observation method - DONE
-
-```{r, echo=FALSE, warning = FALSE, message=FALSE}
-list_suspect_pol <- list()
-
-stats <- hplc_list[[1]] %>%
-    select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
-    # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-    group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
-    summarise(across(Values, mean)) %>%
-    pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-    column_to_rownames(., var = "NewFile")
-
-for (min_obs in 1:10) {
-  sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  # Loop through each collapsed_compound (as columns)
-  for (c in 2:ncol(stats)) {
-    satisfied_sp <- c()
-    # Loop through each suspected_polymer
-    for (sus_p in unique(stats$Suspected_Polymer)) {
-      # get all Suspected_Polymer that has > n obs
-      if (sum(!is.na(stats[which(stats$Suspected_Polymer == sus_p), c])) > min_obs) {
-        satisfied_sp <- c(satisfied_sp, sus_p)
-      } else {
-        next
-      }
-    }
-    # IF there is only 1 product_cat have more than n obs, then go to the next column (aka. compound)
-    if (length(satisfied_sp) < 2) {
-      next
-    } else {
-      # looping through the combinations of product categories 
-      for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-        # extract the combinations of product category pairs
-        p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-        p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-        # calculating the p-value between each product category pair 
-        pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                        stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-        # assigning row information
-        sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                     paste0(p_1, " & ", p_2), 
-                                     pval_wilcox_test)
-      }
-    }
-  }
-  
-  sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]] <- sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(adjusted_pvalue_holm)
-  
-  # Check if the df is empty before create mean_rt and mean_mz column
-  if (nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]]) == 0) {
-    next
-  } else {
-    # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(list_suspect_pol[[paste0("Min_obs_", min_obs)]])) {
-    idx <- base::which(hplc_list[[1]]$collapsed_compound == list_suspect_pol[[paste0("Min_obs_", min_obs)]][row,]$comp)
-    mean_rt <- c(mean_rt, round(mean(hplc_list[[1]][idx, ]$RT), 3))
-    mean_mz <- c(mean_mz, round(mean(hplc_list[[1]][idx, ]$m.z), 3))
-  }
-  
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_rt <- mean_rt
-  list_suspect_pol[[paste0("Min_obs_", min_obs)]]$mean_mz <- mean_mz
-  }
-  
-  print(sp_df %>%
-    filter(., adjusted_pvalue_holm < 0.05) %>%
-    arrange(comp))
-  print(length(unique(list_suspect_pol[[paste0("Min_obs_", min_obs)]]$comp)))
-}
-
-writexl::write_xlsx(x = list_suspect_pol, path = "Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
-```
-
-###### with NA imputation method - DONE
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-stats <- hplc_list[[1]] %>%
-  select(NewFile, collapsed_compound, Suspected_Polymer, Values) %>%
-  # since we have duplicates with different values of the same compound in some samples, we summarize these values by taking the mean of them
-  group_by(NewFile, Suspected_Polymer, collapsed_compound) %>%
-  summarise(across(Values, mean)) %>%
-  pivot_wider(names_from = collapsed_compound, values_from = Values) %>%
-  column_to_rownames(., var = "NewFile")
-  
-for (r in 1:nrow(stats)) {
-  stats[r, which(base::is.na(stats[r,]))] <- stats::runif(length(which(base::is.na(stats[r,]))),
-                                                          min = sort(hplc_list[[1]]$Values)[1]/10000,
-                                                          max = sort(hplc_list[[1]]$Values)[2]/10000)
-}
-
-sp_df <- data.frame(comp=character(), comparison_pair=character(), pval_wilcox_test=integer())
-  
-# create vector of satisfied category 
-satisfied_sp <- c()
-for (cat in unique(stats$Suspected_Polymer)) {
-  satisfied_sp <- c(cat, satisfied_sp)
-}
-
-# Loop through each collapsed_compound (as columns)
-for (c in 2:ncol(stats)) {
-  # looping through the combinations of product categories 
-  for (col in 1:ncol(utils::combn(satisfied_sp, 2))) {
-    # extract the combinations of product category pairs
-    p_1 <- utils::combn(satisfied_sp, 2)[1,col]
-    p_2 <- utils::combn(satisfied_sp, 2)[2,col]
-    # calculating the p-value between each product category pair 
-    pval_wilcox_test <- wilcox.test(stats[which(stats$Suspected_Polymer == p_1), c], 
-                                    stats[which(stats$Suspected_Polymer == p_2), c])$p.value
-    # assigning row information
-    sp_df[nrow(sp_df) + 1,] <- c(colnames(stats)[c], 
-                                   paste0(p_1, " & ", p_2), 
-                                   pval_wilcox_test)
-    
-  }
-}
-
-sp_df$adjusted_pvalue_holm <- stats::p.adjust(sp_df$pval_wilcox_test, method = "holm")
-
-suspect_pol <- sp_df %>%
-  filter(., adjusted_pvalue_holm < 0.05) %>%
-  arrange(adjusted_pvalue_holm)
-
-print(suspect_pol %>% arrange(comp))
-
-# Check if the df is empty before create mean_rt and mean_mz column
-if (dim(suspect_pol)[1] == 0) {
-  next
-} else {
-  # Add RT and m.z info to the significant table
-  mean_rt <- c()
-  mean_mz <- c()
-  for (row in 1:nrow(suspect_pol)) {
-    idx <- base::which(hplc_list[[1]]$collapsed_compound == suspect_pol[row,]$comp)
-    mean_rt <- c(mean_rt, mean(hplc_list[[1]][idx, ]$RT))
-    mean_mz <- c(mean_mz, mean(hplc_list[[1]][idx, ]$m.z))
-  }
-  
-  suspect_pol$mean_rt <- mean_rt
-  suspect_pol$mean_mz <- mean_mz
-}
-
-
-writexl::write_xlsx(x = suspect_pol, path = "Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
-```
-
-###### Summary of significant compounds - DONE
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-p1 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_polymer_Missing-Observation.xlsx")
-p2 <- paste0(getwd(), "/Wilcoxon test results/Wilcoxon_test_HPLC_data_by_Suspected_Polymer_NA imputed.xlsx")
-
-## Missing observation
-sheet_names1 <- excel_sheets(path = p1)
-sus_pol_combined1 <- lapply(sheet_names1, function(sheet) read_excel(path = p1, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list1 <- lapply(sus_pol_combined1, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique1 <- unique(unlist(unique_values_list1))
-
-## NA imputed
-sheet_names2 <- excel_sheets(path = p2)
-sus_pol_combined2 <- lapply(sheet_names2, function(sheet) read_excel(path = p2, sheet = sheet))
-
-# Using lapply to get unique values from each data frame
-unique_values_list2 <- lapply(sus_pol_combined2, function(df) unique(df$comp))
-
-# Unlisting and then finding unique values across all data frames
-unique2 <- unique(unlist(unique_values_list2))
-
-all_unique <- data.frame(comp=unique(c(unique1, unique2)))
-
-mean_rt <- c()
-mean_mz <- c()
-for (row in 1:nrow(all_unique)) {
-  idx <- base::which(gc_hplc_list[[1]]$collapsed_compound == all_unique[row,])
-  mean_rt <- c(mean_rt, round(mean(gc_hplc_list[[1]][idx, ]$RT), 4))
-  mean_mz <- c(mean_mz, round(mean(gc_hplc_list[[1]][idx, ]$m.z), 4))
-}
-
-all_unique$mean_rt <- mean_rt
-all_unique$mean_mz <- mean_mz
-
-writexl::write_xlsx(x = all_unique, path = "Wilcoxon_test_HPLC_data_by_Suspected_Polymer_all_significant compounds.xlsx")
-```
-
-##### ICP
 
 #### By Category
 
