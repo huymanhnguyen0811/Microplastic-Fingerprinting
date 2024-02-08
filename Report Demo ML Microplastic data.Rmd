@@ -29,7 +29,6 @@ library(readxl)
 library(tidyverse)
 library(dplyr)
 library(data.table)
-library(Hmisc)
 library(writexl)
 library(tidyr)
 library(grid)
@@ -40,7 +39,8 @@ library(FactoMineR)
 library(factoextra)
 library(compositions)
 library(ggforce)
-
+library(latticeExtra)
+library(cluster)
 
 # Functions -------------------------------------------------------------------------------------------------------
 '%notin%' <- Negate('%in%')
@@ -75,7 +75,7 @@ grouping_comp <- function(data, rtthres, mzthres, type) {
     )
     
     if (length(idx) > 0) {
-      dat[idx, "collapsed_compound"] <- paste0("Compound_", i, ".", type)
+      dat[idx, "Feature"] <- paste0("Compound_", i, ".", type)
       i <- i + 1
     }  
   }
@@ -158,52 +158,56 @@ df_list2_step1.1 <- purrr::map(file_list2, read_xls, skip = 1)
 df_list2_blank <- purrr::map(blank_list2, read_xls, skip = 1)
 
 df_blank2 <- dplyr::bind_rows(df_list2_blank)
+```
 
-
+#### Quality assurance for STEP 1.2: Plot Percentage coverage after removal of limit observation----------------------------
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # QUALITY CONTROL A OF STEP 1.2: Plot Percentage coverage after removal of limit observation----------------------------
-# plot_a <- list()
-# j <- 1
-# for (i in 1:length(df_list2_step1.1)) {
-#   for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
-#     df_filter_area <- df_list2_step1.1[[i]] %>%
-#       filter(., Height >= threshold)
-#     coverage <- sum(df_filter_area$Height)*100/sum(df_list2_step1.1[[i]]$Height)
-#     coverage_drop <- 100 - coverage
-#     df <- data.frame(thres = threshold, coverage = coverage, 
-#                      coverage_drop = coverage_drop, file = unique(df_list2_step1.1[[i]]$File))
-#     plot_a[[j]] <- df
-#     j <- j+1
-#   }
-# }
-# 
-# # Examine the Average percentage coverage at each threshold of removal
-# View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage, base::mean)) %>% mutate(coverage = round(coverage, 3)))
-# 
-# # Examine the Average drop from original data (without any removal) in percentage coverage at each threshold of removal
-# View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage_drop, base::mean)) %>% mutate(coverage_drop = round(coverage_drop, 3)))
-# 
-# # QUALITY CONTROL B OF STEP 1.2: Plot number of peak remains after removal of limit observation----------------------------
-# plot_b <- list()
-# j <- 1
-# for (i in 1:length(df_list2_step1.1)) {
-#   for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
-#     df_filter_area <- df_list2_step1.1[[i]] %>%
-#       filter(., Height >= threshold)
-#     peak_remain <- dim(df_filter_area)[1]
-#     peaknumber_drop <- dim(df_list2_step1.1[[i]])[1] - peak_remain
-#     df <- data.frame(thres = threshold, peak_remain = peak_remain, 
-#                      peaknumber_drop = peaknumber_drop, file = unique(df_list2_step1.1[[i]]$File))
-#     plot_b[[j]] <- df
-#     j <- j + 1
-#   }
-# }
-# 
-# # Examine the average number of Average percentage coverage at each threshold of removal
-# View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peak_remain, base::mean)) %>% mutate(peak_remain = round(peak_remain, 0)))
-# 
-# # Examine the average number of Average percentage coverage at each threshold of removal
-# View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peaknumber_drop, base::mean)) %>% mutate(peaknumber_drop = round(peaknumber_drop, 0)))
+plot_a <- list()
+j <- 1
+for (i in 1:length(df_list2_step1.1)) {
+  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+    df_filter_area <- df_list2_step1.1[[i]] %>%
+      filter(., Height >= threshold)
+    coverage <- sum(df_filter_area$Height)*100/sum(df_list2_step1.1[[i]]$Height)
+    coverage_drop <- 100 - coverage
+    df <- data.frame(thres = threshold, coverage = coverage,
+                     coverage_drop = coverage_drop, file = unique(df_list2_step1.1[[i]]$File))
+    plot_a[[j]] <- df
+    j <- j+1
+  }
+}
 
+# Examine the Average percentage coverage at each threshold of removal
+View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage, base::mean)) %>% mutate(coverage = round(coverage, 3)))
+
+# Examine the Average drop from original data (without any removal) in percentage coverage at each threshold of removal
+View(bind_rows(plot_a) %>% group_by(thres) %>% summarise(across(coverage_drop, base::mean)) %>% mutate(coverage_drop = round(coverage_drop, 3)))
+
+# QUALITY CONTROL B OF STEP 1.2: Plot number of peak remains after removal of limit observation----------------------------
+plot_b <- list()
+j <- 1
+for (i in 1:length(df_list2_step1.1)) {
+  for (threshold in c(seq(from = 0, to = 10000, by = 1000))) {
+    df_filter_area <- df_list2_step1.1[[i]] %>%
+      filter(., Height >= threshold)
+    peak_remain <- dim(df_filter_area)[1]
+    peaknumber_drop <- dim(df_list2_step1.1[[i]])[1] - peak_remain
+    df <- data.frame(thres = threshold, peak_remain = peak_remain,
+                     peaknumber_drop = peaknumber_drop, file = unique(df_list2_step1.1[[i]]$File))
+    plot_b[[j]] <- df
+    j <- j + 1
+  }
+}
+
+# Examine the average number of Average percentage coverage at each threshold of removal
+View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peak_remain, base::mean)) %>% mutate(peak_remain = round(peak_remain, 0)))
+
+# Examine the average number of Average percentage coverage at each threshold of removal
+View(bind_rows(plot_b) %>% group_by(thres) %>% summarise(across(peaknumber_drop, base::mean)) %>% mutate(peaknumber_drop = round(peaknumber_drop, 0)))
+```
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # STEP 1.2 Filtering out chemical noise (aka. setting limit of observations) of samples (NOT blanks)----
 # ATDGCMS
 
@@ -259,7 +263,52 @@ combined_df2 <- rbind(df2, df_blank2) %>%
   arrange(RT)
 
 colnames(combined_df2)[[1]] <- "m.z"
+```
 
+#### Quality assurance for STEP 1.3B: Examine variation in RT of 4 benchmark compounds in HPLC across all samples with histogram distribution of RT of 4 benchmark compounds 
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Use excel sheets of benchmark day "0, 2, 15, 34" from Final Leachates Benchmarks and Recovery.xlsx to create scatterplot 
+bm_sheets <- readxl::excel_sheets(path = paste0(getwd(),"/data/Final Leachates Benchmarks and Recovery.xlsx"))
+bm_df_list <- list()
+for (i in 1:length(bm_sheets)) {
+  x <- readxl::read_xlsx(paste0(getwd(),"/data/Final Leachates Benchmarks and Recovery.xlsx"), sheet = bm_sheets[i]) %>% 
+    select(c("Acetaminophen-d4 (m/z 156.0957)", "dTEP (m/z 198.1723)", "dTPrP (m/z 246.2568)",
+             "13C-6PPD (m/z 305.1956)", "dTPP (m/z 342.1722)"))
+  bm_df_list[[i]] <- x[-1,] %>% pivot_longer(cols = 1:ncol(x), names_to = "Benchmark", values_to = "RT")
+}
+
+bm_df <- bind_rows(bm_df_list)
+
+# Plot scatter and histogram of RT distribution
+par(mfrow = c(3, 2))
+
+for (i in 1:length(unique(bm_df$Benchmark))) {
+  as.matrix(round(summary(as.numeric(bm_df[which(bm_df$Benchmark == unique(bm_df$Benchmark)[i]),]$RT)), 4))
+  round(stats::sd(as.numeric(bm_df[which(bm_df$Benchmark == unique(bm_df$Benchmark)[i]),]$RT)), 4)
+  plot(x = bm_df[which(bm_df$Benchmark == unique(bm_df$Benchmark)[i]),]$RT,
+       y =1:length(bm_df[which(bm_df$Benchmark == unique(bm_df$Benchmark)[i]),]$RT),
+       xlab = "RT", ylab ="", cex = 1, cex.axis = 1.5, cex.lab = 1.5, cex.main = 1.5,
+       type = "p", main = unique(bm_df$Benchmark)[i])
+  hist(as.numeric(bm_df[which(bm_df$Benchmark == unique(bm_df$Benchmark)[i]),]$RT), 
+       xlab = "RT", ylab ="", cex.axis = 2, cex.lab = 2, cex.main = 2,
+       main = unique(bm_df$Benchmark)[i])
+}
+
+# What is the distribution of RT versus. no of peak in each sample?
+hist_ls <- list()
+i <- 1
+sample <- combined_df2 %>% filter(type %in% "Sample")
+for (file in unique(sample$File)) {
+  hist_ls[[i]] <- ggplot(sample[which(sample$File == file),]) + 
+    geom_histogram(aes(x = RT))
+  i <- i + 1
+}
+
+grid.arrange(grobs = hist_ls, ncol = 7)
+```
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # STEP 1.3B: Collapsing compounds based on RT1, RT2, Ion1 threshold --------------------------
 
 # Statistical Description for selecting rtthres and mzthres
@@ -481,7 +530,6 @@ for (i in 1:length(excel_sheets(path = p))) {
     select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'm.z', 'RT', 'Percent_Area')
   
   colnames(atdgcms)[ncol(atdgcms)] <- 'Values'
-  colnames(atdgcms)[5] <- 'Feature'
   
   gc_list[[i]] <- atdgcms
   
@@ -492,7 +540,6 @@ for (i in 1:length(excel_sheets(path = p))) {
     select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'collapsed_compound', 'm.z', 'RT', 'Percent_Height')
   
   colnames(hplctofms)[ncol(hplctofms)] <- 'Values'
-  colnames(hplctofms)[5] <- 'Feature'
   
   hplc_list[[i]] <- hplctofms
   
@@ -778,58 +825,9 @@ To perform PCA on compositional data while considering the Aitchison distance, y
 
 Log-Ratio Transformation: Transform the compositional data using an appropriate log-ratio transformation, such as the Centered Log-Ratio (CLR) transformation, the Additive Log-Ratio (ALR), or the Isometric Log-Ratio (ILR) transformation. These transformations allow the data to be analyzed in real Euclidean space, where standard statistical techniques are valid.
 
-### columns as "sample name"
+(Update 04 Feb 2024:) Most common theme in comparison PCA biplot of zero versus. LOD imputation is that Zero imputation provides better higher percentage of data variation explained by PC1 and PC2 than LOD imputation. AND also original data is giving out better percentage variation explained than the compositional data transformed data (like with CLR)
 
-```{r , echo=TRUE, warning = FALSE, message=FALSE}
-# columns as "sample name"
-input_df <- function(data) {
-  # create sample df
-  df_X_rq1 <- data %>%
-    dplyr::select(NewFile, collapsed_compound, Values) %>%
-    # filter(., str_detect(NewFile, "USE")) %>%
-    # filter(., str_detect(NewFile, "HPLC")) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(NewFile, collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from = NewFile, values_from = Values) %>%
-    tibble::column_to_rownames(., var = "collapsed_compound")
-  
-  for (r in 1:nrow(df_X_rq1)) {
-    df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- stats::runif(length(which(base::is.na(df_X_rq1[r,]))),
-                                                                  min = sort(data$Values)[1]/10000,
-                                                                  max = sort(data$Values)[2]/10000)
-  }
-
-  # table for information (rows are sample IDs, columns are sample information)
-  metadata_X_rq1 <- data.frame(NewFile = colnames(df_X_rq1))
-  category <- c()
-  for (NewFile in metadata_X_rq1$NewFile) {
-    category <- c(category, unique(data[which(data$NewFile == NewFile),]$Category))
-  }
-  metadata_X_rq1$Category <- category
-  metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "NewFile")
-
-  return(list(df_X_rq1, metadata_X_rq1))
-}
-```
-
-#### Examining different threshold for minimum number of samples that a compound must occur in.
-
-For HPLC only data, threshold \>= length(unique(hplc_list[[1]]\$NewFile))/2) produces PCA that can separate plastic ball into 1 cluster and PBBC into another clusters (with some FPW mixed up in it).
-
-For GC only data, threshold \>= length(unique(gc_list[[1]]\$NewFile))/2) produces PCA that separates plastic drinking straw (USSB-09, which is the only PDS_USSB that made out of Corn material) and the rest.
-
-For combined GC/HPLC only data, threshold \>= length(unique(gc_hplc_list[[1]]\$NewFile))/4) produces PCA that can separate plastic ball into 1 cluster and the rest.
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-# comp_vec <- c()
-# for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
-#   idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
-#   if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/4)) {
-#     comp_vec <- c(comp_vec, comp)
-#   }
-# }
-```
+(Update 05 Feb 2024:) I tried perform PCA with and without 1st step global filtering of minimum peak signal but the result of clustering is the same between these 2 cases.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 df_pca <- icp_list[[1]] %>%
@@ -944,273 +942,6 @@ factoextra::fviz_pca_biplot(res.pca,
 #                             habillage = unique(gc_hplc_list[[1]]$File))
 ```
 
-### columns as categorical type
-
-```{r , echo=FALSE, warning = FALSE}
-input_df <- function(data) {
-  # create sample df
-  df_X_rq1 <- data %>%
-    dplyr::select(File, 
-                  Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
-                  collapsed_compound, 
-                  Values) %>%
-    # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-    dplyr::group_by(
-      Suspected_Polymer, # Category, # Suspected_Polymer, 
-      collapsed_compound) %>%
-    dplyr::summarise(across(Values, base::mean)) %>%
-    tidyr::pivot_wider(names_from =  Suspected_Polymer, # Category, #Suspected_Polymer, Subcategory
-                       values_from = Values) %>%
-    tibble::column_to_rownames(., var = "collapsed_compound")
-  
-  for (r in 1:nrow(df_X_rq1)) {
-    df_X_rq1[r, which(base::is.na(df_X_rq1[r,]))] <- stats::runif(length(which(base::is.na(df_X_rq1[r,]))),
-                                                                  min = sort(data$Values)[1]/100000,
-                                                                  max = sort(data$Values)[2]/100000)
-  }
-
-  # table for information (rows are sample IDs, columns are sample information)
-  metadata_X_rq1 <- data.frame(Suspected_Polymer # Category # Suspected_Polymer Subcategory
-                               = colnames(df_X_rq1))
-  Suspected_Polymer <- metadata_X_rq1$Suspected_Polymer # Category  # Suspected_Polymer
-  metadata_X_rq1$Subcategory2 <- Subcategory2
-
-  metadata_X_rq1 <- metadata_X_rq1 %>% tibble::column_to_rownames(., var = "Subcategory" # "Category" # "Suspected_Polymer"
-                                                                  )
-  
-  return(list(df_X_rq1 ,metadata_X_rq1))
-}
-```
-
-##### "Suspected_Polymer"
-
-Since Suspected Polymer is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
-
-Also, here for polymer type, we remove all the "Type == Unknown", which are just a few samples in the data set and does not provide good information for plastic categorization in general.
-
-```{r , echo=FALSE, warning = FALSE, message = FALSE}
-df_pca <- gc_list[[1]] %>%
-  # filter(., collapsed_compound %in% comp_vec) %>%
-  dplyr::select(NewFile, 
-                Suspected_Polymer, # Category, # Suspected_Polymer,  Subcategory
-                collapsed_compound, 
-                Values) %>%
-  filter(., Suspected_Polymer %notin% "Unknown") %>%
-  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  dplyr::group_by(
-    Suspected_Polymer, # Category, # Suspected_Polymer, 
-    collapsed_compound) %>%
-  dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound, # Category, #Suspected_Polymer, Subcategory
-                     values_from = Values) %>%
-  tibble::column_to_rownames(., var = "Suspected_Polymer")
-
-for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
-}
-
-res.pca <- FactoMineR::PCA(df_pca,
-                           scale.unit = FALSE,
-                           graph = FALSE)
-
-factoextra::fviz_pca_biplot(res.pca,  
-                            geom = c("point", "text"),
-                            label = "none", 
-                            invisible = "var", 
-                            repel = TRUE,
-                            labelsize = 6,
-                            habillage = df_pca$Suspected_Polymer,
-                            addEllipses = TRUE,
-                            ggtheme = ggplot2::theme_minimal(base_size = 15),
-                            title = "Polymer type")
-
-
-# df_pca <- input_df(hplc_list[[1]]) # gc_hplc_list // gc_list
-# 
-# # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-# p <- PCAtools::pca(mat = df_pca[[1]], 
-#                    metadata = df_pca[[2]], 
-#                    # center = FALSE,
-#                    scale = FALSE 
-# )
-# 
-# # A bi-plot =================
-# PCAtools::biplot(p,
-#                  lab = NULL, 
-#                  colby = "Suspected_Polymer2" ,
-#                  hline = 0, vline = 0,
-#                  legendPosition = 'right', labSize = 5,
-#                  sizeLoadingsNames = 5,
-#                  showLoadings = TRUE,
-#                  showLoadingsNames = FALSE,
-#                  ntopLoadings = 10,
-#                  pointSize = 4, 
-#                  legendLabSize = 15,
-#                  legendTitleSize = 16,
-#                  legendIconSize = 6)
-```
-
-##### "Subcategory"
-
-Similarly to the case Suspected Polymer demonstrated in code above, Subcategory is the same for all 4 different categorization "groupings" only 1 PCA-biplot for each GC/HPLC/Combined data was generated.
-
-##### Examining different threshold for minimum number of samples that a compound must occur in.
-
-For HPLC only data, threshold \>= length(unique(hplc_list[[1]]\$NewFile))/1.5) produces PCA that can separate plastic ball, food packaging, bottle caps, fish trays, (Polystyrene food waste + Cigar tips) into 1 cluster and the rest.
-
-For GC only data, threshold \>= length(unique(gc_list[[1]]\$NewFile))/2) resulted in 7 compounds, This produces PCA that separates plastic drinking straw, PDS, PB, Drink bottles, Balloons, Cigar Tips, Bottle caps (closer to plastic cups) and the rest.
-
-For combined GC/HPLC only data: = threshold \>= length(unique(gc_hplc_list[[1]]$NewFile))/3) resutled in 63 compounds. This produces PCA that can separate bottle caps, Food packaging, Fishing bait trays, (PolystyreneFW + Cigar tips) into 1 cluster and the rest. = threshold >= length(unique(gc_hplc_list[[1]]$NewFile))/2.5) resutled in 24 compounds. This produces PCA that can separate Cigar tips, (Food packaging + Plastic toy balls + Food containers + BOttle caps), (Fishing bait trays + PolystyFW), (PDS + Food wrappers), Ziploc bags, Various plastic waste into 1 cluster.
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-comp_vec <- c()
-for (comp in unique(gc_hplc_list[[1]]$collapsed_compound)) {
-  idx <- which(gc_hplc_list[[1]]$collapsed_compound == comp)
-  if (length(unique(gc_hplc_list[[1]][idx,]$NewFile)) >= (length(unique(gc_hplc_list[[1]]$NewFile))/2.5)) {
-    comp_vec <- c(comp_vec, comp)
-  }
-}
-```
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_list[[1]] %>%
-  # filter(., collapsed_compound %in% comp_vec) %>%
-  dplyr::select(NewFile, 
-                Subcategory,
-                collapsed_compound, 
-                Values) %>%
-  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  dplyr::group_by(
-    Subcategory,
-    collapsed_compound) %>%
-  dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  collapsed_compound,
-                     values_from = Values) %>%
-  tibble::column_to_rownames(., var = "Subcategory")
-
-for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(gc_list[[1]]$Values)[1]/100000,
-                                                            max = sort(gc_list[[1]]$Values)[2]/100000)
-}
-
-res.pca <- FactoMineR::PCA(df_pca, 
-                           scale.unit = FALSE,
-                           graph = FALSE)
-
-factoextra::fviz_pca_biplot(res.pca,  
-                            geom = c("point", "text"),
-                            label = "none", # ind 
-                            invisible = "var", 
-                            repel = TRUE,
-                            labelsize = 6,
-                            habillage = df_pca$Subcategory,
-                            addEllipses = TRUE,
-                            ggtheme = ggplot2::theme_minimal(base_size = 15),
-                            title = "Product Subcategory")
-
-# df_pca <- input_df(gc_list[[1]])
-# 
-# # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-# p <- PCAtools::pca(mat = df_pca[[1]], 
-#                    metadata = df_pca[[2]], 
-#                    # center = FALSE,
-#                    scale = FALSE 
-# )
-# 
-# # A bi-plot =================
-# PCAtools::biplot(p,
-#                  lab = NULL, 
-#                  colby = "Subcategory2" ,
-#                  hline = 0, vline = 0,
-#                  legendPosition = 'right', labSize = 5,
-#                  sizeLoadingsNames = 5,
-#                  showLoadings = TRUE,
-#                  showLoadingsNames = FALSE,
-#                  ntopLoadings = 10,
-#                  pointSize = 4, 
-#                  legendLabSize = 15,
-#                  legendTitleSize = 16,
-#                  legendIconSize = 6)
-```
-
-##### "Category" --  4 different categorization schemes
-
-(Update 04 Feb 2024:) Most common theme in comparison PCA biplot of zero versus. LOD imputation is that Zero imputation provides better higher percentage of data variation explained by PC1 and PC2 than LOD imputation. AND also original data is giving out better percentage variation explained than the compositional data transformed data (like with CLR)
-
-```{r , echo=FALSE, warning = FALSE}
-df_pca <- hplc_icp_list[[1]] %>%
-  dplyr::select(File, 
-                Category,
-                Feature, 
-                Values) %>%
-  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
-  dplyr::group_by(
-    File,
-    Category,
-    Feature) %>%
-  dplyr::summarise(across(Values, base::mean)) %>%
-  tidyr::pivot_wider(names_from =  Feature,
-                     values_from = Values) %>%
-  tibble::column_to_rownames(., var="File") %>%
-  relocate(Category, .after =1)
-  
-
-for (r in 1:nrow(df_pca)) {
-  df_pca[r, which(base::is.na(df_pca[r,]))] <- 0
-  # stats::runif(length(which(base::is.na(df_pca[r,]))),
-  #                                                           min = sort(hplc_list[[1]]$Values)[1]/100000,
-  #                                                           max = sort(hplc_list[[1]]$Values)[2]/100000)
-}
-
-transformed_pca <- compositions::clr(df_pca[, -1])
-
-res.pca <- FactoMineR::PCA(clr_transformed_pca, # df_pca[, -1], 
-                           scale.unit = FALSE,
-                           graph = FALSE)
-
-factoextra::fviz_pca_biplot(res.pca,  
-                            geom = c("point", "text"),
-                            label = "none", 
-                            invisible = "var",
-                            repel = TRUE,
-                            labelsize = 6,
-                            habillage = factor(df_pca$Category),
-                            addEllipses = TRUE,
-                            ellipse.level=0.95,
-                            ggtheme = ggplot2::theme_minimal(base_size = 15)
-                            # title = paste0("Combined GC-HPLC samples by Category grouping ", 2)
-                            )
-
-
-# df_pca <- input_df(df)
-  # 
-  # # PCAtools::pca requires mat input (columns as "sample name", rows as "collapsed_compound")
-  # p <- PCAtools::pca(mat = df_pca[[1]], 
-  #                    metadata = df_pca[[2]], 
-  #                    # center = FALSE,
-  #                    scale = FALSE 
-  # )
-  # 
-  # # A bi-plot =================
-  # plt_list[[i]] <- PCAtools::biplot(p,
-  #                                   lab = NULL, 
-  #                                   colby = "Category2" ,
-  #                                   hline = 0, vline = 0,
-  #                                   legendPosition = 'right', labSize = 5,
-  #                                   sizeLoadingsNames = 5,
-  #                                   showLoadings = TRUE,
-  #                                   showLoadingsNames = FALSE,
-  #                                   ntopLoadings = 10,
-  #                                   pointSize = 4, 
-  #                                   legendLabSize = 15,
-  #                                   legendTitleSize = 16,
-  #                                   legendIconSize = 6)
-
-```
-
 ### "Trace metal"
 
 #### 1. Can we use trace metal to distinguish between individual samples?
@@ -1302,6 +1033,12 @@ This exercise does not seems to affect the HCa. Keep in mind that for all 3 case
 \HPLC+ICP data, the cluster of both ICP and HPLC side change a bit. However for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For HPLC side, the organization of the sample into grouping change a bit as the plastic toy balls are separated into their own top cluster (same height level with ICP and rest of HPLC branches) 
 
 \GC+HPLC+ICP data, for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For GC + HPLC side, it looks almost exactly like the case of GC+HPLC.
+
+(UPdate 06 Feb 2024:) common metrics to evaluate performance of clustering models:
+- Silhouette Score (https://stackoverflow.com/questions/33999224/silhouette-plot-in-r): Higher score => better clustering
+- Calinski-Harabaz Index (https://search.r-project.org/CRAN/refmans/fpc/html/calinhara.html): Higher score => better clustering
+- Davies-Bouldin Index ():
+
 
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
