@@ -46,7 +46,7 @@ library(cluster)
 '%notin%' <- Negate('%in%')
 
 # Grouping compounds based on RT1, RT2, and Ion1 - Version 1
-grouping_comp <- function(data, rtthres, mzthres, type) {
+grouping_comp <- function(data, rtthres1, rtthres2, mzthres, type) {
   
   # create empty list, each sub-list is a compound group with following criteria:
   # rtthres: RT threshold window
@@ -56,29 +56,75 @@ grouping_comp <- function(data, rtthres, mzthres, type) {
   # Initialize the compound column filled with NA values
   dat$Feature <- NA
   i <- 1
-
-  # Validate the 'type' parameter
+  j <- 1 # Counter for HPLC data only
+  
+  # Checkpoint for 'type' parameter
   if (!(type %in% c("ATDGCMS", "HPLCTOFMS"))) {
     stop("Invalid type specified. Must be either 'ATDGCMS' or 'HPLCTOFMS'")
   }
 
   # Loop through each row to group compounds
-  for (row in 1:nrow(dat)) {
-    # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-    rt <- base::as.numeric(dat[row, "RT"])
-    mz <- base::as.numeric(dat[row, "m.z"])
-    
-    idx <- which(
-      dat$RT <= (rt + rtthres) & dat$RT >= (rt - rtthres) &
-      dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
-      is.na(dat$Feature)
-    )
-    
-    if (length(idx) > 0) {
-      dat[idx, "Feature"] <- paste0("Compound_", i, ".", type)
-      i <- i + 1
-    }  
+  if (type %in% "HPLCTOFMS") {
+      # Split HPLC data into RT <= 6 min and RT > 6 min
+      dat1 <- dat %>% filter(RT <= 6)
+      dat2 <- dat %>% filter(RT > 6)
+      
+      for (row in 1:nrow(dat1)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        rt <- base::as.numeric(dat1[row, "RT"])
+        mz <- base::as.numeric(dat1[row, "m.z"])
+        
+        idx1 <- which(
+          dat1$RT <= (rt + rtthres1) & dat1$RT >= (rt - rtthres1) &
+            dat1$m.z <= (mz + mzthres) & dat1$m.z >= (mz - mzthres) &
+            is.na(dat1$Feature)
+        )
+        
+        if (length(idx1) > 0) {
+          dat1[idx1, "Feature"] <- paste0("Compound_RT1_", i, ".", type)
+          i <- i + 1
+        }  
+      }
+      
+      for (row in 1:nrow(dat2)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        rt <- base::as.numeric(dat2[row, "RT"])
+        mz <- base::as.numeric(dat2[row, "m.z"])
+        
+        idx2 <- which(
+          dat2$RT <= (rt + rtthres2) & dat2$RT >= (rt - rtthres2) &
+            dat2$m.z <= (mz + mzthres) & dat2$m.z >= (mz - mzthres) &
+            is.na(dat2$Feature)
+        )
+        
+        if (length(idx2) > 0) {
+          dat2[idx2, "Feature"] <- paste0("Compound_RT2_", j, ".", type)
+          j <- j + 1
+        }  
+      }
+      
+      dat <- rbind(dat1, dat2)
+      
+  } else {
+    for (row in 1:nrow(dat)) {
+      
+      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+      rt <- base::as.numeric(dat[row, "RT"])
+      mz <- base::as.numeric(dat[row, "m.z"])
+      
+      idx <- which(
+        dat$RT <= (rt + rtthres1) & dat$RT >= (rt - rtthres1) &
+          dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
+          is.na(dat$Feature)
+      )
+      
+      if (length(idx) > 0) {
+        dat[idx, "Feature"] <- paste0("Compound_", i, ".", type)
+        i <- i + 1
+      }  
+    }
   }
+  
   return(dat)
 }
 
@@ -89,9 +135,9 @@ comp_filter <- function(data) {
   all_other_compounds_idx <- c()
   all_unique_compounds_idx <- c()
 
-  for (comp_grp in unique(data$collapsed_compound)) {
+  for (comp_grp in unique(data$Feature)) {
     # filter data by indexing, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
-    idx <- which(grepl(comp_grp, data$collapsed_compound, fixed = TRUE))
+    idx <- which(grepl(comp_grp, data$Feature, fixed = TRUE))
     
     if (length(idx) < 2) {
       all_unique_compounds_idx <- c(all_unique_compounds_idx, idx)
@@ -240,7 +286,7 @@ An evaluation with the PCA biplot was done comparing between 2 cases: with and w
 # STEP 1.3: Grouping compounds based on Retention time and molecular ions  -----------------------------------------------------------------------
 # STEP 1.3A: Generate 1 grand data frame
 
-# ATDGCMS
+# ATDGCMS -> in contrast to HPLC data, more variation later in the run , more consistency in the early elution
 df1 <- bind_rows(df_list1_step1.1) %>%
   select(-c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions")) %>%
   # Change all ATDGCMS file name with underscore-separated to hyphen-separated
@@ -270,10 +316,26 @@ combined_df2 <- rbind(df2, df_blank2) %>%
 colnames(combined_df2)[[1]] <- "m.z"
 ```
 
-#### Quality assurance for STEP 1.3B: Examine variation in RT of 4 benchmark compounds in HPLC across all samples with histogram distribution of RT of 4 benchmark compounds 
+### Quality assurance for STEP 1.3B: Examine variation in RT of 4 benchmark compounds in HPLC across all samples with histogram distribution of RT of 4 benchmark compounds 
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# Use excel sheets of benchmark day "0, 2, 15, 34" from Final Leachates Benchmarks and Recovery.xlsx to create scatterplot 
+# ATDGCMS data
+# Use excel sheets of Toluene-d8 benchmark to create scatterplot 
+
+# Histogram plot of the distribution of RT versus. no of peak in each sample
+hist_ls <- list()
+i <- 1
+sample <- combined_df1 %>% filter(type %in% "Sample")
+for (file in unique(sample$File)) {
+  hist_ls[[i]] <- ggplot(sample[which(sample$File == file),]) + 
+    geom_histogram(aes(x = RT))
+  i <- i + 1
+}
+
+grid.arrange(grobs = hist_ls, ncol = 7)
+
+# HPLC data
+# Use excel sheets of benchmark day "0, 2, 15, 34" from Final Leachates Benchmarks and Recovery.xlsx to create scatterplot dataframe
 bm_sheets <- readxl::excel_sheets(path = paste0(getwd(),"/data/Final Leachates Benchmarks and Recovery.xlsx"))
 bm_df_list <- list()
 for (i in 1:length(bm_sheets)) {
@@ -285,7 +347,7 @@ for (i in 1:length(bm_sheets)) {
 
 bm_df <- bind_rows(bm_df_list)
 
-# Plot scatter and histogram of RT distribution
+# Plot scatter of RT distribution
 par(mfrow = c(3, 2))
 
 for (i in 1:length(unique(bm_df$Benchmark))) {
@@ -300,7 +362,7 @@ for (i in 1:length(unique(bm_df$Benchmark))) {
        main = unique(bm_df$Benchmark)[i])
 }
 
-# What is the distribution of RT versus. no of peak in each sample?
+# Histogram plot of the distribution of RT versus. no of peak in each sample
 hist_ls <- list()
 i <- 1
 sample <- combined_df2 %>% filter(type %in% "Sample")
@@ -317,72 +379,65 @@ grid.arrange(grobs = hist_ls, ncol = 7)
 
 (Update 09 Feb 2024:) Meeting with Roxana => Apply different compound alignment to different part of the chromatograms -> split compounds alignment to RT <= 6 Min and RT > 6 min.
 
-For RT <= 6 min, the result is follows:
-[1] "RT window 0.1 No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : 22"
-[1] "RT window 0.1 No. compounds of unique compounds : 28808"
-[1] "RT window 0.15 No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : 12"
-[1] "RT window 0.15 No. compounds of unique compounds : 27662"
-[1] "RT window 0.2 No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : 6"
-[1] "RT window 0.2 No. compounds of unique compounds : 26497"
+There are nine combinations of RT windows that were tested:
+                RT <= 6 min           RT > 6 min
+1                0.1                   0.02
+2                0.1                   0.03
+3                0.1                   0.04
+4                0.15                  0.02
+5                0.15                  0.03
+6                0.15                  0.04
+7                0.2                   0.02
+8                0.2                   0.03
+9                0.2                   0.04
 
-For RT > 6 min, the result is follows:
-[1] "RT window 0.1 No. unique compounds that belongs to Benchmark_2 dTEP : 28"
-[1] "RT window 0.1 No. unique compounds that belongs to Benchmark_3 dTPrP : 12"
-[1] "RT window 0.1 No. unique compounds that belongs to Benchmark_4 13C-6PPD : 6"
-[1] "RT window 0.1 No. unique compounds that belongs to Benchmark_5 dTPP : 11"
-[1] "RT window 0.1 No. compounds of unique compounds : 29750"
-[1] "RT window 0.15 No. unique compounds that belongs to Benchmark_2 dTEP : 18"
-[1] "RT window 0.15 No. unique compounds that belongs to Benchmark_3 dTPrP : 4"
-[1] "RT window 0.15 No. unique compounds that belongs to Benchmark_4 13C-6PPD : 5"
-[1] "RT window 0.15 No. unique compounds that belongs to Benchmark_5 dTPP : 4"
-[1] "RT window 0.15 No. compounds of unique compounds : 25805"
-[1] "RT window 0.2 No. unique compounds that belongs to Benchmark_2 dTEP : 12"
-[1] "RT window 0.2 No. unique compounds that belongs to Benchmark_3 dTPrP : 2"
-[1] "RT window 0.2 No. unique compounds that belongs to Benchmark_4 13C-6PPD : 5"
-[1] "RT window 0.2 No. unique compounds that belongs to Benchmark_5 dTPP : 3"
-[1] "RT window 0.2 No. compounds of unique compounds : 23563"
+(Update 13 & 14 Feb 2024:) I tested out a bunch of RT for Rt > 6 min but it doesn't seem to bring down the
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# Testing different RT window for 2 parts of the chromatogram ----------
-# RT <= 6 min
-rt_5_list <- list()
-for (i in 1:length(c(0.1,0.15,0.2))) {
-  # RT <= 5 min
-  rt_5_list[[i]] <- grouping_comp(combined_df2 %>% filter(RT <= 6),
-                                  rtthres = c(0.1,0.15,0.2)[i],
-                                  mzthres = 0.0005,
-                                  type = "HPLCTOFMS")
+# Testing different combinations of RT window for 2 parts of the chromatogram ----------
+combi <- tidyr::crossing(
+  # c(0.1,0.15,0.2, 0.25, 0.3, 0.35, 
+                           0.4, c(
+                             # 0.02,0.03,0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.2,
+                             0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.3, 0.31, 0.32, 0.33, 0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.4))
+rt_test_list <- list()
+for (row in 1:nrow(combi)) {
+  df <- grouping_comp(combined_df2,
+                      rtthres1 = as.numeric(combi[row,][1]),
+                      rtthres2 = as.numeric(combi[row,][2]),
+                      mzthres = 0.0005,
+                      type = "HPLCTOFMS")
   
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : ", length(unique((rt_5_list[[i]] %>% 
-                                                                          filter(m.z >= (156.0957 - 0.0001) &
-                                                                                   m.z <= (156.0957 + 0.0001)))$Feature))))
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. of unique compounds : ", length(unique(rt_5_list[[i]]$Feature))))
-}
+  rt_test_list[[paste0(as.numeric(combi[row,][1]), "_", as.numeric(combi[row,][2]))]] <- df
+  
+  rt_6 <- df %>% filter(RT <= 6)
+  rt_higher6 <- df %>% filter(RT > 6)
+  
+  print(paste0("RT window ", as.numeric(combi[row,][1]), " No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : ", 
+               length(unique((rt_6 %>% 
+                      filter(m.z >= (156.0957 - 0.0001) &
+                               m.z <= (156.0957 + 0.0001)))$Feature))))
+  
+  print(paste0("RT window ", as.numeric(combi[row,][1]), " No. of unique compounds : ", length(unique(rt_6$Feature))))
+  
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_2 dTEP : ", 
+               length(unique((rt_higher6 %>% 
+                                filter(m.z >= (198.1723 - 0.0001) &
+                                         m.z <= (198.1723 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_3 dTPrP : ", 
+               length(unique((rt_higher6 %>% 
+                      filter(m.z >= (246.2568 - 0.0001) &
+                               m.z <= (246.2568 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_4 13C-6PPD : ", 
+               length(unique((rt_higher6 %>% 
+                      filter(m.z >= (305.1956 - 0.0001) &
+                               m.z <= (305.1956 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_5 dTPP : ", 
+               length(unique((rt_higher6 %>%
+                      filter(m.z >= (342.1722 - 0.0001) &
+                               m.z <= (342.1722 + 0.0001)))$Feature))))
 
-
-# RT >6 min
-rt_above5_list <- list()
-for (i in 1:length(c(0.02,0.03,0.04))) {
-  # RT <= 5 min
-  rt_above5_list[[i]] <- grouping_comp(combined_df2 %>% filter(RT > 6),
-                                       rtthres = c(0.02,0.03,0.04)[i],
-                                       mzthres = 0.0005,
-                                       type = "HPLCTOFMS")
-  
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. unique compounds that belongs to Benchmark_2 dTEP : ", length(unique((rt_above5_list[[i]] %>% 
-                                                              filter(m.z >= (198.1723 - 0.0001) &
-                                                                       m.z <= (198.1723 + 0.0001)))$Feature))))
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. unique compounds that belongs to Benchmark_3 dTPrP : ", length(unique((rt_above5_list[[i]] %>% 
-                                                               filter(m.z >= (246.2568 - 0.0001) &
-                                                                        m.z <= (246.2568 + 0.0001)))$Feature))))
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. unique compounds that belongs to Benchmark_4 13C-6PPD : ", length(unique((rt_above5_list[[i]] %>% 
-                                                                  filter(m.z >= (305.1956 - 0.0001) &
-                                                                           m.z <= (305.1956 + 0.0001)))$Feature))))
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. unique compounds that belongs to Benchmark_5 dTPP : ", length(unique((rt_above5_list[[i]] %>% 
-                                                              filter(m.z >= (342.1722 - 0.0001) &
-                                                                       m.z <= (342.1722 + 0.0001)))$Feature))))
-  
-  print(paste0("RT window ", c(0.1,0.15,0.2)[i], " No. of unique compounds : ", length(unique(rt_above5_list[[i]]$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. of unique compounds : ", length(unique(rt_higher6$Feature))))
 }
 ```
 
@@ -391,25 +446,17 @@ for (i in 1:length(c(0.02,0.03,0.04))) {
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
 combined_df1_grouped <- grouping_comp(combined_df1,
-                                      rtthres = 0.05,
+                                      rtthres1 = 0.05,
                                       mzthres = 0.05,
                                       type = "ATDGCMS")
 
 # HPLCTOFMS
-# Apply different alignment to 2 parts of chromatogram
-# RT <= 6 min
-combined_df2_grouped_rt1 <- grouping_comp(combined_df2 %>% filter(RT <= 6),
-                                      rtthres = 0.1,
+# Apply different alignment to 2 parts of chromatogram via rtthres1 (RT <= 6 min) and rtthres2 (RT > 6 min)
+combined_df2_grouped <- grouping_comp(combined_df2,
+                                      rtthres1 = 0.4,
+                                      rtthres2 = 0.28,
                                       mzthres = 0.0005,
                                       type = "HPLCTOFMS")
-# RT > 6 min
-combined_df2_grouped_rt2 <- grouping_comp(combined_df2 %>% filter(RT > 6),
-                                      rtthres = 0.02,
-                                      mzthres = 0.0005,
-                                      type = "HPLCTOFMS")
-
-# Combine resulting df after compound alignment
-combined_df2_grouped <- rbind(combined_df2_grouped_rt1, combined_df2_grouped_rt2)
 ```
 
 ### Step 1.3C: Remove all the benchmark compounds for HPLC (4) and GC (1 - Toluene)
@@ -418,12 +465,21 @@ benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
 benchmark_idx <- c()
 # Search for compound in combined_df2_grouped that fall in the window of benchmark' molecular ions
 for (mz in benchmark_mz) {
-  idx <- which(combined_df2_grouped$m.z == mz)
+  idx <- which(combined_df2_grouped$m.z <= (mz + 0.0001) & combined_df2_grouped$m.z >= (mz - 0.0001))
   # collect all these indices of benchmark compounds
   benchmark_idx <- c(benchmark_idx, idx)
 }
 
 combined_df2_grouped <- combined_df2_grouped[-benchmark_idx,]
+
+### Quality control checkpoint:
+# Approximate the number of non-unique compounds in HPLC RT <= 6 min
+ggplot(combined_df2_grouped %>% filter(RT <= 6), aes(x=Feature)) +
+  geom_bar()
+
+# Approximate the number of non-unique compounds in HPLC RT > 6 min
+ggplot(combined_df2_grouped %>% filter(RT > 6), aes(x=Feature)) +
+  geom_bar()
 ```
 
 ### Step 2: Readjust compound peak area (sample) by substracting it by average blank peak area ======================
@@ -517,7 +573,7 @@ for (sample in unique(adjusted_df1$File)) {
 
 # For positive values => combine data again to 1 grand data frame
 comp_normalized1 <- dplyr::bind_rows(temp_list)
-# 
+
 # transform_filename_atdgcms <- function(filename) {
 #   split_name <- base::strsplit(filename, "-")[[1]]
 # 
@@ -573,6 +629,13 @@ comp_normalized2 <- dplyr::bind_rows(temp_list)
 ```
 
 ### Quality assurance: How many compounds after blank subtraction between different RT windows?
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATD-GC-MS
+length(unique(comp_normalized1)$Feature)
+
+# HPLC-TOFMS
+length(unique(comp_normalized2)$Feature)
+```
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # STEP 4: Identify shared and unique compound groups across samples ------------------------------------------------
@@ -596,7 +659,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   
   idx_list_filter1 <- comp_filter(dat1) 
   
-  shared_comp1<- dat1[idx_list_filter1[[1]],]
+  shared_comp1 <- dat1[idx_list_filter1[[1]],]
   
   
   # HPLCTOFMS
@@ -613,7 +676,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   # ATDGCMS
   
   atdgcms <- shared_comp1 %>%
-    filter(., !is.na(collapsed_compound)) %>%
+    filter(., !is.na(Feature)) %>%
     select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Percent_Area')
   
   colnames(atdgcms)[ncol(atdgcms)] <- 'Values'
@@ -623,7 +686,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   # HPLCTOFMS
 
   hplctofms <- shared_comp2 %>%
-    filter(., !is.na(collapsed_compound)) %>%
+    filter(., !is.na(Feature)) %>%
     select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Percent_Height')
   
   colnames(hplctofms)[ncol(hplctofms)] <- 'Values'
@@ -920,12 +983,8 @@ Log-Ratio Transformation: Transform the compositional data using an appropriate 
 
 (Update 09 Feb 2024:) For both PCA and Wilcoxon tests, in the NA exclusion insert another criteria for cases where feature appear consistently in only one product type.
 
-### Quality assurance: How many compounds after filtering consistent feature (populate 90 % of that one product type) between different RT windows?
-
-### Quality assurance: How many compounds after 'Removing columns with more than 90% NAs' between different RT windows?
-
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- icp_list[[1]] %>%
+df_pca <- gc_hplc_icp_list[[1]] %>%
   dplyr::select(File,
                 Subcategory,
                 Feature, 
@@ -941,17 +1000,35 @@ df_pca <- icp_list[[1]] %>%
   tibble::column_to_rownames(., var="File") %>%
   relocate(Subcategory, .after =1)
 
+### Quality assurance: How many compounds appear 90% of the time in only one product type?
 # IF conditioning, which feature column appear consistently (populate 90 % of that one product type`), KEEP IT!!!!!
+col_id <- c()
+for (i in 2:ncol(df_pca)) {
+  temp <- df_pca[, c(1,i)]
+  ele_count <- c()
+  for (subcat in unique(temp$Subcategory)) {
+    count <- sum(!is.na(temp[which(temp$Subcategory == subcat), 2]))/length(temp[which(temp$Subcategory == subcat), 2])
+    ele_count <- c(ele_count, count)
+  }
+  if (sum(ele_count > 0) == 1 & any(ele_count > 0.9)) {
+    col_id <- c(col_id, i)
+  } else {
+    next
+  }
+}
 
-# How many compounds appear 90% of the time in only one product type
+# View(df_pca[, c(1, col_id)])
 
-# Remove columns with more than 90% NAs after the IF conditioning
+# Remove columns with more than 90% NAs 
 test <- df_pca %>% 
   purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=90)
 
+# Add back the compounds appear 90% of the time in only one product type
+test2 <- cbind(test, df_pca[, col_id])
+
 # Missing value imputation
-for (r in 1:nrow(test)) {
-  test[r, which(base::is.na(test[r,]))] <- 0
+for (r in 1:nrow(test2)) {
+  test2[r, which(base::is.na(test2[r,]))] <- 0
   # sort(gc_list[[2]]$Values)[1] # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
     # stats::runif(length(which(base::is.na(df_pca[r,]))),
     #                                                         min = sort(hplc_list[[2]]$Values)[1],
@@ -961,7 +1038,7 @@ for (r in 1:nrow(test)) {
 # clr_transformed_pca <- compositions::clr(test[, -1])
 
 res.pca <- FactoMineR::PCA(
-  test[, -1],
+  test2[, -1],
   # clr_transformed_pca,
   scale.unit = FALSE,
   graph = FALSE)
@@ -973,16 +1050,17 @@ factoextra::fviz_pca_biplot(res.pca,
                             repel = TRUE,
                             labelsize = 6, 
                             habillage = factor(df_pca$Subcategory),
-                            # addEllipses = TRUE,
-                            # ellipse.level=0.95,
+                            addEllipses = TRUE,
+                            ellipse.level=0.95,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
-                            title = "Plastic Sample") + 
+                            title = "Plastic Sample"
+                            ) + 
   # if has error "Too few points to calculate an ellipse"
-  ggforce::geom_mark_ellipse(aes(fill = Groups,
-                                 color = Groups),
-                             label.buffer = unit(40, 'mm')) +
-  theme(legend.position = 'bottom') +
-  coord_equal()
+  # ggforce::geom_mark_ellipse(aes(fill = Groups,
+  #                                color = Groups),
+  #                            label.buffer = unit(40, 'mm')) +
+  theme(legend.position = 'none') 
+  # + coord_equal()
 
 # df_pca <- input_df(gc_hplc_list[[1]])
 # 
