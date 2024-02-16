@@ -482,13 +482,124 @@ ggplot(combined_df2_grouped %>% filter(RT > 6), aes(x=Feature)) +
   geom_bar()
 ```
 
-### Step 2: Readjust compound peak area (sample) by substracting it by average blank peak area ======================
+### Step 2
+
+#### Step 2.1: LOD data imputation approach ONLY!
+(Update 16 Feb 2024:) @Roxana: Readjustment of LOD imputation approach as follows for both GC and HPLC datasets:
+
+* Firstly, for the compound that don't appear at all in Blanks -> replace with minimum values of the whole dataset.
+* Secondly, for the compound that only have 1 or 2 Blank values -> also replace the missing values in sample with minimum values of the whole dataset because the chances that this compound detected in Blank is probably random since we have 155 Blank files.
+* Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks). 
+
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS -----------------------------------------
+# If the compound appear in blank and not in sample -> negative values after blank subtraction -> remove those compounds
+data_fill <- combined_df1_grouped %>% 
+  dplyr::select(File,
+                Feature,
+                type,
+                Area) %>%
+  group_by(File, Feature, type) %>% 
+  dplyr::summarise(across(Area, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Area)
+
+# Firstly, if the compound that don't appear at all in Blanks
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) < 1) {
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+  } else {
+    next
+  }
+}
+
+# Secondly, if for the compound that only have 1 or 2 Blank values
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) == 1) {
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+  } else {
+    next
+  }
+}
+
+# Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks) 
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) > 1) {
+    blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "Blanks" & 
+                    !is.na(data_fill[, col])), col]))
+    
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- 
+      base::mean(blank_vec) + 3*stats::sd(blank_vec)
+  } else {
+    next
+  }
+}
+
+# dim(data_fill[, 3:ncol(data_fill)])
+
+combined_df1_grouped <- data_fill %>% 
+  pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Area")
+
+
+# HPLCTOFMS --------------------------------------
+# If the compound appear in blank and not in sample -> negative values after blank subtraction -> remove those compounds
+data_fill <- combined_df2_grouped %>% 
+  dplyr::select(File,
+                Feature,
+                type,
+                Height) %>%
+  group_by(File, Feature, type) %>% 
+  dplyr::summarise(across(Height, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Height)
+
+# Firstly, if the compound that don't appear at all in Blanks
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) < 1) {
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+  } else {
+    next
+  }
+}
+
+# Secondly, if for the compound that only have 1 or 2 Blank values
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) == 1) {
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+  } else {
+    next
+  }
+}
+
+# Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks) 
+
+for (col in 3:ncol(data_fill)) {
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) > 1) {
+    blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "Blanks" & 
+                    !is.na(data_fill[, col])), col]))
+    
+    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- 
+      base::mean(blank_vec) + 3*stats::sd(blank_vec)
+  } else {
+    next
+  }
+}
+
+# dim(data_fill[, 3:ncol(data_fill)])
+
+combined_df2_grouped <- data_fill %>% 
+  pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Height")
+```
+
+#### Step 2.2: Readjust compound peak area (sample) by substracting it by average blank peak area
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
-
-# Take the blank away from the sample that run right before it
-# If the compound appear in blank and not in sample -> negative values after blank subtraction -> remove those compounds
-
 # Create list to store temp dfs
 temp_list <- list()
 i <- 1
@@ -1027,18 +1138,26 @@ test <- df_pca %>%
 test2 <- cbind(test, df_pca[, col_id])
 
 # Missing value imputation
+## Option 1 and 2: Zero and Minimum 
 for (r in 1:nrow(test2)) {
-  test2[r, which(base::is.na(test2[r,]))] <- 0
+  test2[r, which(base::is.na(test2[r,]))] <- 
   # sort(gc_list[[2]]$Values)[1] # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
-    # stats::runif(length(which(base::is.na(df_pca[r,]))),
-    #                                                         min = sort(hplc_list[[2]]$Values)[1],
-    #                                                         max = sort(hplc_list[[2]]$Values)[2])
+    stats::runif(length(which(base::is.na(df_pca[r,]))),
+                                                            min = sort(as.numeric(unlist(test2[, 2:ncol(test2)])))[1],
+                                                            max = sort(as.numeric(unlist(test2[, 2:ncol(test2)])))[2])
 }
+
+## Option 3: Iterative imputation
+subset <- test2[, 2:ncol(test2)]
+colnames(subset) <- paste0("x", 1:ncol(subset))
+imputed_data <- missForest(subset)
+  # mice::complete(mice(subset), m=1)
 
 # clr_transformed_pca <- compositions::clr(test[, -1])
 
 res.pca <- FactoMineR::PCA(
-  test2[, -1],
+  imputed_data[[1]],
+  # test2[, -1],
   # clr_transformed_pca,
   scale.unit = FALSE,
   graph = FALSE)
