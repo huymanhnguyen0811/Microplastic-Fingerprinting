@@ -471,7 +471,9 @@ for (mz in benchmark_mz) {
 }
 
 combined_df2_grouped <- combined_df2_grouped[-benchmark_idx,]
+```
 
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 ### Quality control checkpoint:
 # Approximate the number of non-unique compounds in HPLC RT <= 6 min
 ggplot(combined_df2_grouped %>% filter(RT <= 6), aes(x=Feature)) +
@@ -484,13 +486,11 @@ ggplot(combined_df2_grouped %>% filter(RT > 6), aes(x=Feature)) +
 
 ### Step 2
 
-#### Step 2.1: LOD data imputation approach ONLY!
+#### Step 2.1: LOD data imputation approach ONLY -> Determine replacing values for each compound !!!!
 (Update 16 Feb 2024:) @Roxana: Readjustment of LOD imputation approach as follows for both GC and HPLC datasets:
 
-* Firstly, for the compound that don't appear at all in Blanks -> replace with minimum values of the whole dataset.
-* Secondly, for the compound that only have 1 or 2 Blank values -> also replace the missing values in sample with minimum values of the whole dataset because the chances that this compound detected in Blank is probably random since we have 155 Blank files.
-* Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks). 
-
+* # Firstly, if the compound that don't appear at all in Blanks OR if for the compound that only have 1 Blank values -> replace with minimum values of the whole dataset.
+* Secondly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks). 
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS -----------------------------------------
@@ -505,44 +505,34 @@ data_fill <- combined_df1_grouped %>%
   tidyr::pivot_wider(names_from =  Feature,
                      values_from = Area)
 
-# Firstly, if the compound that don't appear at all in Blanks
 
+gcms_col1 <- list()
+gcms_col2 <- list()
 for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) < 1) {
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
-  } else {
-    next
-  }
-}
-
-# Secondly, if for the compound that only have 1 or 2 Blank values
-
-for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) == 1) {
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
-  } else {
-    next
-  }
-}
-
-# Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks) 
-
-for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) > 1) {
-    blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "Blanks" & 
-                    !is.na(data_fill[, col])), col]))
+  # Firstly, if the compound that don't appear at all in Blanks OR if for the compound that only have 1 Blank values
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) <= 1) { # < 1
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+    gcms_col1[[colnames(data_fill[,col])]] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
     
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- 
-      base::mean(blank_vec) + 3*stats::sd(blank_vec)
-  } else {
-    next
+  } 
+  # Secondly, if  the compound that have >= 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks) 
+  else {
+    blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "Blanks" & 
+                                                     !is.na(data_fill[, col])), col]))
+    
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- base::mean(blank_vec) + 3*stats::sd(blank_vec)
+    gcms_col2[[colnames(data_fill[,col])]] <- 3*stats::sd(blank_vec)
   }
 }
 
 # dim(data_fill[, 3:ncol(data_fill)])
 
-combined_df1_grouped <- data_fill %>% 
-  pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Area")
+# Export GC col list tok csv to save computational time next run
+utils::write.table(as.data.frame(gcms_col1), file = "gcms_col1.csv", quote = FALSE, sep = ",")
+utils::write.table(as.data.frame(gcms_col2), file = "gcms_col2.csv", quote = FALSE, sep = ",")
+
+# combined_df1_grouped <- data_fill %>% 
+#   pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Area")
 
 
 # HPLCTOFMS --------------------------------------
@@ -557,47 +547,34 @@ data_fill <- combined_df2_grouped %>%
   tidyr::pivot_wider(names_from =  Feature,
                      values_from = Height)
 
-# Firstly, if the compound that don't appear at all in Blanks
 
+hplctofms_col1 <- list()
+hplctofms_col2 <- list()
 for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) < 1) {
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
-  } else {
-    next
+  # Firstly, if the compound that don't appear at all in Blanks OR if for the compound that only have 1 Blank values
+  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) <= 1) {
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+    hplctofms_col1[[colnames(data_fill[,col])]] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
   }
-}
-
-# Secondly, if for the compound that only have 1 or 2 Blank values
-
-for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) == 1) {
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
-  } else {
-    next
-  }
-}
-
-# Thirdly, if  the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks) 
-
-for (col in 3:ncol(data_fill)) {
-  if (length(which(data_fill[, c(2,col)]$type == "Blanks" & !is.na(data_fill[, col]))) > 1) {
+  # Secondly, if  the compound that have >= 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks)
+  else {
     blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "Blanks" & 
                     !is.na(data_fill[, col])), col]))
     
-    data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- 
-      base::mean(blank_vec) + 3*stats::sd(blank_vec)
-  } else {
-    next
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- base::mean(blank_vec) + 3*stats::sd(blank_vec)
+    hplctofms_col2[[colnames(data_fill[,col])]] <- 3*stats::sd(blank_vec)
   }
 }
 
 # dim(data_fill[, 3:ncol(data_fill)])
 
-combined_df2_grouped <- data_fill %>% 
-  pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Height")
+# Export HPLC col list tok csv to save computational time next run
+utils::write.table(as.data.frame(hplctofms_col1), file = "hplctofms_col1.csv", quote = FALSE, sep = ",")
+utils::write.table(as.data.frame(hplctofms_col2), file = "hplctofms_col2.csv", quote = FALSE, sep = ",")
 ```
 
 #### Step 2.2: Readjust compound peak area (sample) by substracting it by average blank peak area
+
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
 # Create list to store temp dfs
@@ -614,7 +591,7 @@ for (comp in unique(combined_df1_grouped$Feature)) {
   }
   else {
     # Calculate avg_blank for that compound across all blanks
-    avg_blank <- mean(temp[which(temp$type == "Blanks"),]$Area)
+    avg_blank <- base::mean(temp[which(temp$type == "Blanks"),]$Area, na.rm = TRUE)
     # Then take out all the compound belong to blank from the df
     temp <- temp[which(temp$type != "Blanks"),]
     # iterate through each sample
@@ -646,7 +623,7 @@ for (comp in unique(combined_df2_grouped$Feature)) {
   }
   else {
     # Calculate avg_blank for that compound across all blanks
-    avg_blank <- mean(temp[which(temp$type == "Blanks"),]$Height)
+    avg_blank <- base::mean(temp[which(temp$type == "Blanks"),]$Height, na.rm = TRUE)
     temp <- temp[which(temp$type != "Blanks"),]
     # iterate through each sample
     for (sample in unique(temp$File)) {
@@ -662,9 +639,11 @@ for (comp in unique(combined_df2_grouped$Feature)) {
 adjusted_df2 <- bind_rows(temp_list)
 ```
 
-```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# STEP 3: Remove all detections with negative peak area and Normalizing data accordingly to different data frames of interest on with the one with positive Area values -----------------------------------
+### STEP 3: Remove all detections with negative peak area -----------------------------------
 
+(Update 18 Feb 2024:) I may need to keep normalization as the last step just before the usage of clustering functions and ML 
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
 
 # paste0("the number of compounds with negative Area values are: ", length(adjusted_df1$Area[adjusted_df1$Area < 0]))
@@ -675,8 +654,8 @@ i <- 1
 # Normalize Peak Area for each sample 
 for (sample in unique(adjusted_df1$File)) {
   df <- adjusted_df1[which(adjusted_df1$File == sample),] %>%
-    filter(Area > 0) %>%
-    mutate(Percent_Area = Area/sum(.$Area))
+    filter(Area > 0) # %>%
+    # mutate(Percent_Area = Area/sum(.$Area))
   temp_list[[i]] <- df
   
   i <- i + 1
@@ -713,8 +692,8 @@ i <- 1
 # Normalize Peak Area for each sample 
 for (sample in unique(adjusted_df2$File)) {
   df <- adjusted_df2[which(adjusted_df2$File == sample),] %>%
-    dplyr::filter(Height > 0) %>%
-    mutate(Percent_Height = Height/sum(.$Height))
+    dplyr::filter(Height > 0) # %>%
+    # mutate(Percent_Height = Height/sum(.$Height))
   temp_list[[i]] <- df
   
   i <- i + 1
@@ -748,8 +727,12 @@ length(unique(comp_normalized1)$Feature)
 length(unique(comp_normalized2)$Feature)
 ```
 
+## STEP 4: Identify shared and unique compound groups across samples 
+
+(Update 20 Feb 2024:)  Add column to distinguish which sample is from GC or HPLC or ICP-MS datasetss.
+
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# STEP 4: Identify shared and unique compound groups across samples ------------------------------------------------
+
 p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization_NewFileName.xlsx"
 
 gc_list <- list()
@@ -761,7 +744,7 @@ for (i in 1:length(excel_sheets(path = p))) {
   sampinfo <- readxl::read_excel(path = p, 
                                  sheet = excel_sheets(path = p)[i])
   
-    # at least in 2 samples
+  # at least in 2 samples
   # ATDGCMS
   # joining data frame with sampinfo df
   dat1 <- left_join(x = comp_normalized1, #%>% select(.,-c(File)),
@@ -788,20 +771,21 @@ for (i in 1:length(excel_sheets(path = p))) {
   
   atdgcms <- shared_comp1 %>%
     filter(., !is.na(Feature)) %>%
-    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Percent_Area')
+    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Area')
   
   colnames(atdgcms)[ncol(atdgcms)] <- 'Values'
-  
+  # Add column "GC" to distinguish GC samples from HPLC and ICP 
+  atdgcms$technique <- "GC"
   gc_list[[i]] <- atdgcms
   
   # HPLCTOFMS
 
   hplctofms <- shared_comp2 %>%
     filter(., !is.na(Feature)) %>%
-    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Percent_Height')
+    select('File', 'Suspected_Polymer', 'Category', 'Subcategory', 'Feature', 'm.z', 'RT', 'Height')
   
   colnames(hplctofms)[ncol(hplctofms)] <- 'Values'
-  
+  hplctofms$technique <- "HPLC"
   hplc_list[[i]] <- hplctofms
   
   ### COMBINATION OF HPLC AND ATDGC datasets
@@ -855,11 +839,13 @@ for (i in 1:length(excel_sheets(path = p))) {
                     y = sampinfo %>% select(., -NewFile), 
                     by = 'File')
   
-  icp_list[[i]] <- dat %>% 
+  newdat <- dat %>% 
     select(., -c(Type)) %>%
     relocate(File, Suspected_Polymer, Category, Subcategory, .before = 1) %>%
     pivot_longer(., cols = 5:ncol(.), names_to = "Feature", values_to = "Values")
 
+  newdat$technique <- "ICP"
+  icp_list[[i]] <- newdat
 }
 
 ```
@@ -1094,11 +1080,172 @@ Log-Ratio Transformation: Transform the compositional data using an appropriate 
 
 (Update 09 Feb 2024:) For both PCA and Wilcoxon tests, in the NA exclusion insert another criteria for cases where feature appear consistently in only one product type.
 
+### Prepping df for PCA
+
+(Update 20 Feb 2024:) If MVs occur when the feature only found in one analytical technique and not in the other -> then impute these missing values with zero
+
+==> for the case of zero imputation, nothing changein the PCA biplot actually
+
+** for the case of other imputation techniques (like minimum, LOD or iterative): need to apply the alternative replacement mentioned above.
+
+(Update 22 Feb 2024:) 
+- For combination of analytical technique, for each technique, Remove features (of that technique, for ex Compound_10.ATDGCMS) that contains more than 90% NAs
+- FOr ICP data, there is NO missing data what soever so no need to impute MVs.
+
+
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df_pca <- gc_hplc_icp_list[[1]] %>%
+df_pca <- icp_list[[1]] %>%
   dplyr::select(File,
                 Subcategory,
-                Feature, 
+                Feature,
+                technique,
+                Values) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    File,
+    Subcategory,
+    Feature,
+    technique) %>%
+  dplyr::summarise(across(Values, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Values) %>%
+  tibble::column_to_rownames(., var="File") %>%
+  relocate(Subcategory, .after = 1)
+
+
+# APPLY for ALL data combinations: IF conditioning, which feature column appear consistently (populate 90 % of that one product type`), KEEP IT!!!!!
+col_id <- c()
+for (i in 3:ncol(df_pca)) {
+  temp <- df_pca[, c(1, 2, i)]
+  
+  # If it is GC compounds then fill all MVs in other techniques with zeros (for later calculation of percentage of data points in each product type)
+  if (str_detect(colnames(temp)[3], "GC")) {
+    temp[which(temp$technique != "GC" & is.na(temp[, 3])), 3] <- 0
+    ele_count <- c()
+    for (subcat in unique(temp[which(temp$technique == "GC"),]$Subcategory)) {
+      count <- sum(!is.na(temp[which(temp$Subcategory == subcat & 
+                                       temp[,3] != 0), 3]))/length(temp[which(temp$Subcategory == subcat & 
+                                                                                temp$technique == "GC"), 3])
+      ele_count <- c(ele_count, count)
+    }
+    # Is there any compounds appear in > 90% of the time in a product?
+    if (any(ele_count > 0.9)) {
+      col_id <- c(col_id, i)
+    } else {
+      next
+    }
+  }
+  # If it is HPLC compounds then fill all MVs in other techniques with zeros
+  else if (str_detect(colnames(temp)[3], "HPLC")) {
+    temp[which(temp$technique != "HPLC" & is.na(temp[, 3])), 3] <- 0
+    ele_count <- c()
+    for (subcat in unique(temp[which(temp$technique == "HPLC"),]$Subcategory)) {
+      count <- sum(!is.na(temp[which(temp$Subcategory == subcat & 
+                                       temp[,3] != 0), 3]))/length(temp[which(temp$Subcategory == subcat & 
+                                                                                temp$technique == "HPLC"), 3])
+      ele_count <- c(ele_count, count)
+    }
+    # Is there any compounds appear in > 90% of the time in a product?
+    if (any(ele_count > 0.9)) {
+      col_id <- c(col_id, i)
+    } else {
+      next
+    }
+  }
+  # If it is ICP compounds then fill all MVs in other techniques with zeros
+  else {
+    temp[which(temp$technique != "ICP" & is.na(temp[, 3])), 3] <- 0
+    ele_count <- c()
+    for (subcat in unique(temp[which(temp$technique == "ICP"),]$Subcategory)) {
+      count <- sum(!is.na(temp[which(temp$Subcategory == subcat & 
+                                       temp[,3] != 0), 3]))/length(temp[which(temp$Subcategory == subcat & 
+                                                                                temp$technique == "ICP"), 3])
+      ele_count <- c(ele_count, count)
+    }
+    # Is there any compounds appear in > 90% of the time in a product?
+    if (any(ele_count > 0.9)) {
+      col_id <- c(col_id, i)
+    } else {
+      next
+    }
+  }
+}
+
+#**!!! ONLY For combination of analytical data: If MVs occur when the feature only found in one analytical technique and not in the other -> then impute these missing values with zero
+colid_90_na <- c()
+for (i in 3:ncol(df_pca)) {
+  if (str_detect(colnames(df_pca)[i], "GC")) {
+    df_pca[which(df_pca$technique != "GC" & is.na(df_pca[, i])), i] <- 0
+    # For combination of analytical technique, for each technique, Remove features (of that technique, for ex Compound_x.ATDGCMS) that contains more than 90% NAs 
+    if (length(df_pca[which(df_pca$technique == "GC" & !is.na(df_pca[, i])), i])/length(df_pca[which(df_pca$technique == "GC"), i]) < 0.1) {
+      colid_90_na <- c(colid_90_na, i)
+    }
+  } else if (str_detect(colnames(df_pca)[i], "HPLC")) {
+    df_pca[which(df_pca$technique != "HPLC" & is.na(df_pca[, i])), i] <- 0
+    # For combination of analytical technique, for each technique, Remove features (of that technique, for ex Compound_x.ATDGCMS) that contains more than 90% NAs 
+    if (length(df_pca[which(df_pca$technique == "HPLC" & !is.na(df_pca[, i])), i])/length(df_pca[which(df_pca$technique == "HPLC"), i]) < 0.1) {
+      colid_90_na <- c(colid_90_na, i)
+    }
+  } else {
+    df_pca[which(df_pca$technique != "ICP" & is.na(df_pca[, i])), i] <- 0
+    # For combination of analytical technique, for each technique, Remove features (of that technique, for ex Compound_x.ATDGCMS) that contains more than 90% NAs 
+    if (length(df_pca[which(df_pca$technique == "ICP" & !is.na(df_pca[, i])), i])/length(df_pca[which(df_pca$technique == "ICP"), i]) < 0.1) {
+      colid_90_na <- c(colid_90_na, i)
+    }
+  }
+}
+
+# Add back the compounds appear 90% of the time in one product type & remove any duplicate column
+# Now here we have df with Feature appear in 90% of a product type 
+test <- df_pca[, col_id]
+# and here we remove feature that has more than 90% NA for an analytical technique
+if (!is.null(colid_90_na)) {
+  test1 <- df_pca[, -colid_90_na]
+} else {
+  test1 <- df_pca
+}
+
+# Merge the two filtered df above to grand df
+test2 <- df_pca %>% select(., base::union(colnames(test), colnames(test1))) %>% relocate(Subcategory, technique, .before = 1)
+```
+
+### Missing value imputation
+
+#### Option 1: Zero
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Go through each row and replace all missing values in that row by zeros
+for (r in 1:nrow(test2)) {
+  test2[r, which(base::is.na(test2[r,]))] <- 0
+}
+```
+
+#### Option 2: Minimum 
+
+(Update 21 Feb 2024:) For analytical data combination, need to fill in the values accordingly to the technique, for ex, GC samples will be imputed with min of GC data only, and do same for HPLC or ICP data separatedly. 
+***For ICP data, since the min value is also zero, we keeep it as it is!
+
+(Update 21 Feb 2024:) For combinations of analytical technique, need to normalize data separatedly for sample of each technique. Can do this by pivot_longer, using for loop, then pivot_wider again.
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Go through each row and replace all missing values in that row by global minimum
+test2 <- test2 %>% 
+  tibble::rownames_to_column(., var="File") %>%
+  pivot_longer(cols = 4:ncol(.), names_to = "Feature", values_to = "Values")
+
+# Fill in GC MVs with global GC min (GC-HPLC, GC-ICP, GC-HPLC-ICP)
+test2[which(is.na(test2$Values) & test2$technique == "GC"),]$Values <- min(gc_list[[1]]$Values)
+
+# Fill in HPLC MVs with global HPLC min (GC-HPLC, HPLC-ICP, GC-HPLC-ICP)
+test2[which(is.na(test2$Values) & test2$technique == "HPLC"),]$Values <- min(hplc_list[[1]]$Values)
+
+# Fill in ICP MVs with global ICP min (GC-ICP, HPLC-ICP, GC-HPLC-ICP))
+test2[which(is.na(test2$Values) & test2$technique == "ICP"),]$Values <-  min(icp_list[[1]]$Values)
+
+# Pivot_wider again for normalization
+test2 <- test2 %>%
+  dplyr::select(File,
+                Subcategory,
+                Feature,
                 Values) %>%
   # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
   dplyr::group_by(
@@ -1109,54 +1256,129 @@ df_pca <- gc_hplc_icp_list[[1]] %>%
   tidyr::pivot_wider(names_from =  Feature,
                      values_from = Values) %>%
   tibble::column_to_rownames(., var="File") %>%
-  relocate(Subcategory, .after =1)
+  relocate(Subcategory, .after = 1)
+```
 
-### Quality assurance: How many compounds appear 90% of the time in only one product type?
-# IF conditioning, which feature column appear consistently (populate 90 % of that one product type`), KEEP IT!!!!!
-col_id <- c()
-for (i in 2:ncol(df_pca)) {
-  temp <- df_pca[, c(1,i)]
-  ele_count <- c()
-  for (subcat in unique(temp$Subcategory)) {
-    count <- sum(!is.na(temp[which(temp$Subcategory == subcat), 2]))/length(temp[which(temp$Subcategory == subcat), 2])
-    ele_count <- c(ele_count, count)
-  }
-  if (sum(ele_count > 0) == 1 & any(ele_count > 0.9)) {
-    col_id <- c(col_id, i)
+#### Option 3: LOD imputation
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# ATDGCMS RELATED datasets ---------
+# A. Replace missing values in compounds that don't appear in Blank at all.
+for (i in 1:length(gcms_col1)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(test2) == names(gcms_col1[i])) == 0) {
+    next
+  } 
+  # In case the feature occur in blanks and have no missing values, then next
+  else if (identical(which(is.na(test2[, names(gcms_col1[i])])), integer(0))) {
+    next
   } else {
+    test2[which(is.na(test2[, names(gcms_col1[i])])), names(gcms_col1[i])] <- gcms_col1[[i]]
+  }
+}
+
+# B. Replace missing values in compounds that appear in >= 2 Blanks.
+for (i in 1:length(gcms_col2)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(test2) == names(gcms_col2[i])) == 0) {
+    next
+  } 
+  # In case the feature occur in blanks and have no missing values, then next
+  else if (identical(which(is.na(test2[, names(gcms_col2[i])])), integer(0))) {
+    next
+  } else {
+    test2[which(is.na(test2[, names(gcms_col2[i])])), names(gcms_col2[i])] <- gcms_col2[[i]]
+  }
+}
+
+# HPLCTOFMS RELATED datasets ----------
+# A. Replace missing values in compounds that don't appear in Blank at all.
+for (i in 1:length(hplctofms_col1)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(test2) == names(hplctofms_col1[i])) == 0) {
     next
   }
+  # In case the feature occur in blanks and have no missing values, then next
+  else if (identical(which(is.na(test2[, names(hplctofms_col1[i])])), integer(0))) {
+    next
+  } else {
+    test2[which(is.na(test2[,names(hplctofms_col1[i])])), names(hplctofms_col1[i])] <- hplctofms_col1[[i]]
+  }
 }
 
-# View(df_pca[, c(1, col_id)])
+# B. Replace missing values in compounds that appear in >= 2 Blanks.
+for (i in 1:length(hplctofms_col2)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(test2) == names(hplctofms_col2[i])) == 0) {
+    next
+  }
+  # In case the feature have no missing values, then next
+  else if (identical(which(is.na(test2[, names(hplctofms_col2[i])])), integer(0))) {
+    next
+  } else {
+    test2[which(is.na(test2[, names(hplctofms_col2[i])])), names(hplctofms_col2[i])] <- hplctofms_col2[[i]]
+  }
+}
+```
 
-# Remove columns with more than 90% NAs 
-test <- df_pca %>% 
-  purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=90)
-
-# Add back the compounds appear 90% of the time in only one product type
-test2 <- cbind(test, df_pca[, col_id])
-
-# Missing value imputation
-## Option 1 and 2: Zero and Minimum 
-for (r in 1:nrow(test2)) {
-  test2[r, which(base::is.na(test2[r,]))] <- 
-  # sort(gc_list[[2]]$Values)[1] # no different in PCA biplot between LOD and zero imputed even with CLR-transformation
-    stats::runif(length(which(base::is.na(df_pca[r,]))),
-                                                            min = sort(as.numeric(unlist(test2[, 2:ncol(test2)])))[1],
-                                                            max = sort(as.numeric(unlist(test2[, 2:ncol(test2)])))[2])
+#### Option 4: Iterative imputation
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+library(missForest)
+impute_list <- list()
+i <- 1
+for (df in list(test2_gc, test2_hplc, test2_gchplc, test2_gcicp, test2_hplcicp, test2_gchplcicp)) {
+  subset <- df[, 3:ncol(df)]
+  colnames(subset) <- paste0("x", 1:ncol(subset))
+  impute_list[[i]] <- missForest(subset)
+  i <- i + 1
 }
 
-## Option 3: Iterative imputation
-subset <- test2[, 2:ncol(test2)]
-colnames(subset) <- paste0("x", 1:ncol(subset))
-imputed_data <- missForest(subset)
-  # mice::complete(mice(subset), m=1)
+```
 
+
+### Data normalization
+
+(Update 19 Feb 2024:) Here we do TSN normalization just right before clustering analyses, Wilcoxon tests and ML models.
+
+(Update 20 Feb 2024:) I successfully implement the LODimpute to create PCA biplot, the HPLC data only showed the same clustering pattern as Zero and Minimum imputation approach.
+
+
+** # If there is any sample aka. row that only have zeros (for zero imputation), then remove that sample/row from the analysis
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# For zero imputation ONLY !!: If there is any sample aka. row that only have zeros (for zero imputation), then remove that sample/row from the analysis
+row_to_remove <- c()
+for (i in 1:nrow(test2)) {
+  if (rowSums(test2[i, 3:ncol(test2)]) == 0) {
+    row_to_remove <- c(row_to_remove, i)
+  }
+}
+
+if (!is.null(row_to_remove)) {
+  test2 <- test2[-row_to_remove,]
+}
+
+```
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_percentage <- apply(test2[, 3:ncol(test2)], MARGIN = 1, function(row) {row/sum(row, na.rm = TRUE)})
+df_percentage <- as.data.frame(t(df_percentage))
+print(sum(is.na(df_percentage)))
+```
+### Export test2 df for ML models
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+writexl::write_xlsx(df_percentage %>% 
+                      mutate(Subcategory = test2$Subcategory) %>%
+                      relocate(Subcategory, .before = 1),
+                    path = "icp_df_all.xlsx")
+```
+
+
+### PCA
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # clr_transformed_pca <- compositions::clr(test[, -1])
-
 res.pca <- FactoMineR::PCA(
-  imputed_data[[1]],
+  df_percentage,
+  # impute_list[[4]][[1]],
   # test2[, -1],
   # clr_transformed_pca,
   scale.unit = FALSE,
@@ -1168,7 +1390,7 @@ factoextra::fviz_pca_biplot(res.pca,
                             invisible = "var", 
                             repel = TRUE,
                             labelsize = 6, 
-                            habillage = factor(df_pca$Subcategory),
+                            habillage = factor(test2$Subcategory),
                             addEllipses = TRUE,
                             ellipse.level=0.95,
                             ggtheme = ggplot2::theme_minimal(base_size = 15),
