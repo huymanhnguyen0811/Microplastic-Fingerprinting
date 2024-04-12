@@ -158,14 +158,13 @@ setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Mi
 file_list1 <- list.files(pattern = '*.csv') %>%
   .[!str_detect(., "2022")] %>%
   # remove USE samples with only 1 replication
-  # .[!str_detect(., "USE_08")] %>%
+  # .[!str_detect(., "USE_02")] %>%
   # .[!str_detect(., "USE_10")] %>%
   # .[!str_detect(., "USE_16")] %>%
   # .[!str_detect(., "USE_17")] %>%
   # .[!str_detect(., "USE_18")] %>%
   # .[!str_detect(., "USE_19")] %>%
   # .[!str_detect(., "USE_20")] %>%
-  # .[!str_detect(., "USE_21")] %>%
   .[str_detect(., "_USE")] #  environmental samples
 
 # Blank samples 
@@ -847,14 +846,14 @@ metal <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan Univ
 
 p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization_NewFileName.xlsx"
 
-# Data Normalization
-for (i in 1:nrow(metal)) {
-  # Calculate the sum of values from column 2 to ncol
-  sum_values <- sum(metal[i, 2:ncol(metal)])
-  
-  # Update each cell in column 2 to ncol by dividing by the sum
-  metal[i, 2:ncol(metal)] <- metal[i, 2:ncol(metal)] / sum_values
-}
+# # Data Normalization
+# for (i in 1:nrow(metal)) {
+#   # Calculate the sum of values from column 2 to ncol
+#   sum_values <- sum(metal[i, 2:ncol(metal)])
+#   
+#   # Update each cell in column 2 to ncol by dividing by the sum
+#   metal[i, 2:ncol(metal)] <- metal[i, 2:ncol(metal)] / sum_values
+# }
 
 # Merge with Sample Categorization information
 icp_list <- list()
@@ -933,7 +932,7 @@ Log-Ratio Transformation: Transform the compositional data using an appropriate 
 # list_new <- list()
 
 # for (j in 1:length(gc_list)) {
-  df_pca <- hplc_list[[1]] %>% # [[j]] %>%
+  df_pca <- gc_hplc_icp_list[[1]] %>% # [[j]] %>%
     dplyr::select(File,
                   Subcategory,
                   Feature,
@@ -951,6 +950,10 @@ Log-Ratio Transformation: Transform the compositional data using an appropriate 
     tibble::column_to_rownames(., var="File") %>%
     relocate(Subcategory, .after = 1)
   
+# For GC-ICP//HPLC_ICP//GC_HPLC_ICP
+selected_columns <- grep("ATDGCMS|HPLCTOFMS", colnames(df_pca), invert = TRUE) 
+selected_columns <- selected_columns[-c(1,2)]
+colnames(df_pca)[selected_columns] <- paste0("col_", seq_along(selected_columns))
   
   # APPLY for ALL data combinations: IF conditioning, which feature column appear consistently (populate 90 % of that one product type`), KEEP IT!!!!!
   col_id <- c()
@@ -1076,8 +1079,8 @@ Log-Ratio Transformation: Transform the compositional data using an appropriate 
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # Go through each row and replace all missing values in that row by global minimum
-for (i in 1:length(list_new)) {
-  test2 <- list_new[[i]] %>% 
+# for (i in 1:length(list_new)) {
+  test2 <- test2 %>% # list_new[[i]] %>% 
     tibble::rownames_to_column(., var="File") %>%
     pivot_longer(cols = 4:ncol(.), names_to = "Feature", values_to = "Values")
   
@@ -1091,22 +1094,22 @@ for (i in 1:length(list_new)) {
   test2[which(is.na(test2$Values) & test2$technique == "ICP"),]$Values <-  min(icp_list[[1]]$Values)
   
   # Pivot_wider again for normalization
-  list_new[[i]] <- test2 %>%
+  test2 <- test2 %>%
     dplyr::select(File,
-                  Category,
+                  Subcategory,
                   Feature,
                   Values) %>%
     # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
     dplyr::group_by(
       File,
-      Category,
+      Subcategory,
       Feature) %>%
     dplyr::summarise(across(Values, base::mean)) %>%
     tidyr::pivot_wider(names_from =  Feature,
                        values_from = Values) %>%
     tibble::column_to_rownames(., var="File") %>%
-    relocate(Category, .after = 1)
-}
+    relocate(Subcategory, .after = 1)
+# }
 ```
 
 #### Option 3: LOD imputation
@@ -1246,10 +1249,90 @@ for (df in list(test2_gc, test2_hplc, test2_gchplc, test2_gcicp, test2_hplcicp, 
                                     ".xlsx"))
 # }
 
+# For ICP data byitself
+colnames(df_percentage) <- paste0("col_", 1:ncol(df_percentage))
+
+
 df_percentage <- df_percentage %>% # df_percentage_list[[i]]
                         mutate(Subcategory = test2$Subcategory) %>%
                         mutate(technique = test2$technique) %>%
                         relocate(Subcategory, technique, .before = 1)
+```
+
+### ANOVA
+(Update 11 April 2024):
+- GC (with USE only) - without feature removal - Imputation with Zeros = > not significant
+Df    Sum Sq   Mean Sq              F value Pr(>F)
+Subcategory 17 1.304e-29 7.672e-31    0.66  0.794
+Residuals   14 1.627e-29 1.162e-30 
+
+- HPLC (with USE only)- without feature reduction -> - Imputation with Zeros  => too many variables -> Error: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error during wrapup: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error: no more error handlers available (recursive errors?); invoking 'abort' restart
+
+==> have to reduce feature 
+==> After feature reduction => - Imputation with Zeros => not significant
+Df    Sum Sq   Mean Sq F value Pr(>F)
+Subcategory 11 2.100e-30 1.913e-31   0.471  0.916
+Residuals   84 3.411e-29 4.061e-31 
+
+- ICP (with USE only) - without feature reduction -> not significant
+ Df    Sum Sq   Mean Sq F value Pr(>F)
+Subcategory 11 3.567e-30 3.243e-31    1.34  0.266
+Residuals   23 5.567e-30 2.420e-31 
+
+- GC + HPLC(with USE only) - without feature reduction -> imputation with Zeros => too many variables ==> Error: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error during wrapup: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error: no more error handlers available (recursive errors?); invoking 'abort' restart
+
+==> have to reduce feature 
+==> After feature reduction => - Imputation with Zeros =>  Significant!!
+Df    Sum Sq   Mean Sq F value   Pr(>F)    
+Subcategory  18 1.404e-28 7.798e-30   2.745 0.000658 ***
+Residuals   109 3.097e-28 2.841e-30                     
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+- GC + ICP (with USE only) 
+*-** without feature reduction - imputation with Zeros => Significant!!
+            Df    Sum Sq   Mean Sq F value Pr(>F)  
+Subcategory 18 3.097e-30 1.721e-31   2.045  0.025 *
+Residuals   48 4.039e-30 8.415e-32                 
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+*-** WITH feature reduction - imputation with Zeros => NO SIGNIFICANT!
+Df    Sum Sq   Mean Sq F value Pr(>F)
+Subcategory 18 8.440e-31 4.689e-32    0.72  0.774
+Residuals   48 3.125e-30 6.510e-32 
+
+- HPLC + ICP (with USE only) 
+*-** without feature reduction - imputation with Zeros => too many variables => Error: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error during wrapup: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error: no more error handlers available (recursive errors?); invoking 'abort' restar
+
+==> have to reduce feature 
+==> After feature reduction => - Imputation with Zeros =>  NOT Significant
+Df    Sum Sq   Mean Sq F value Pr(>F)
+Subcategory  11 1.949e-29 1.772e-30   1.587  0.111
+Residuals   119 1.329e-28 1.117e-30 
+
+- GC+ HPLC + ICP (with USE only) 
+*-** without feature reduction - imputation with Zeros => too many variables => Error: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error during wrapup: evaluation nested too deeply: infinite recursion / options(expressions=)?
+Error: no more error handlers available (recursive errors?); invoking 'abort' restar
+
+==> have to reduce feature 
+==> After feature reduction => - Imputation with Zeros => SIGNIFICANT !!
+Df    Sum Sq   Mean Sq F value   Pr(>F)    
+Subcategory  18 4.557e-28 2.532e-29   3.804 2.97e-06 ***
+Residuals   144 9.584e-28 6.656e-30                     
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+summary(aov(as.formula(paste(paste(setdiff(names(df_percentage), "Subcategory"), collapse = "+"), " ~ Subcategory")), data = df_percentage))
 ```
 
 ## Import Subcategory data for PCA/stats/ML
@@ -1593,11 +1676,11 @@ factoextra::fviz_pca_biplot(res.pca,
                             label = "none", 
                             invisible = "var", 
                             repel = TRUE,
-                            labelsize = 6, 
+                            labelsize = 10, 
                             habillage = factor(data$Subcategory),
                             # addEllipses = TRUE,
                             # ellipse.level=0.95,
-                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            ggtheme = ggplot2::theme_minimal(base_size = 30),
                             title = "Plastic Sample"
                             ) + 
   # if has error "Too few points to calculate an ellipse"
