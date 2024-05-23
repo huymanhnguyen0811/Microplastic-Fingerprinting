@@ -600,3 +600,26 @@ grid.arrange(grobs = data_plot_post_removal, ncol = 5, left = y, bottom = x)
 
 # scipy.stats.norm.ppf function from Python 
 
+# RESERVE CODE ===========
+# p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Table of product categorization.xlsx"
+# 
+# # Create namedf to use as reference for changing name of file name in Table of product categorization.xlsx
+# namedf <- rbind(data.frame(File = unique(comp_normalized1$File), NewFile = unique(comp_normalized1$NewFile)), 
+#                 data.frame(File = unique(comp_normalized2$File), NewFile = unique(comp_normalized2$NewFile)))
+# 
+# new_excel <- list()
+# for (i in 1:length(excel_sheets(path = p))) {
+#   # Table of categorization
+#   sampinfo <- readxl::read_excel(path = p, 
+#                                  sheet = excel_sheets(path = p)[i])
+#   
+#   newfile <- c()
+#   for (row in 1:nrow(sampinfo)) {
+#     newfile <- c(newfile, namedf[match(sampinfo[row,]$File, namedf$File),]$NewFile)
+#   }
+#   sampinfo$NewFile <- newfile
+#   new_excel[[paste0("Grouping", i)]] <- sampinfo
+# }
+# 
+# writexl::write_xlsx(x = new_excel, path = "Table of product categorization_NewFileName.xlsx")
+

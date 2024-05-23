@@ -1,0 +1,507 @@
+---
+title: "Microplastic fingerprinting"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting")
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(out.width='750px', dpi=200)
+```
+
+## Documentation
+
+This repo is accompanying the publication: "Computational fingerprinting workflow for environmental source tracking of microplastic based on representative additives"
+
+Demo of each ML algorithms is shown below.
+
+## Data processing
+
+You can include R code in the document as follows:
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Loading Packages --------------------------------------------------------
+library(ggplot2)
+library(vegan)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(data.table)
+library(writexl)
+library(tidyr)
+library(grid)
+library(gridExtra)
+
+library(stats)
+library(FactoMineR)
+library(factoextra)
+library(compositions)
+library(ggforce)
+library(latticeExtra)
+library(cluster)
+
+'%notin%' <- Negate('%in%')
+```
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# STEP 1.1: Data import --------------------------------------------
+
+step1 <- readxl::read_xlsx(paste0(getwd(), "/data/Kayla/Extractions April 2024- Combined Data.xlsx"))
+
+sample_breakdown <- readxl::read_xlsx(paste0(getwd(), "/data/Kayla/Labels Explained.xlsx"))
+
+# Remove the .d from File name
+extract_text_before_dot <- function(text) {
+  split_text <- strsplit(text, "\\.")[[1]]
+  return(split_text[1])
+}
+
+step1$Label <- sapply(step1$File, extract_text_before_dot)
+step1 <- step1[, -1]
+
+# Merge sample_breakdown and df
+step1 <- full_join(step1, sample_breakdown, by = "Label")
+```
+
+### STEP 1.4: Collapsing compounds based on RT1, RT2, Ion1 threshold --------------------------
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+step1 <- step1[ , , drop = FALSE] %>% arrange(`m/z`, RT)
+  
+# Initialize the compound column filled with NA values
+step1$Feature <- NA
+i <- 1
+for (row in 1:nrow(step1)) {
+  # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+  rt <- step1[row,]$RT
+  mz <- step1[row,]$`m/z`
+  
+  idx <- which(
+    step1$RT <= (rt + 0.1) & step1$RT >= (rt - 0.1) &
+      step1$`m/z` <= (mz + 0.0005) & step1$`m/z` >= (mz - 0.0005) &
+      is.na(step1$Feature)
+  )
+  
+  if (length(idx) > 0) {
+    step1[idx, "Feature"] <- paste0("Compound_", i, ".")
+    i <- i + 1
+  }  
+}
+```
+
+### Step 2
+
+#### Step 2.1: Calculating LOD replacement values
+(Update 16 Feb 2024:) @Roxana: Readjustment of LOD imputation approach as follows for both GC and HPLC datasets:
+
+* # Firstly, if the compound that don't appear at all in Blanks OR if for the compound that only have 1 Blank values -> replace with minimum values of the whole dataset.
+
+* Secondly, if the compound that have more than 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks). 
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+data_fill <- step1 %>%
+  dplyr::select(Label,
+                Feature,
+                Plastic,
+                Height) %>%
+  group_by(Label, Feature, Plastic) %>%
+  dplyr::summarise(across(Height, base::mean)) %>%
+  tidyr::pivot_wider(names_from = Feature,
+                     values_from = Height)
+
+lod1 <- list()
+lod2 <- list()
+
+for (col in 3:ncol(data_fill)) {
+  # Firstly, if the compound that don't appear at all in Blanks OR if for the compound that only have 1 Blank values
+  if (length(which(data_fill[, c(2,col)]$Plastic == "LAB BLANK" & !is.na(data_fill[, col]))) <= 1) { # < 1
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- min(data_fill[, 3:ncol(data_fill)], na.rm = TRUE)
+    lod1[[colnames(data_fill[,col])]] <- min(step1$Height)
+
+  }
+  # Secondly, if the compound that have >= 2 blank values -> replace missing values in "Sample" = average of blank data points + 3*sd(blanks)
+  else {
+    blank_vec <- as.numeric(unlist(data_fill[which(data_fill[, c(2,col)]$type == "LAB BLANK" &
+                                                     !is.na(data_fill[, col])), col]))
+
+    # data_fill[which(data_fill[, c(2,col)]$type == "Sample" & is.na(data_fill[, col])), col] <- base::mean(blank_vec) + 3*stats::sd(blank_vec)
+    lod2[[colnames(data_fill[,col])]] <- mean(blank_vec) + 3*stats::sd(blank_vec)
+  }
+}
+
+# dim(data_fill[, 3:ncol(data_fill)])
+
+# Export GC col list tok csv to save computational time next run
+# utils::write.table(as.data.frame(gcms_col1), file = "gcms_col1.csv", quote = FALSE, sep = ",")
+# utils::write.table(as.data.frame(gcms_col2), file = "gcms_col2.csv", quote = FALSE, sep = ",")
+
+# Read in gcms_col1, gcms_col2
+# df <- utils::read.csv("gcms_col1.csv")
+# for (i in 1:ncol(df)) {
+#   gcms_col1[[i]] <- df[,i]
+# }
+# names(gcms_col1) <- colnames(df)
+# 
+# df <- utils::read.csv("gcms_col2.csv")
+# for (i in 1:ncol(df)) {
+#   gcms_col2[[i]] <- df[,i]
+# }
+# names(gcms_col2) <- colnames(df)
+
+
+# combined_df1_grouped <- data_fill %>% 
+#   pivot_longer(., cols = 3:ncol(data_fill), names_to = "Feature", values_to = "Area")
+
+```
+
+#### Step 2.2: Readjust compound peak area (sample) by substracting it by average blank peak area and Remove all detections with negative peak area
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# go through each peak in the lab blank, if the peak is in +- 0.0005 m/z and +-0.1 RT then substract the values of the corresponding peak in sample
+
+for (feature in unique(step1$Feature)) {
+  if (identical(which(step1$Plastic == "LAB BLANK" & step1$Feature == feature), integer(0))) {
+    next
+  } else {
+    avg_blank_height <- mean(as.numeric(unlist(step1[which(step1$Plastic == "LAB BLANK" & step1$Feature == feature),]$Height)))
+    
+    step1[which(step1$Feature == feature),]$Height <- step1[which(step1$Feature == feature),]$Height - avg_blank_height
+  }
+  
+}
+
+step2 <- step1 %>% filter(Height > 0) %>% filter(Plastic != "LAB BLANK")
+
+```
+
+### STEP 3: Identify shared and unique compound groups across samples 
+
+(Update 20 Feb 2024:)  Add column to distinguish which sample is from GC or HPLC or ICP-MS datasetss.
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+all_other_compounds_idx <- c()
+all_unique_compounds_idx <- c()
+  
+  
+for (feature in unique(step2$Feature)) {
+  idx <- which(step2$Feature == feature)
+  if (length(unique(step2[idx,]$Label)) < 2) {
+    all_unique_compounds_idx <- c(all_unique_compounds_idx, idx)
+  } else {
+    all_other_compounds_idx <- c(all_other_compounds_idx, idx)
+  }
+  
+}
+
+step3 <- step2[unique(all_other_compounds_idx), ]
+```
+
+
+### STEP 5: Prepping df for Multivariate analyses, Wilcoxon tests and ML
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df_pca <- step3 %>% # [[j]] %>%
+  dplyr::select(Label,
+                Plastic,
+                Feature,
+                Height) %>%
+  # since we have multiple different values of the same compound in some samples, we summarize these values by taking the mean of them
+  dplyr::group_by(
+    Label,
+    Plastic,
+    Feature) %>%
+  dplyr::summarise(across(Height, base::mean)) %>%
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = Height) %>%
+  tibble::column_to_rownames(., var="Label") %>%
+  relocate(Plastic, .after = 1)
+
+  ## REMOVE COMPOUNDS THAT HAVE >90% MISSING VALUES ----------------
+col_90na <- c()
+for (col in 2:ncol(df_pca)) {
+  if (sum(!is.na(df_pca[,col]))/dim(df_pca)[1] < 0.1) {
+    col_90na <- c(col_90na, col)
+  }
+}
+
+if (!is.null(col_90na)) {
+  df_pca <- df_pca[, -col_90na]
+}
+```
+
+### STEP 6: Missing value imputation
+
+#### Option 1: Zero
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Go through each row and replace all missing values in that row by zeros
+  for (r in 1:nrow(df_pca)) { #list_new[[i]]
+    df_pca[r, which(base::is.na(df_pca[r,]))] <- 0 # list_new[[i]]
+  }
+
+```
+
+#### Option 2: Minimum 
+
+(Update 21 Feb 2024:) For analytical data combination, need to fill in the values accordingly to the technique, for ex, GC samples will be imputed with min of GC data only, and do same for HPLC or ICP data separatedly. 
+***For ICP data, since the min value is also zero, we keeep it as it is!
+
+(Update 21 Feb 2024:) For combinations of analytical technique, need to normalize data separatedly for sample of each technique. Can do this by pivot_longer, using for loop, then pivot_wider again.
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+for (r in 1:nrow(df_pca)) { 
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- as.list(runif(length(which(is.na(df_pca[r,]))),
+                                                             min = sort(step3$Height)[1],
+                                                             max = sort(step3$Height)[2]))
+} 
+```
+
+#### Option 3: LOD imputation
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+
+# A. Replace missing values in compounds that don't appear in Blank at all.
+for (i in 1:length(lod1)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(df_pca) == names(lod1[i])) == 0) {
+    next
+  }
+  # In case the feature occur in blanks and have no missing values, then next
+  else if (identical(which(is.na(df_pca[, names(lod1[i])])), integer(0))) {
+    next
+  } else {
+    df_pca[which(is.na(df_pca[,names(lod1[i])])), names(lod1[i])] <- lod1[[i]]
+  }
+}
+
+
+# B. Replace missing values in compounds that appear in >= 2 Blanks.
+
+for (i in 1:length(lod2)) {
+  # If the feature was removed during removal of >90% NAs, then next
+  if (sum(colnames(df_pca) == names(lod2[i])) == 0) {
+    next
+  }
+  # In case the feature have no missing values, then next
+  else if (identical(which(is.na(df_pca[, names(lod2[i])])), integer(0))) {
+    next
+  } else {
+    df_pca[which(is.na(df_pca[, names(lod2[i])])), names(lod2[i])] <- lod2[[i]]
+  }
+}
+
+# If tere are still NA then fill these NA with global min
+for (r in 1:nrow(df_pca)) { 
+  df_pca[r, which(base::is.na(df_pca[r,]))] <- as.list(runif(length(which(is.na(df_pca[r,]))),
+                                                             min = sort(step3$Height)[1],
+                                                             max = sort(step3$Height)[2]))
+} 
+```
+
+
+### STEP 7: Data normalization
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+
+df_percentage <- as.data.frame(t(apply(df_pca[, 2:ncol(df_pca)],
+                                       MARGIN = 1, 
+                                       function(row) {row/sum(row, na.rm = TRUE)}))) 
+print(sum(is.na(df_percentage)))
+
+df_percentage <- df_percentage %>% 
+  mutate(Plastic = df_pca$Plastic) %>%
+  relocate(Plastic, .before = 1)
+```
+
+### Export test2 df for ML models
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+writexl::write_xlsx(df_percentage,
+                    path = paste0("kayla_round1_ML",
+                                  ".xlsx"))
+```
+
+
+# Exploratory data analysis
+
+### Boxplot of compound shared between MIXTURE and its constituent plastic polymer samples
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Catch all shared compounds between MIXTURE and its constituent plastic polymer samples
+subset_df <- step3 %>% 
+  filter(Plastic %in% c("Woodbridge foam (WBF)",  
+                        "MIXTURE- new rubber, HDPE pellet, woodbridge foam", 
+                        "Easy Plastics- HDPE resin pellet (EP1)", 
+                        "New tire rubber"))
+
+shared_comp_idx <- c()
+for (feature in unique(subset_df$Feature)) {
+  idx <- which(subset_df$Feature == feature)
+  if (identical(idx, integer(0))) {
+    next
+  }
+  # If the feature appears in all 4 samples above then catch it
+  if (length(unique(subset_df[idx,]$Plastic)) > 2) {
+    shared_comp_idx <- c(shared_comp_idx, idx)
+  }
+}
+
+plotdat <- subset_df[shared_comp_idx,] %>% mutate(Area = Width * Height)
+
+ggplot(data = plotdat) + 
+  geom_bar(position = "dodge", stat = "identity",
+           aes(x = Feature, 
+               y = Area, 
+               fill = Plastic)) +
+  labs(x = "Chemical Features", 
+       y = "Peak area") +
+  theme_minimal(base_size = 15) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), 
+        axis.ticks.length.x = unit(0, "cm")) +
+  scale_y_continuous(expand = c(0,0))
+```
+
+
+# Statistical fingerprinting
+
+## Plot Result from ML Classifiers with error bar of Standard deviation from 10 iterations
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+df <- readxl::read_xlsx(path = "ML classifier performance.xlsx") 
+
+df <- df %>%
+  pivot_longer(cols = 3:ncol(.), names_to = "rep", values_to = "BA") %>%
+  group_by(Technique, 
+           Classifier) %>%
+  summarise(BA_mean = mean(BA),
+            BA_sd = sd(BA))
+
+df$Classifier <- factor(df$Classifier, levels = c("SVC", "MLR", "LGBM", "XGB", "GBM", "RF"))
+
+ggplot(data = df, aes(x = Classifier, y = BA_mean, fill = Technique)) +
+  geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
+  geom_errorbar(aes(ymin = BA_mean - BA_sd,
+                    ymax = BA_mean + BA_sd), position = 'dodge', linewidth = 0.15, alpha = 1, size = 1.5) +
+  labs(title = "", x = "Machine Learning Classifiers", y = "Balanced Accuracy (%)",
+       fill = "Data combination") +
+  scale_fill_manual(values = c("#a6cee3",
+                               "#1f78b4",
+                               "#b2df8a",
+                               "#33a02c", 
+                               "#fb9a99",
+                               "#e31a1c",
+                               "#fdbf6f")) +
+  theme_classic(base_size = 30) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1.25, color = "black", face = "bold"),
+        axis.ticks.length.x = unit(0, "cm")) +
+  scale_y_continuous(expand = c(0,0))
+```
+
+## PCA
+
+(Update 3rd may 2024;) PCA of both zero and global minimum provides no distinctive clusters
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+res.pca <- FactoMineR::PCA(
+  df_percentage %>% select(-c("Plastic")),
+  scale.unit = FALSE,
+  graph = FALSE)
+
+# Scree plot
+fviz_screeplot(res.pca, ncp=10)
+
+# Biplot
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "none", 
+                            invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 10, 
+                            habillage = factor(df_percentage$Plastic),
+                            # addEllipses = TRUE,
+                            # ellipse.level=0.95,
+                            ggtheme = ggplot2::theme_minimal(base_size = 25),
+                            title = "",
+                            # xlim = c(-0.5, 0.5),
+                            # ylim = c(-0.25, 0.2)
+                            ) + 
+  guides(fill=guide_legend(ncol=5)) +
+  # if has error "Too few points to calculate an ellipse"
+  ggforce::geom_mark_ellipse(aes(fill = Groups,
+                                 color = Groups),
+                             label.buffer = unit(40, 'mm')) +
+  theme(legend.position = 'bottom',
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()
+        )
+```
+
+### Barplot of Top 10 Variable contributions to first n dimensions
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Variable contributions to first n dimensions
+## To PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+## To PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+
+# Extract top 10 contribution to PC1
+dim1 <- as.data.frame(res.pca$var$contrib) %>% arrange(desc(Dim.1))
+top10 <- rownames(dim1[1:10,])
+
+# Plot bar plot
+plotdat <- df_percentage %>% 
+  select(c(Plastic, top10)) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "Features", values_to = "Values")
+
+data_summary <- plotdat %>%
+  group_by(Plastic, Features) %>%
+  summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
+
+ggplot(data = data_summary, aes(x = Plastic, y = mean, fill = Features)) +
+  geom_bar(stat = "identity", position = 'dodge') +
+  geom_errorbar(aes(ymin = mean - sd,
+                    ymax = mean + sd),
+                position = position_dodge(width = 0.9), width = 0.25) +
+  labs(x = "Plastic product group", y = "Normalized Concentration") + 
+  theme_classic(base_size = 15) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## HCA
+### Clustering of samples
+
+(Update 3rd May 2024:) With zero and global minimum imputation, I saw that the two mixture was clustered within 2 out of 3 of its components (Woodbridge foam and new tire rubber)
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+hc_df <- df_percentage %>% select(-c("Plastic"))
+
+
+## Dissimilarity Indices Calculated by vegan::vegdist()
+hca_samp <- stats::hclust(vegan::vegdist(hc_df,
+                                         method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
+
+plot(hca_samp,
+     labels = df_percentage$Plastic,
+     hang = -1,
+     main = "")
+```
+
+## UMAP clustering 
+
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+library(umap)
+
+features <- subset(df_percentage, select = -c(Plastic))
+
+umap <- umap(features, n_components = 3,
+             method = 'naive', 
+             metric= "manhattan", # euclidean, manhattan, cosine, pearson, pearson2
+             alpha = 0.0001, gamma = 0.0001)
+
+layout <- cbind(data.frame(umap[["layout"]]), df_percentage$Plastic)
+umap_plot <- plot_ly(layout, x = ~X1, y = ~X2, z = ~X3, 
+                     color = ~df_percentage$Plastic) %>% 
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'x-axis'), 
+                      yaxis = list(title = 'y-axis'), 
+                      zaxis = list(title = 'z-axis'))) 
+umap_plot
+```
