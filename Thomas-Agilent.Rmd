@@ -42,6 +42,9 @@ library(ggforce)
 library(latticeExtra)
 library(cluster)
 library(cowplot)
+library(RColorBrewer)
+library(reshape2)
+library(corrplot)
 '%notin%' <- Negate('%in%')
 ```
 
@@ -120,53 +123,164 @@ grand_df <- do.call(rbind, df_list) %>%
                                      ifelse(grepl("day 7", sample, ignore.case = TRUE), 7, 
                                             ifelse(grepl("day 1", sample, ignore.case = TRUE), 1,
                                                    ifelse(grepl("day 21", sample, ignore.case = TRUE), 21, 3))))))) %>%
-  pivot_wider(names_from = `Wavenumber (cm{¹)`, values_from = values)
-  
+  filter(polymer %notin% "CA") %>%
+  pivot_wider(names_from = `Wavenumber (cm{¹)`, values_from = values) %>% 
+  mutate(polymer_day = paste0(polymer, "_", day)) %>%
+  relocate(polymer_day, .after = 1)
+
+# writexl::write_xlsx(grand_df, path = paste0(getwd(), "/Python/Thomas_Polymer_grand_df.xlsx"))
+```
+
+# Remove day 1 from analysis because of technical error
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+grand_df <- grand_df %>%
+  filter(day != 1)
 ```
 
 # Exploratory data analysis
 
-### Differences in each polymer between Day 0 to Day 30
+### Differences in each polymer - legend (Day 0 to Day 30)
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-plotdat <- grand_df %>%
-  pivot_longer(cols = 4:ncol(.), names_to = "Wavelength", values_to = "Values") %>%
-  group_by(polymer, day, Wavelength) %>%
+input <- grand_df %>% mutate(day = factor(day, levels = unique(grand_df$day)))
+
+plotdat <- input %>%
+  pivot_longer(cols = 5:ncol(.), names_to = "Wavenumber", values_to = "Values") %>%
+  mutate(Wavenumber = as.numeric(Wavenumber)) %>%
+  group_by(polymer, day, Wavenumber) %>%
   summarise(across(Values, base::mean))
 
 plotlist <- list()
-for (i in unique(plotdat$polymer)) {
-  subdf <- plotdat %>% filter(polymer %in% unique(plotdat$polymer)[i]) %>% mutate(day = factor(day, levels = unique(plotdat$day)))
-  plotlist[[i]] <- ggplot(subdf, aes(x = Wavelength, y = Values)) +
-    geom_point(aes(colour = day), size = 1) +
-    labs(title = polymer,
-         x = NULL,
-         y = NULL) +  
-    theme_minimal() + 
-    theme(legend.position = "hidden") + 
-    guides(colour = guide_legend(override.aes = list(size = 10)))
+i <- 1
+for (pol in unique(plotdat$polymer)) {
+  subdf <- plotdat %>%
+    filter(polymer == pol) 
+  
+  print(ggplot(subdf, aes(x = Wavenumber, y = Values, color = day)) +
+          geom_point(size = 0.5) +
+          labs(title = pol,
+               x = NULL,
+               y = NULL) +  
+          theme_minimal(base_size = 18) + 
+          theme(panel.grid.minor.x = element_blank(),
+                panel.grid.minor.y = element_blank(),
+                plot.title = element_text(hjust = 0.5)) +
+          scale_y_continuous(limits = c(0, round(max(plotdat$Values))), expand = c(0,0))+
+          guides(colour = guide_legend(override.aes = list(size = 10))))
+  
+  i <- i + 1
 }
 
-legend <- cowplot::get_legend(ggplot(subdf, aes(x = Wavelength, y = Values)) +
-                                geom_point(aes(colour = day), size = 1) +
-                                labs(title = polymer,
-                                     x = NULL,
-                                     y = NULL) +  
-                                theme_minimal() + 
-                                guides(colour = guide_legend(override.aes = list(size = 10))) +
-                                theme(legend.position = "bottom"))
+# legend <- cowplot::get_legend(ggplot(subdf, aes(x = Wavenumber, y = Values, color = day)) +
+#                                 geom_point(size = 0.5) +
+#                                 labs(title = pol,
+#                                      x = NULL,
+#                                      y = NULL) +
+#                                 theme_minimal(base_size = 18) + 
+#                                 theme(panel.grid.minor.x = element_blank(),
+#                                       panel.grid.minor.y = element_blank()) +
+#                                 guides(colour = guide_legend(override.aes = list(size = 10))))
+#              
+# gridExtra::grid.arrange(grobs = plotlist, ncol = 3,
+#                         bottom = textGrob("Wavenumber (cm{¹)",
+#                                           gp = gpar(fontsize = 20)),
+#                         right = legend
+#                         )
+```
 
-p <- gridExtra::grid.arrange(grobs= plotlist, ncol = 5,
-                        top = legend, 
-                        left = textGrob("Signal intensity", 
-                                        rot = 90, gp = gpar(fontsize = 10)), 
-                        bottom = textGrob("Wavenumber", gp = gpar(fontsize = 10)))
+### Differences in each Day 0 to Day 30 across all polymer
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+input <- grand_df %>% mutate(polymer = factor(polymer, levels = unique(grand_df$polymer)))
+# polymer_colors <- grDevices::colorRampPalette(brewer.pal(12, "Set2"))(21)
+# polymer_color_map <- setNames(polymer_colors, unique(grand_df$polymer))
 
-ggsave(filename = "plot.png", plot = p, width = 12, height = 10)
+plotdat <- input %>%
+  pivot_longer(cols = 5:ncol(.), names_to = "Wavenumber", values_to = "Values") %>%
+  mutate(Wavenumber = as.numeric(Wavenumber)) %>%
+  group_by(polymer, day, Wavenumber) %>%
+  summarise(across(Values, base::mean))
+
+#
+
+# plotlist <- list()
+# i <- 1
+for (day in unique(plotdat$day)) {
+  subdf <- plotdat %>%
+    filter(day == 30) 
+  
+  # plotlist[[i]] <- 
+    ggplot(subdf, aes(x = Wavenumber, y = Values, color = polymer)) +
+    geom_point(size = 0.5) +
+    # scale_color_manual(values = polymer_color_map) +
+    labs(title = paste0("Day ", 30),
+         x = NULL,
+         y = NULL) +  
+    theme_minimal(base_size = 18) + 
+    theme(legend.position = "bottom",
+          panel.grid.minor.x = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          plot.title = element_text(hjust = 0.5)) + 
+    guides(colour = guide_legend(override.aes = list(size = 10), ncol=5)) +
+    scale_y_continuous(limits = c(0, round(max(plotdat$Values))), expand = c(0,0))
+  
+  # i <- i + 1
+}
+
 
 ```
 
+# Correlation analysis
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+data <- grand_df %>%
+  mutate(polymer = factor(polymer, levels = unique(grand_df$polymer))) %>%
+  mutate(day = factor(day, levels = unique(grand_df$day))) %>%
+  pivot_longer(cols = 5:ncol(.), names_to = "Wavenumber", values_to = "Values") %>%
+  mutate(Wavenumber = as.numeric(Wavenumber)) %>%
+  group_by(polymer, day, Wavenumber) %>%
+  summarise(across(Values, base::mean)) %>%
+  pivot_wider(names_from = Wavenumber, values_from = Values) %>%
+  mutate(polymer_day = paste0(polymer, "_Day_", day)) %>%
+  column_to_rownames(., var = "polymer_day")  %>%
+  filter(polymer %in% c("ABS", "PVC1", "PVC2", "CR"))
+           # c("HDPE2", "HDPE1", "LDPE1", "LDPE2", "LLDPE1", "MDPE", "PP", "PA6"))
+  # c("PS", "PP", "HDPE1", "LDPE1", "LDPE2", "LLDPE1", "MDPE",  "EPS",  "HDPE2"))
+
+cor_matrix <- cor(t(data[, 3:ncol(data)]))
+
+# Extract the upper triangle of the correlation matrix
+cor_matrix[lower.tri(cor_matrix)] <- NA
+
+# Melt the correlation matrix, excluding NA values
+melted_cor_matrix <- melt(cor_matrix, na.rm = TRUE)
+
+# Create the heatmap using ggplot2
+ggplot(data = melted_cor_matrix, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                       name="Correlation") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, 
+                                   size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12)) +
+  coord_fixed() +
+  labs(title = "", x = "", y = "")
+```
+
 # Statistical fingerprinting
+
+## ANOVA
+
+(Update 29th May 2024:) aov() function ==> Error in model.frame.default(formula = as.formula(paste(paste(setdiff(names(input),  : 
+  variable lengths differ (found for 'polymer')
+  
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+input <- subset(grand_df, select = -c(sample, day, polymer_day))
+
+summary(aov(as.formula(paste(paste(setdiff(names(input), "polymer"), collapse = "+"), " ~ polymer")), data = input))
+```
 
 ## PCA
 
@@ -174,12 +288,12 @@ ggsave(filename = "plot.png", plot = p, width = 12, height = 10)
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # PCA
-input <- grand_df %>% 
-    filter(day == 14) 
+input <- grand_df %>%
+  filter(polymer %notin% c("EVA", "ABS", "CR", "LDPE1", "LLDPE2"))
 
 res.pca <- FactoMineR::PCA(
   input %>%
-    select(-c("sample", "day", "polymer")),
+    select(-c("sample", "day", "polymer", "polymer_day")),
   scale.unit = FALSE,
   graph = FALSE)
 
@@ -212,68 +326,6 @@ factoextra::fviz_pca_biplot(res.pca,
   )
 ```
 
-### Barplot of Top 10 Variable contributions to first n dimensions
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-# Variable contributions to first n dimensions
-## To PC1
-fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
-## To PC2
-fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
-
-# Extract top 10 contribution to PC1
-dim1 <- as.data.frame(res.pca$var$contrib) %>% arrange(desc(Dim.1))
-top10 <- rownames(dim1[1:10,])
-
-# Plot bar plot
-plotdat <- icp_subcat %>% 
-  select(c(Subcategory, top10)) %>%
-  pivot_longer(cols = 2:ncol(.), names_to = "Features", values_to = "Values")
-
-data_summary <- plotdat %>%
-  group_by(Subcategory, Features) %>%
-  summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
-
-ggplot(data = data_summary, aes(x = Subcategory, y = mean, fill = Features)) +
-  geom_bar(stat = "identity", position = 'dodge') +
-  geom_errorbar(aes(ymin = mean - sd,
-                    ymax = mean + sd),
-                position = position_dodge(width = 0.9), width = 0.25) +
-  labs(x = "Plastic product group", y = "Normalized Concentration") + 
-  theme_classic(base_size = 30) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-# 3D PCa plot ===============================================================================
-# FactoMineR_p <- FactoMineR::PCA(df_pca,
-#                                 scale.unit = FALSE)
-# 
-# scores <- as.data.frame(FactoMineR_p$ind$coord[,1:3]) %>%
-#   rownames_to_column(., var = "File")
-# category <- sapply(scores$File, function(f) {
-#   unique(gc_hplc_list[[1]]$Category[match(f, gc_hplc_list[[1]]$File)])
-# })
-# 
-# # Add to scores data frame
-# scores$Category <- as.factor(category)
-# 
-# rgl::plot3d(scores$Dim.1, scores$Dim.2, scores$Dim.3,
-#        col = as.integer(scores$Category),
-#        xlab = "PC1",
-#        ylab = "PC2",
-#        zlab = "PC3",
-#        type = "p")
-# 
-# # Add legend
-# rgl::legend3d("topright", legend = levels(scores$Category), col = 1:length(levels(scores$Category)), pch = 16)
-
-# factoextra::fviz_screeplot(FactoMineR_p)
-# factoextra::fviz_pca_biplot(FactoMineR_p,
-#                             habillage = unique(gc_hplc_list[[1]]$File))
-```
-
-
 ## HCA
 
 If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
@@ -285,19 +337,82 @@ This exercise does not seems to affect the HCa. Keep in mind that for all 3 case
 (Update 3rd May 2024:) With zero and global minimum imputation, I saw that the two mixture was clustered within 2 out of 3 of its components (Woodbridge foam and new tire rubber)
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-input <- grand_df %>% 
-    filter(day == 0) 
+input <- grand_df # %>% 
+    # filter(day == 0) 
 
-hc_df <- input %>% select(-c("sample", "day", "polymer"))
+hc_df <- input %>% 
+  column_to_rownames(., var = "sample") %>%
+  select(-c("day", "polymer", "polymer_day"))
+```
 
+### Use cut_height to see broader grouping of samples
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
 ## Dissimilarity Indices Calculated by vegan::vegdist()
 hca_samp <- stats::hclust(vegan::vegdist(hc_df,
-                                         method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
+                                         method = "canberra")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
 
 plot(hca_samp,
      labels = input$polymer,
      hang = -1,
      main = "")
+
+rect.hclust(hca_samp, h = round(hca_samp$height[828], digits = 4), border = "red")
+
+hca_dat <- data.frame(group = stats::cutree(hca_samp, h = round(hca_samp$height[828], digits = 4))) %>%
+  arrange(group) %>% 
+  rownames_to_column(., var = "sample") %>%
+  mutate(polymer = ifelse(grepl("ULDPE", sample, ignore.case = TRUE), "ULDPE",
+                          ifelse(grepl("LLDPE1", sample, ignore.case = TRUE), "LLDPE1",
+                                 ifelse(grepl("LLDPE2", sample, ignore.case = TRUE), "LLDPE2",
+                                        ifelse(grepl("LDPE1", sample,, ignore.case = TRUE), "LDPE1",
+                                               ifelse(grepl("LDPE2", sample, ignore.case = TRUE), "LDPE2",
+                                                      ifelse(grepl("MDPE", sample, ignore.case = TRUE), "MDPE",
+                                                             ifelse(grepl("HDPE1", sample, ignore.case = TRUE), "HDPE1",
+                                                                    ifelse(grepl("HDPE2", sample,ignore.case = TRUE), "HDPE2", 
+                                                                           ifelse(grepl("PP", sample,ignore.case = TRUE), "PP", 
+                                                                                  ifelse(grepl("PEST", sample,ignore.case = TRUE), "PEST", 
+                                                                                         ifelse(grepl("PET1", sample,ignore.case = TRUE), "PET1", 
+                                                                                                ifelse(grepl("PET2", sample,ignore.case = TRUE), "PET2", 
+                                                                                                       ifelse(grepl("EVA", sample,ignore.case = TRUE), "EVA",
+                                                                                                              ifelse(grepl("ABS", sample,ignore.case = TRUE), "ABS",
+                                                                                                                     ifelse(grepl("EPS", sample,ignore.case = TRUE), "EPS",
+                                                                                                                            ifelse(grepl("PS", sample,ignore.case = TRUE), "PS",
+                                                                                                                                   ifelse(grepl("PA6", sample,ignore.case = TRUE), "PA6",
+                                                                                                                                          ifelse(grepl("PA66", sample,ignore.case = TRUE), "PA66",
+                                                                                                                                                 ifelse(grepl("PVC1", sample,ignore.case = TRUE), "PVC1",
+                                                                                                                                                        ifelse(grepl("PVC2", sample, ignore.case = TRUE), "PVC2",
+                                                                                                                                                               ifelse(grepl("CR", sample, ignore.case = TRUE), "CR", "CA")))))))))))))))))))))) %>%
+  mutate(day =  ifelse(grepl("day 0", sample, ignore.case = TRUE), "day 0", 
+                       ifelse(grepl("day 14", sample, ignore.case = TRUE), "day 14", 
+                              ifelse(grepl("day 30", sample, ignore.case = TRUE), "day 30", 
+                                     ifelse(grepl("day 7", sample, ignore.case = TRUE), "day 7", 
+                                            ifelse(grepl("day 1", sample, ignore.case = TRUE), "day 1",
+                                                   ifelse(grepl("day 21", sample, ignore.case = TRUE), "day 21", "day 3"))))))) %>%
+  filter(polymer %notin% "CA") %>%
+  mutate(polymer_day = paste0(polymer, "_", day)) %>%
+  mutate(polymer = factor(polymer, levels = unique(polymer))) %>%
+  mutate(polymer_day = factor(polymer_day, levels = unique(polymer_day))) %>%
+  mutate(group = factor(group, levels = unique(group))) %>%
+  mutate(day = factor(day, levels = unique(day)))
+
+View(hca_dat)
+
+# writexl::write_xlsx(hca_dat, path = paste0(getwd(), "/hca_dat.xlsx"))
+
+# Plot the distribution of polymer occurrences for each HCA group
+# ggplot(hca_dat, aes(x = group, fill = polymer)) +
+#   geom_bar(position = "dodge") +
+#   labs(title = "Distribution of Polymer Occurrences by Group", x = "Group", y = "Count") +
+#   scale_x_discrete(drop = FALSE) +
+#   theme_minimal()
+
+# Plot the distribution of days for each HCA group
+ggplot(hca_dat, aes(x = polymer_day)) +
+  geom_bar() +
+  facet_wrap(~ group, scales = "free_x") +  # Create separate panels for each group
+  labs(title = "Distribution of Days by Group", x = "Day", y = "Count") +
+  theme_minimal(base_size = 15) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
 ## K-means Clustering
@@ -306,15 +421,16 @@ plot(hca_samp,
 tot.withinss <- list()
 for (n_clus in 1:nrow(df_percentage)) {
   set.seed(round(runif(2:20, 0, 999)))
-  km.out <- stats::kmeans(df_percentage, n_clus, nstart = 50)
+  km.out <- stats::kmeans(hc_df, 20, nstart = 50, 
+                          algorithm = "Hartigan-Wong" # "Hartigan-Wong", "Lloyd", "MacQueen"
+                          )
   tot.withinss[[n_clus]] <- km.out$tot.withinss
-  print(paste0("The number of centers is ", n_clus, " and total within-cluster sum of square is ", km.out$tot.withinss))
+  print(paste0("The number of centers is ", 20, " and total within-cluster sum of square is ", km.out$tot.withinss))
 }
 
 plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
      main = "K- Means Clustering Results with K = 2",
      xlab = "", ylab = "", pch = 20, cex = 2)
-
 
 ```
 
@@ -323,19 +439,19 @@ plot(df, col = (stats::kmeans(df, 171, nstart = 50)$cluster + 1) ,
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 library(umap)
 
-input <- grand_df %>%
-  filter(day == 30)
+input <- grand_df #%>%
+  # filter(day == 30)
 
-features <- subset(input, select = -c(sample, day, polymer))
+features <- subset(input, select = -c(sample, day, polymer, polymer_day))
 
 umap <- umap(features, n_components = 3,
              method = 'naive', 
              metric= "pearson2", # euclidean, manhattan, cosine, pearson, pearson2
-             alpha = 0.0001, gamma = 0.0001)
+             alpha = 0.00001, gamma = 0.0001)
 
-layout <- cbind(data.frame(umap[["layout"]]), input$polymer)
+layout <- cbind(data.frame(umap[["layout"]]), input$day)
 umap_plot <- plot_ly(layout, x = ~X1, y = ~X2, z = ~X3, 
-                     color = ~input$polymer) %>% 
+                     color = ~input$day) %>% 
   add_markers() %>%
   layout(scene = list(xaxis = list(title = 'x-axis'),
                       yaxis = list(title = 'y-axis'),
