@@ -362,38 +362,6 @@ ggplot(data = plotdat) +
 
 # Statistical fingerprinting
 
-## Plot Result from ML Classifiers with error bar of Standard deviation from 10 iterations
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-df <- readxl::read_xlsx(path = "ML classifier performance.xlsx") 
-
-df <- df %>%
-  pivot_longer(cols = 3:ncol(.), names_to = "rep", values_to = "BA") %>%
-  group_by(Technique, 
-           Classifier) %>%
-  summarise(BA_mean = mean(BA),
-            BA_sd = sd(BA))
-
-df$Classifier <- factor(df$Classifier, levels = c("SVC", "MLR", "LGBM", "XGB", "GBM", "RF"))
-
-ggplot(data = df, aes(x = Classifier, y = BA_mean, fill = Technique)) +
-  geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
-  geom_errorbar(aes(ymin = BA_mean - BA_sd,
-                    ymax = BA_mean + BA_sd), position = 'dodge', linewidth = 0.15, alpha = 1, size = 1.5) +
-  labs(title = "", x = "Machine Learning Classifiers", y = "Balanced Accuracy (%)",
-       fill = "Data combination") +
-  scale_fill_manual(values = c("#a6cee3",
-                               "#1f78b4",
-                               "#b2df8a",
-                               "#33a02c", 
-                               "#fb9a99",
-                               "#e31a1c",
-                               "#fdbf6f")) +
-  theme_classic(base_size = 30) +
-  theme(axis.text.x = element_text(angle = 45, hjust =1.25, color = "black", face = "bold"),
-        axis.ticks.length.x = unit(0, "cm")) +
-  scale_y_continuous(expand = c(0,0))
-```
-
 ## PCA
 
 (Update 3rd may 2024;) PCA of both zero and global minimum provides no distinctive clusters
@@ -443,27 +411,211 @@ fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
 fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
 
 # Extract top 10 contribution to PC1
-dim1 <- as.data.frame(res.pca$var$contrib) %>% arrange(desc(Dim.1))
-top10 <- rownames(dim1[1:10,])
+dim1 <- as.data.frame(res.pca$var$contrib) %>% arrange(desc(Dim.1), desc(Dim.2))
+top <- rownames(dim1[1:25,])
 
 # Plot bar plot
 plotdat <- df_percentage %>% 
-  select(c(Plastic, top10)) %>%
-  pivot_longer(cols = 2:ncol(.), names_to = "Features", values_to = "Values")
+  select(c("Plastic", top)) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "Feature", values_to = "Values") %>% 
+  filter(Plastic %in% c("MIXTURE- new rubber, HDPE pellet, woodbridge foam",
+                        "New tire rubber",
+                        "Woodbridge foam (WBF)",
+                        "Easy Plastics- HDPE resin pellet (EP1)"))
 
 data_summary <- plotdat %>%
-  group_by(Plastic, Features) %>%
+  group_by(Plastic, Feature) %>%
   summarise(mean = mean(Values), sd = sd(Values), .groups = 'drop')
 
-ggplot(data = data_summary, aes(x = Plastic, y = mean, fill = Features)) +
+ggplot(data = data_summary, aes(x = Plastic, y = mean, fill = Feature)) +
   geom_bar(stat = "identity", position = 'dodge') +
-  geom_errorbar(aes(ymin = mean - sd,
-                    ymax = mean + sd),
-                position = position_dodge(width = 0.9), width = 0.25) +
+  # geom_errorbar(aes(ymin = mean - sd,
+  #                   ymax = mean + sd),
+  #               position = position_dodge(width = 0.9), width = 0.25) +
   labs(x = "Plastic product group", y = "Normalized Concentration") + 
   theme_classic(base_size = 15) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
+### Loading reference databases
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Read in suspect screening result from Eric // PlasticMAP // PlastChem database
+sus_scr <- readxl::read_xlsx(path = paste0(getwd(), "/data/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
+plasticmap <- readxl::read_xlsx(path = paste0(getwd(), "/data/PlasticMAP_S1_210611.xlsx"), sheet = "S8 - PlasticMAP")
+plastchem_redlist <- readxl::read_xlsx(path = paste0(getwd(), "/data/plastchem_db_v1.0.xlsx"), sheet = "Red List")
+
+# Remove all legacy empty rows from Eric's Excel file 
+sus_scr <- sus_scr[rowSums(is.na(sus_scr)) != (ncol(sus_scr) - 1), ]
+```
+
+## A. EF's Suspect Screening 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+all_unique <- data.frame(comp = unique(plotdat$Feature))
+
+# Adding RT and molecular ions info of significant compounds:
+mean_rt <- c()
+mean_mz <- c()
+for (row in 1:nrow(all_unique)) {
+  idx <- base::which(step3$Feature == all_unique[row,])
+  mean_rt <- c(mean_rt, round(mean(step3[idx, ]$RT), 4))
+  mean_mz <- c(mean_mz, round(mean(step3[idx, ]$`m/z`), 4))
+}
+
+all_unique$mean_rt <- mean_rt
+all_unique$mean_mz <- mean_mz
+```
+
+### Find in all_unique the compounds that match with suspect hit list in all_unique with molecular ions in the range of +- 0.0005
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+df_list <- list()
+i <- 1
+
+for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
+  # if the of the feature fall into the windows +-0.0005 of suspect, then fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  # If not found any match in Suspect screening list then next
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- sus_scr[which(sus_scr$`[M+H]+` == suspect_mz),]
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
+    df_list[[i]] <- temp[1,] # here we just need 1 row of suspect name and corresponding Feature
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr <- bind_rows(df_list)
+View(all_matching_sus_scr)
+```
+
+### Stacked bar plot of values of top Normalized Height compound match with EF's Suspect Screening 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Replace all the compounds in plot_df with suspect screening matches 
+joined <- left_join(plotdat %>%
+                      dplyr::select(Plastic, Feature, Values), 
+                    all_matching_sus_scr %>%
+                      dplyr::select(Feature, `Suspect Name`), by = "Feature") %>%
+  dplyr::filter(!is.na(`Suspect Name`)) %>%
+  # group and calculate the mean of Features with same subcategory
+  group_by(Feature, `Suspect Name`, Plastic) %>%
+  dplyr::summarise(across(Values, base::mean))
+
+ggplot(data = joined, aes(x = Plastic, y = Values, fill = `Suspect Name`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "", x = "Plastic product types", y = "Normalized Peak Height (%)",
+       fill = "Top hits with database") +
+  theme_minimal(base_size = 15) +
+  theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"), 
+        axis.ticks.length.x = unit(0, "cm"),
+        legend.position = 'bottom',
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()) + 
+  scale_y_continuous(expand = c(0,0)) # +
+  # guides(fill=guide_legend(ncol=2))
+```
+
+# B. PlasticMap (Wiesinger et. al.) 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+df_list <- list()
+i <- 1
+
+for (mz in unique(na.omit(plasticmap$Mass))) {
+  # if the of the feature fall into the windows +-0.0005 of suspect in database, then fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (mz + 0.005) & all_unique$mean_mz >= (mz - 0.005))
+  # If not found any match in Suspect screening list then next
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- plasticmap[which(plasticmap$Mass == mz),]
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
+    df_list[[i]] <- temp[1,] # here we just need 1 row of suspect name and corresponding Feature
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr_plasticmap <- bind_rows(df_list)
+View(all_matching_sus_scr_plasticmap)
+```
+
+### Stacked bar plot of values of top Normalized Height compound match with PlasticMap 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Replace all the compounds in plot_df with suspect screening matches 
+joined <- left_join(plotdat %>%
+                      dplyr::select(Plastic, Feature, Values), 
+                    all_matching_sus_scr_plasticmap %>%
+                      dplyr::select(Feature, `Substance Name`), by = "Feature") %>%
+  dplyr::filter(!is.na(`Substance Name`)) %>%
+  # group and calculate the mean of Features with same subcategory
+  group_by(Feature, `Substance Name`, Plastic) %>%
+  dplyr::summarise(across(Values, base::mean))
+
+ggplot(data = joined, aes(x = Plastic, y = Values, fill = `Substance Name`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "", x = "Plastic product types", y = "Normalized Peak Height (%)",
+       fill = "Top hits with database") +
+  theme_minimal(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"), 
+        axis.ticks.length.x = unit(0, "cm"),
+        # legend.text = element_text(size = 18),
+        # legend.title = element_text(size = 20),
+        legend.position = "bottom",
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()) + 
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill=guide_legend(ncol=2))
+```
+
+# C. PlastChem (Hans Peter Arp et. al.) 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+df_list <- list()
+i <- 1
+
+for (mz in unique(na.omit(plastchem$monoisotopic_mass))) {
+  # if the of the feature fall into the windows +-0.0005 of suspect in database, then fetch all row in sus_scr that match
+  idx <- which(all_unique$mean_mz <= (mz + 0.005) & all_unique$mean_mz >= (mz - 0.005))
+  # If not found any match in Suspect screening list then next
+  if (base::identical(idx, integer(0))) {
+    next
+  } else {
+    temp <- plastchem[which(plastchem$monoisotopic_mass == mz),]
+    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
+    df_list[[i]] <- temp[1,] # here we just need 1 row of suspect name and corresponding Feature
+    i <- i + 1
+  }
+}
+
+all_matching_sus_scr_plastchem <- bind_rows(df_list)
+View(all_matching_sus_scr_plastchem)
+```
+
+### Stacked bar plot of values of top Normalized Height compound match with PlastChem 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Replace all the compounds in plot_df with suspect screening matches 
+joined <- left_join(plotdat %>%
+                      dplyr::select(Plastic, Feature, Values),
+                    all_matching_sus_scr_plastchem %>%
+                      dplyr::select(Feature, pubchem_name), by = "Feature") %>%
+  dplyr::filter(!is.na(pubchem_name)) %>%
+  # group and calculate the mean of Features with same subcategory
+  group_by(Feature, pubchem_name, Plastic) %>%
+  dplyr::summarise(across(Values, base::mean))
+
+ggplot(data = joined, aes(x = Plastic, y = Values, fill = pubchem_name)) +
+  geom_bar(stat = "identity") +
+  labs(title = "", x = "Plastic product types", y = "Normalized Peak Height (%)",
+       fill = "Top hits with database") +
+  theme_minimal(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"), 
+        axis.ticks.length.x = unit(0, "cm"),
+        # legend.text = element_text(size = 18),
+        # legend.title = element_text(size = 20),
+        legend.position = "bottom",
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()) + 
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill=guide_legend(ncol=2))
+```
+
 
 ## HCA
 ### Clustering of samples
