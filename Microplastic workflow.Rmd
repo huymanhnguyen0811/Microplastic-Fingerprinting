@@ -1787,19 +1787,13 @@ evaluate_rf_performance <- function(data,
   
   min_class_count <- min(table(y_train))
   folds <- ifelse(min_class_count > 1, min_class_count, 2)
-  cv_ctrl <- trainControl(
-    method     = "cv",
-    number     = folds,
-    classProbs = TRUE
-  )
   
   num_features    <- ncol(X_train)
   mtry_candidates <- c(floor(sqrt(num_features)), floor(log2(num_features)))
   rf_grid         <- expand.grid(mtry = mtry_candidates)
   
   all_feats <- tune_rf_subset(
-    X_train, y_train, X_test, y_test,
-    cv_ctrl, ntree_candidates, metric
+    X_train, y_train, X_test, y_test, ntree_candidates, metric
   )
   
   eval_metrics <- all_feats$eval_metrics
@@ -2397,35 +2391,17 @@ In this workflow on tracking microplastic additives in aquatic environments, und
 
 So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
 
-# Balanced Accuracy helper function
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-compute_balanced_accuracy <- function(true, pred) {
-  cm <- table(true, pred)
-  if(nrow(cm) == 2 && ncol(cm) == 2) {
-    sensitivity <- cm[2,2] / sum(cm[2,])
-    specificity <- cm[1,1] / sum(cm[1,])
-    return((sensitivity + specificity) / 2)
-  } else {
-    # For multiclass: compute recall (sensitivity) for each class and then take the mean.
-    recalls <- diag(cm) / rowSums(cm)
-    return(mean(recalls, na.rm = TRUE))
-  }
-}
-```
-
 # Random Forest
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # Recursive Feature Addition -------------
 recursive_feature_addition <- function(X_train, y_train,
                                        X_test,  y_test,
-                                       cv_ctrl,
                                        ntree_candidates,
                                        metric) {
   # 1) Fit full model to get initial feature importance
   full_res <- tune_rf_subset(
     X_train, y_train,
-    X_test,  y_test,
-    cv_ctrl, ntree_candidates, metric
+    X_test,  y_test, ntree_candidates, metric
   )
   # Extract importance from the randomForest final model
   imp_mat <- importance(full_res$model$finalModel)
@@ -2440,7 +2416,7 @@ recursive_feature_addition <- function(X_train, y_train,
   base_res      <- tune_rf_subset(
     X_train[, best_feats, drop = FALSE], y_train,
     X_test [, best_feats, drop = FALSE], y_test,
-    cv_ctrl, ntree_candidates, metric
+    ntree_candidates, metric
   )
   best_accuracy <- base_res$Accuracy
   best_kappa    <- base_res$Kappa
@@ -2453,8 +2429,7 @@ recursive_feature_addition <- function(X_train, y_train,
       trial_feats <- c(best_feats, feat)
       res <- tune_rf_subset(
         X_train[, trial_feats, drop = FALSE], y_train,
-        X_test [, trial_feats, drop = FALSE], y_test,
-        cv_ctrl, ntree_candidates, metric
+        X_test [, trial_feats, drop = FALSE], y_test, ntree_candidates, metric
       )
       # Add feature only if all three metrics improve
       if(res$Accuracy > best_accuracy &&
@@ -2477,7 +2452,7 @@ recursive_feature_addition <- function(X_train, y_train,
   final_res <- tune_rf_subset(
     X_train[, best_feats, drop = FALSE], y_train,
     X_test [, best_feats, drop = FALSE], y_test,
-    cv_ctrl, ntree_candidates, metric
+    ntree_candidates, metric
   )
 
   # 5) Return performance and selected features
@@ -2496,54 +2471,106 @@ recursive_feature_addition <- function(X_train, y_train,
 #─────────────────────────────────────────────────────────────────────────────
 # Helper: retune mtry (based on subset size) + ntree for any train/test split
 tune_rf_subset <- function(X_train, y_train, X_test, y_test,
-                           cv_ctrl, ntree_candidates, metric) {
-  p <- ncol(X_train)
-  rf_grid <- expand.grid(
-    mtry = unique(pmax(1, c(floor(sqrt(p)), floor(log2(p)))))
-  )
+                           ntree_candidates, metric) {
+  # 1) Check class counts
+  k_inner <- min(table(y_train))
   
-  best_mod   <- NULL
-  best_val   <- -Inf
-  best_trees <- NA
+  # 2) Build the mtry grid
+  p        <- ncol(X_train)
+  mtry_vals <- unique(pmax(1, c(floor(sqrt(p)), floor(log2(p)))))
   
-  for(nt in ntree_candidates) {
-    set.seed(123) # set.seed(sample.int(999,1))
-    tmp <- caret::train(
-      x         = X_train,
-      y         = as.factor(y_train),
-      method    = "rf",
-      trControl = cv_ctrl,
-      tuneGrid  = rf_grid,
-      metric    = metric,
-      ntree     = nt,
-      importance= TRUE
+  # 3) Branch: enough data for CV?
+  if (k_inner > 1) {
+    # —> use caret CV
+    ctrl <- trainControl(
+      method         = "cv",
+      number         = k_inner,
+      classProbs     = TRUE,
+      summaryFunction= defaultSummary
     )
-    this_val <- max(tmp$results[[metric]])
-    if(this_val > best_val) {
-      best_val   <- this_val
-      best_mod   <- tmp
-      best_trees <- nt
+    rf_grid <- expand.grid(mtry = mtry_vals)
+    
+    best_mod   <- NULL
+    best_val   <- -Inf
+    best_trees <- NA
+    
+    for (nt in ntree_candidates) {
+      set.seed(123)
+      tmp <- caret::train(
+        x         = X_train,
+        y         = as.factor(y_train),
+        method    = "rf",
+        trControl = ctrl,
+        tuneGrid  = rf_grid,
+        metric    = metric,
+        ntree     = nt,
+        importance= TRUE
+      )
+      this_val <- max(tmp$results[[metric]])
+      if (this_val > best_val) {
+        best_val   <- this_val
+        best_mod   <- tmp
+        best_trees <- nt
+      }
     }
+    
+    caret_model <- best_mod
+    final_rf    <- caret_model$finalModel
+    
+  } else {
+    # —> too few per class: do OOB-based tuning
+    best_oob   <- Inf
+    best_mtry  <- NA
+    best_trees <- NA
+    best_rf    <- NULL
+    
+    for (nt in ntree_candidates) {
+      for (m in mtry_vals) {
+        set.seed(123)
+        rf_mod <- randomForest(
+          x          = X_train,
+          y          = as.factor(y_train),
+          mtry       = m,
+          ntree      = nt,
+          importance = TRUE
+        )
+        # final OOB error rate:
+        oob_err <- tail(rf_mod$err.rate[ , "OOB"], 1)
+        if (oob_err < best_oob) {
+          best_oob   <- oob_err
+          best_mtry  <- m
+          best_trees <- nt
+          best_rf    <- rf_mod
+        }
+      }
+    }
+    # wrap into a dummy caret-like object so that downstream calls to predict(<train>,…) and predict(<train>, type="prob") continue to work.
+    caret_model <- list(
+      finalModel = best_rf,
+      # so that later code that uses predict(<train>,…) still works:
+      methods = list(predict = "randomForest")
+    )
+    final_rf <- best_rf
   }
   
-  preds    <- predict(best_mod, newdata = X_test, type = "raw")
-  prob_matrix <- as.matrix(predict(best_mod, newdata=X_test, type="prob"))
-  
-  eval_metrics_res <- eval_metrics(true_labels = y_test, 
+  # 4) Predict & score
+  preds       <- predict(final_rf, newdata = X_test, type = "response")
+  prob_matrix <- as.matrix(predict(final_rf, newdata = X_test, type = "prob"))
+  ev          <- eval_metrics(true_labels = y_test, 
                                    prob_matrix = prob_matrix, 
                                    pred_labels = preds)
   
-  return(list(model    = best_mod,
-              ntree    = best_trees,
-              p_m = prob_matrix,
-              preds = preds,
-              eval_metrics = eval_metrics_res,
-              Accuracy = eval_metrics_res$Accuracy,
-              Kappa = eval_metrics_res$Kappa,
-              AUC = eval_metrics_res$AUC,
-              F1_Macro     = eval_metrics_res$F1_Macro,
-              F1_Weighted = eval_metrics_res$F1_Weighted,
-              MCC          = eval_metrics_res$MCC_Multiclass
+  return(list( model        = caret_model,
+               ntree        = best_trees,
+               preds        = preds,
+               p_m          = prob_matrix,
+               eval_metrics = ev,
+               Accuracy = ev$Accuracy,
+               Kappa = ev$Kappa,
+               AUC = ev$AUC,
+               F1_Macro     = ev$F1_Macro,
+               F1_Weighted = ev$F1_Weighted,
+               MCC          = ev$MCC_Multiclass
   ))
 }
 
@@ -2698,7 +2725,6 @@ run_rf_analysis_manuscript1 <- function(data,
                             metric                  = "Accuracy",
                             do_rfe                  = FALSE,
                             do_rfa                  = FALSE,
-                            # rfe_folds               = 5,
                             min_sample_numner,
                             do_impute_norm_screen   = TRUE,
                             group_for_significance) {
@@ -2794,11 +2820,21 @@ run_rf_analysis_manuscript1 <- function(data,
     environmental_set <- data[data$Source == "Environmental", ]
     
     set.seed(123)
-    env_train_index <- caret::createDataPartition(environmental_set[[type_col]], p = 0.5, list = FALSE)
+    env_train_index <- caret::createDataPartition(as.character(environmental_set[[type_col]]), p = 0.5, list = FALSE)
     environmental_training_set <- environmental_set[env_train_index, ]
     environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
     
     train_data <- rbind(store_bought_set, environmental_training_set)
+    # 2) Compute the per-class counts
+    counts   <- table(train_data[[type_col]])
+    
+    # 3) Set desired_k to the minimum class count in train_data
+    desired_k <- min(counts)
+    
+    # 4) Keep only those classes that have ≥ desired_k samples
+    keep      <- names(counts[counts >= desired_k])
+    train_data <- train_data[train_data[[type_col]] %in% keep, ]
+    
     test_data  <- environmental_hold_out_testing_set
     
     if(nrow(train_data) < 1) stop("Training data is empty!")
@@ -2815,6 +2851,15 @@ run_rf_analysis_manuscript1 <- function(data,
     test_data  <- data[-train_index, ]
   }
   
+  # Setup K-folds CV 
+  # ==> maynot be possible because here we have train_data as compile of SB and ENV, if we split to K-fold, then the number of samples maybe too small to split further into k-fold subset trainSB+ENV and testENV
+  # min_class_count_all <- min(table(data[[type_col]]))
+  # K <- ifelse(min_class_count_all > 1, min_class_count_all, 2)
+  # # stratified folds on the full target vector
+  # K_folds <- createFolds(data[[type_col]], k = K, returnTrain = TRUE)
+  # final_final_res_list <- vector("list", length = K * 4) 
+  # i <- 1
+    
   # Drop unused factor levels after splitting
   train_data[[type_col]] <- droplevels(train_data[[type_col]])
   test_data[[type_col]]  <- droplevels(test_data[[type_col]])
@@ -2825,18 +2870,13 @@ run_rf_analysis_manuscript1 <- function(data,
   X_test  <- test_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
   y_test  <- test_data[[type_col]]
   
-  # 7) Setup Cross-Validation Control
-  min_class_count <- min(table(y_train))
-  folds <- ifelse(min_class_count > 1, min_class_count, 2)
-  cv_ctrl <- caret::trainControl(method = "cv", number = folds, classProbs = TRUE)
-  
   # 8) Full-Feature Classification: Grid Search over (mtry, ntree)
   cat("\n### Train/test with Full original features ###\n")
   start_time_full_features <- Sys.time()
   
   all_feats <- tune_rf_subset(
     X_train, y_train, X_test, y_test,
-    cv_ctrl, ntree_candidates, metric
+    ntree_candidates, metric
   )
   
   best_model_all_feats      <- all_feats$model
@@ -2871,7 +2911,7 @@ run_rf_analysis_manuscript1 <- function(data,
       tmp_sig <- tune_rf_subset(
         X_train[, sig_feats, drop=FALSE], y_train,
         X_test [, sig_feats, drop=FALSE], y_test,
-        cv_ctrl, ntree_candidates, metric
+        ntree_candidates, metric
       )
       acc_sig         <- tmp_sig$Accuracy
       final_sig_model <- tmp_sig$model$finalModel
@@ -2895,7 +2935,6 @@ run_rf_analysis_manuscript1 <- function(data,
     rfa_res   <- recursive_feature_addition(
       X_train, y_train,
       X_test,  y_test,
-      cv_ctrl          = cv_ctrl,
       ntree_candidates = ntree_candidates,
       metric           = metric
     )
@@ -2939,7 +2978,7 @@ run_rf_analysis_manuscript1 <- function(data,
       tmp_top <- tune_rf_subset(
         X_train[, selected_features, drop = FALSE], y_train,
         X_test[, selected_features, drop = FALSE], y_test,
-        cv_ctrl, ntree_candidates, metric
+        ntree_candidates, metric
       )
       
       acc_top         <- tmp_top$Accuracy
@@ -2976,16 +3015,19 @@ run_rf_analysis_manuscript1 <- function(data,
       res <- tune_rf_subset(
         X_train = x, y_train = y,
         X_test  = x, y_test  = y,
-        cv_ctrl, ntree_candidates, metric
+        ntree_candidates, metric
       )
       res$model$finalModel
     }
-    min_class_count <- min(table(y_train))
-    rfe_folds <- ifelse(min_class_count > 1, min_class_count, 2)
+    
+    # compute the smallest class count
+    rfe_k <- min(table(train_data[[type_col]]))
+    rfe_k <- if (rfe_k > 1) rfe_k else 2
+    
     rfe_ctl <- rfeControl(
       functions   = myFuncs,
       method      = "cv",
-      number      = rfe_folds,
+      number      = rfe_k,
       saveDetails = TRUE,
       returnResamp= "final"
     )
@@ -3001,7 +3043,7 @@ run_rf_analysis_manuscript1 <- function(data,
     tmp_rfe <- tune_rf_subset(
       X_train[, rfe_feats, drop=FALSE], y_train,
       X_test[, rfe_feats, drop=FALSE], y_test,
-      cv_ctrl, ntree_candidates, metric
+      ntree_candidates, metric
     )
     acc_rfe          <- tmp_rfe$Accuracy
     final_rfe_model  <- tmp_rfe$model$finalModel
@@ -3165,7 +3207,40 @@ ggsave(filename = paste0("rf_feat_imp.png"),
 ```
 
 ### Option 2: Use Both SB and ENV to predict ENV
-Run prediction separatedly on each analytical dataset and only use significant features from GBFE and pairwise test asinput for combined data
+
+(IMPORTANT NOTE - 23 June 2025): for ICP only data, 
+1. you filter on total counts ≥ 3 before splitting.
+That means any Plastic type with ≥ 3 replicates across SB + ENV gets kept.
+
+2. You then split ENV 50:50 into environmental_training_set (in) and environmental_hold_out_testing_set (out), and you never re-filter on the actual counts in the new train_data = SB_set + environmental_training_set.
+
+As a result, some types that had, say, 3 total replicates, all in ENV, end up with only 1 or 2 replicates in train_data (because only half of their ENV reps made it into environmental_training_set).
+
+3. When you do: 
+min_class_count <- min(table(y_train))
+rfe_folds       <- ifelse(min_class_count > 1, min_class_count, 2)
+rfeControl(method="cv", number = rfe_folds)
+
+you may end up asking for, say, a 2‐ or 3‐fold stratified CV on a class that only has 1 replicate in y_train. Caret cannot split that single sample into 3 separate test‐folds, so internally every resample for every subset ends up generating no held-out predictions → and you see all the Accuracy values come back as NA.
+
+==> By contrast, the GC_only data happened to distribute its replicates such that after the 50:50 ENV split, every class in the GC train_data still had at least as many samples as the number of folds you asked for—so caret could do its stratified CV just fine.
+
+
+test <- run_rf_analysis_manuscript1(
+    data = icp_combined_SB_ENV_shared_cols_ntr_clean,
+    data_name = "", 
+    use_source_split = TRUE,
+    type_col                = "Plastic_type", 
+    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
+    group_for_significance = "Plastic_type",
+    do_pairwise_test = FALSE,             # Adjust parameters as needed
+    do_top_importance_selection = FALSE,
+    do_rfe = TRUE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_numner = 3)
+    
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 data_combinations <- list(
@@ -3202,7 +3277,8 @@ for(i in seq_along(data_combinations)) {
     group_for_significance = "Plastic_type",
     do_pairwise_test = TRUE,             # Adjust parameters as needed
     do_top_importance_selection = TRUE,
-    do_rfe = FALSE,
+    do_rfe = TRUE,
+    do_rfa = TRUE,
     train_proportion = 0.8,
     do_impute_norm_screen = TRUE,
     seed = 123,
@@ -3217,7 +3293,7 @@ for(i in seq_along(data_combinations)) {
     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_10$prob_matrix_top),
     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_opt),
     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_gbfe))
-  write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_and_ENV_train)[i], "_all_prob_matrices.xlsx"))
+  write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_and_ENV_train)[i], "_collection of all_feature selections_prob_matrices.xlsx"))
 }
 
 ```
@@ -3383,1699 +3459,6 @@ ggsave(filename = paste0("Kayla_heatmap_trainlibrary_test4Treatments_7plastictyp
        width = 20,       # Width in inches (adjust as needed)
        height = 10,       # Height in inches (adjust as needed)
        units = "in")
-```
-
-# SVM
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-run_linearSVM_analysis_manuscript1_e1071 <- function(data,
-                                                      type_col,
-                                                      remove_cols,
-                                                      train_proportion        = 0.5,
-                                                      use_source_split        = FALSE,
-                                                      use_store_vs_environmental_split = FALSE,
-                                                      use_polymer             = FALSE,
-                                                      do_pairwise_test        = FALSE,
-                                                      do_top_importance_selection = FALSE,
-                                                      top_importance_counts   = c(100, 50, 25, 10),
-                                                      data_name,              
-                                                      seed                    = NULL,
-                                                      svm_candidates          = c(0.01, 0.1, 1, 10, 100),
-                                                      metric                  = "Accuracy",  # Note: tune.svm minimizes error
-                                                      do_rfe                  = FALSE,
-                                                      rfe_folds               = 5,
-                                                      do_gbfe                 = FALSE,
-                                                      do_impute_norm_screen   = TRUE,
-                                                      group_for_significance  = "Subcategory") {
-  
-  library(dplyr)
-  library(e1071)
-  library(pheatmap)
-  library(viridis)
-  
-  # 1) Prepare Target Variable and Remove Classes with a Single Sample
-  if(!is.null(seed)) set.seed(seed)
-  data[[type_col]] <- as.factor(data[[type_col]])
-  levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
-  
-  class_counts  <- table(data[[type_col]])
-  keep_classes  <- names(class_counts[class_counts > 1])
-  data          <- data[data[[type_col]] %in% keep_classes, ]
-  data[[type_col]] <- droplevels(data[[type_col]])
-  
-  # 2) Handle Polymer Column if Required
-  if(use_polymer) {
-    remove_cols <- setdiff(remove_cols, "Polymer")
-    if("Polymer" %in% colnames(data)){
-      data$Polymer <- as.factor(data$Polymer)
-    }
-  }
-  
-  # 3) Imputation and Normalization on Clean Data
-  best_imp  <- "No_imputation"
-  best_norm <- "No_normalization"
-  if(do_impute_norm_screen){
-    cat("\n### Screening Best Imputation + Normalization Combo ###\n")
-    
-    # (Assuming find_best_impute_normalize and associated methods are defined)
-    best_res <- find_best_impute_normalize(
-      df = data,
-      class_col = type_col,
-      group_for_significance = group_for_significance,
-      remove_cols = remove_cols
-    )
-    cat("\n*** Summary of Imputation/Normalization Combos ***\n")
-    print(best_res$results_table)
-    cat("\n*** Best Combo ***\n")
-    print(best_res$best_combo)
-    
-    best_imp  <- best_res$best_combo$Imputation
-    best_norm <- best_res$best_combo$Normalization
-    
-    numeric_cols <- names(which(sapply(data, is.numeric)))
-    X_original <- data[, numeric_cols, drop = FALSE]
-    X_imputed <- imputation_methods[[best_imp]](X_original)
-    X_final <- normalization_methods[[best_norm]](X_imputed)
-    data[, numeric_cols] <- X_final
-  } else {
-    cat("\n### Skipping Imputation + Normalization; Using Raw Data ###\n")
-  }
-  
-  cat("NAs in original data:", sum(is.na(data)), "\n")
-  cat("NAs after imputation+normalization:", sum(is.na(data)), "\n")
-  
-  # 4) Run Pairwise/ANOVA Tests on Cleaned Data (if selected)
-  if(do_pairwise_test) {
-    cat("\n### Running Pairwise Significance Tests on Cleaned Data ###\n")
-    pairwise_res <- pairwise_significance_tests(input_df = data, 
-                                                group_col = group_for_significance, 
-                                                start_col_index = 6)
-    pairwise_sig_features <- pairwise_res$corrected
-    if(length(pairwise_sig_features) == 0) {
-      cat("No significant features found from pairwise tests. Skipping pairwise feature selection.\n")
-      do_pairwise_test <- FALSE
-    }
-  }
-  
-  # 5) Train/Test Split
-  if(use_store_vs_environmental_split){
-    cat("\n### Using Store-vs-Environmental Splitting ###\n")
-    train_data <- data[data$Source == "Store-Bought", ]
-    test_data  <- data[data$Source == "Environmental", ]
-    if(nrow(train_data) < 1) stop("No 'Store-Bought' samples for training!")
-    if(nrow(test_data) < 1) stop("No 'Environmental' samples for testing!")
-  } else if(use_source_split){
-    cat("\n### Using Source-based Splitting with Environmental 50:50 Split ###\n")
-    store_bought_set <- data[data$Source == "Store-Bought", ]
-    environmental_set <- data[data$Source == "Environmental", ]
-    if(!is.null(seed)) {
-      set.seed(seed)
-    } else {
-      set.seed(sample.int(999, 1))
-    }
-    env_train_index <- caret::createDataPartition(environmental_set[[type_col]], p = 0.5, list = FALSE)
-    environmental_training_set <- environmental_set[env_train_index, ]
-    environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
-    train_data <- rbind(store_bought_set, environmental_training_set)
-    test_data  <- environmental_hold_out_testing_set
-    if(nrow(train_data) < 1) stop("Training data is empty!")
-    if(nrow(test_data) < 1) stop("Test data is empty!")
-  } else {
-    cat("\n### Using Original Train/Test Split ###\n")
-    y <- data[[type_col]]
-    if(is.null(seed)) {
-      set.seed(sample.int(999, 1))
-    }
-    train_index <- caret::createDataPartition(y, p = train_proportion, list = FALSE)
-    train_data <- data[train_index, ]
-    test_data  <- data[-train_index, ]
-  }
-  
-  # Drop unused factor levels after splitting
-  train_data[[type_col]] <- droplevels(train_data[[type_col]])
-  test_data[[type_col]]  <- droplevels(test_data[[type_col]])
-  
-  # 6) Prepare Predictors and Response for Full-Feature Classification
-  X_train <- train_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_train <- train_data[[type_col]]
-  X_test  <- test_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_test  <- test_data[[type_col]]
-  
-  # 7) Setup Cross-Validation Fold Count
-  min_class_count <- min(table(y_train))
-  folds <- ifelse(min_class_count > 1, min_class_count, 2)
-  
-  # 8) Full-Feature Classification using e1071 -------------------------------
-  cat("\n### Training Full-Feature Linear SVM Model using e1071 ###\n")
-  
-  # For e1071, it is important to scale predictors manually.
-  scaled_train <- scale(X_train)
-  X_train_scaled <- as.data.frame(scaled_train)
-  center_vec <- attr(scaled_train, "scaled:center")
-  scale_vec <- attr(scaled_train, "scaled:scale")
-  
-  # Combine predictors with response for formula-based training
-  train_df <- cbind(X_train_scaled, target = y_train)
-  
-  # Use tune.svm for grid search over cost (note: tune minimizes error)
-  tune_result <- tune(svm, target ~ ., data = train_df,
-                      kernel = "linear",
-                      cost = svm_candidates,
-                      tunecontrol = tune.control(sampling = "cross", cross = folds),
-                      probability = TRUE)
-  
-  best_model <- tune_result$best.model
-  best_C <- best_model$cost
-  best_cv_accuracy <- 1 - min(tune_result$performances$error)
-  
-  cat("Best Full-Feature Model CV Accuracy (approx) =", best_cv_accuracy,
-      " with C =", best_C, "\n")
-  
-  # Scale test predictors using same scaling parameters
-  X_test_scaled <- as.data.frame(scale(X_test, center = center_vec, scale = scale_vec))
-  
-  # Predict on test set and extract probabilities
-  pred <- predict(best_model, newdata = X_test_scaled, probability = TRUE)
-  pred_probs <- attr(pred, "probabilities")
-  pred_class <- as.factor(pred)
-  
-  y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-  acc_full <- mean(pred_class == y_test_aligned, na.rm = TRUE)
-  
-  cat("Full-Feature Test Accuracy:", acc_full, "\n")
-  
-  # --- Generate Heatmap (Full Features) ---
-  {
-    # Create a data frame with predicted probabilities and true labels
-    new_pred_df_test <- as.data.frame(pred_probs)
-    new_pred_df_test[[type_col]] <- y_test
-    row_names <- as.character(new_pred_df_test[[type_col]])
-    new_row_names <- ave(row_names, row_names, FUN = function(x) {
-      if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-    })
-    rownames(new_pred_df_test) <- new_row_names
-    new_pred_df_test[[type_col]] <- NULL
-    prob_matrix <- as.matrix(new_pred_df_test)
-    
-    pheatmap::pheatmap(prob_matrix,
-                       fontsize = 15,
-                       cluster_rows = FALSE,
-                       cluster_cols = FALSE,
-                       color = viridis::viridis(100),
-                       display_numbers = TRUE,
-                       number_format = "%.2f",
-                       main = paste("Classification Probability (All Features) -", data_name, 
-                                    sprintf("| Test Accuracy: %.2f", acc_full)),
-                       breaks = seq(0, 1, length.out = 101))
-  }
-  
-  # --- Feature Importance ---
-  # For a linear SVM with 2 classes, weights can be approximated as:
-  if(length(levels(y_train)) == 2) {
-    w <- t(best_model$coefs) %*% best_model$SV
-    w <- as.vector(w)
-    names(w) <- colnames(X_train)
-    svm_imp_df <- data.frame(Feature = names(w), Overall = abs(w))
-    svm_imp_df <- svm_imp_df[order(svm_imp_df$Overall, decreasing = TRUE), ]
-    cat("\nTop Features by Importance (Full Features):\n")
-    print(head(svm_imp_df))
-  } else {
-    cat("\nVariable importance extraction is not straightforward for multi-class SVM in e1071.\n")
-    svm_imp_df <- NULL
-  }
-  
-  # 9) Classification with Pairwise/ANOVA Selected Features (if requested) -------
-  if(do_pairwise_test){
-    pairwise_features <- intersect(colnames(X_train), pairwise_sig_features)
-    
-    if(length(pairwise_features) == 0){
-      cat("No overlapping pairwise significant features found in predictors. Skipping pairwise model.\n")
-    } else {
-      X_train_pair <- X_train[, pairwise_features, drop = FALSE]
-      X_test_pair  <- X_test[, pairwise_features, drop = FALSE]
-      
-      cat("\n### Running Classification on Pairwise Selected Features ###\n")
-      cat("Using Pairwise Features:", paste(pairwise_features, collapse = ", "), "\n")
-      
-      # Scale pairwise data
-      scaled_train_pair <- scale(X_train_pair)
-      X_train_pair_scaled <- as.data.frame(scaled_train_pair)
-      center_pair <- attr(scaled_train_pair, "scaled:center")
-      scale_pair  <- attr(scaled_train_pair, "scaled:scale")
-      
-      train_pair_df <- cbind(X_train_pair_scaled, target = y_train)
-      
-      # Use the best C from full-feature model
-      svm_pair_model <- svm(target ~ ., data = train_pair_df, kernel = "linear", cost = best_C, probability = TRUE)
-      
-      X_test_pair_scaled <- as.data.frame(scale(X_test_pair, center = center_pair, scale = scale_pair))
-      pred_pair <- predict(svm_pair_model, newdata = X_test_pair_scaled, probability = TRUE)
-      pred_probs_pair <- attr(pred_pair, "probabilities")
-      pred_class_pair <- as.factor(pred_pair)
-      
-      acc_pair <- mean(pred_class_pair == y_test_aligned, na.rm=TRUE)
-      cat("Pairwise Model Test Accuracy:", acc_pair, "\n")
-      
-      {
-        df_heatmap_pair <- as.data.frame(pred_probs_pair)
-        df_heatmap_pair[[type_col]] <- y_test
-        row_names_pair <- as.character(df_heatmap_pair[[type_col]])
-        new_row_names_pair <- ave(row_names_pair, row_names_pair, FUN = function(x) {
-          if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-        })
-        rownames(df_heatmap_pair) <- new_row_names_pair
-        df_heatmap_pair[[type_col]] <- NULL
-        prob_matrix_pair <- as.matrix(df_heatmap_pair)
-        
-        pheatmap::pheatmap(prob_matrix_pair,
-                           fontsize = 15,
-                           cluster_rows = FALSE,
-                           cluster_cols = FALSE,
-                           color = viridis::viridis(100),
-                           display_numbers = TRUE,
-                           number_format = "%.2f",
-                           main = paste("Classification Probability (Pairwise Features) -", data_name, 
-                                        sprintf("| Test Accuracy: %.2f", acc_pair)),
-                           breaks = seq(0, 1, length.out = 101))
-      }
-    }
-  }
-  
-  # 10) Classification with Top-N Features by Importance (if requested) -------
-  if(do_top_importance_selection){
-    cat("\n### Running Classification on Top-N Features by Importance ###\n")
-    top_importance_results <- list()
-    total_features <- if(!is.null(svm_imp_df)) nrow(svm_imp_df) else ncol(X_train)
-    
-    for(top_n in top_importance_counts){
-      if(total_features < top_n){
-        selected_features <- if(!is.null(svm_imp_df)) svm_imp_df$Feature else colnames(X_train)
-        cat(sprintf("Only %d features available; using all.\n", total_features))
-      } else {
-        selected_features <- if(!is.null(svm_imp_df)) head(svm_imp_df$Feature, top_n) else head(colnames(X_train), top_n)
-      }
-      
-      X_train_top <- X_train[, selected_features, drop = FALSE]
-      X_test_top  <- X_test[, selected_features, drop = FALSE]
-      
-      # Scale top features
-      scaled_train_top <- scale(X_train_top)
-      X_train_top_scaled <- as.data.frame(scaled_train_top)
-      center_top <- attr(scaled_train_top, "scaled:center")
-      scale_top  <- attr(scaled_train_top, "scaled:scale")
-      train_top_df <- cbind(X_train_top_scaled, target = y_train)
-      
-      svm_top_model <- svm(target ~ ., data = train_top_df, kernel = "linear", cost = best_C, probability = TRUE)
-      
-      X_test_top_scaled <- as.data.frame(scale(X_test_top, center = center_top, scale = scale_top))
-      pred_top <- predict(svm_top_model, newdata = X_test_top_scaled, probability = TRUE)
-      pred_probs_top <- attr(pred_top, "probabilities")
-      pred_class_top <- as.factor(pred_top)
-      
-      acc_top <- mean(pred_class_top == y_test_aligned, na.rm = TRUE)
-      cat(sprintf("Top-N (%d) Test Accuracy: %f\n", top_n, acc_top))
-      
-      {
-        df_heatmap_top <- as.data.frame(pred_probs_top)
-        df_heatmap_top[[type_col]] <- y_test
-        row_names_top <- as.character(df_heatmap_top[[type_col]])
-        new_row_names_top <- ave(row_names_top, row_names_top, FUN = function(x) {
-          if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-        })
-        rownames(df_heatmap_top) <- new_row_names_top
-        df_heatmap_top[[type_col]] <- NULL
-        prob_matrix_top <- as.matrix(df_heatmap_top)
-        
-        pheatmap::pheatmap(prob_matrix_top,
-                           fontsize = 15,
-                           cluster_rows = FALSE,
-                           cluster_cols = FALSE,
-                           color = viridis::viridis(100),
-                           display_numbers = TRUE,
-                           number_format = "%.2f",
-                           main = paste("Classification Probability (Top", top_n, "Features) -", 
-                                        data_name, sprintf("| Test Accuracy: %.2f", acc_top)),
-                           breaks = seq(0, 1, length.out = 101))
-      }
-      
-      top_importance_results[[paste0("top_", top_n)]] <- list(
-        best_model = svm_top_model,
-        best_cv_accuracy = NA,  # CV accuracy not re-computed here; using fixed best_C
-        best_C = best_C,
-        accuracy = acc_top,
-        selected_features = selected_features
-      )
-    }
-  }
-  
-  # 11) (Optional) RFE and 12) (Optional) GBFE -------------------------------
-  # Implementing RFE or GBFE with e1071::svm would require writing a custom wrapper.
-  # For brevity, these sections are not re-implemented here.
-  
-  # 13) Return Results
-  result_list <- list(
-    final_imp_norm_dat    = data,
-    imp_norm_res_table    = if(exists("best_res")) best_res$results_table else NULL,
-    best_imputatation     = best_imp,
-    best_normalization    = best_norm,
-    best_svm_model        = best_model,
-    full_features_acc     = acc_full,
-    svm_feature_importance = svm_imp_df
-  )
-  
-  if(do_pairwise_test){
-    result_list$pairwise_model    <- svm_pair_model
-    result_list$pairwise_features <- pairwise_features
-    result_list$pairwise_test_acc <- acc_pair
-  }
-  
-  if(do_top_importance_selection){
-    result_list$top_importance_results <- top_importance_results
-  }
-  
-  return(result_list)
-}
-
-```
-
-### Option 1: Use SB to predict ENV - Only select shared features between training and testing 
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-###################################################################################
-## Explanation of the parameter of run_rf_analysis()
-# split environmental into 50:50 and combine with store_bought -> use_source_split = FALSE
-# use store-bought as training and environmental as testing -> use_store_vs_environmental_split = TRUE
-###################################################################################
-
-data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_svc_analysis_list_SB_train <- vector("list", length(data_combinations))
-names(run_svc_analysis_list_SB_train) <- c("gc_USSB_train",
-                                          "hplc_USSB_train",
-                                          "icp_USSB_train",
-                                          "gc_hplc_USSB_train",
-                                          "gc_icp_USSB_train",
-                                          "hplc_icp_USSB_train",
-                                          "gc_hplc_icp_USSB_train")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_svc_analysis_list_SB_train[[names(run_svc_analysis_list_SB_train)[i]]] <- run_linearSVM_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(data_combinations)[i], 
-    use_store_vs_environmental_split = TRUE,
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-
-
-# Scatter plot features importance -------
-# svc_importances <- as.data.frame(run_svc_analysis_list_SB_train$gc_USSB_train$final_svc_all_feats$importance)
-# svc_importances$Feature <- rownames(svc_importances)
-# svc_importances <- svc_importances[order(svc_importances$MeanDecreaseGini, decreasing = TRUE), ]
-# 
-# ggplot(svc_importances, aes(x = reorder(Feature, 
-#                                        MeanDecreaseGini), y = MeanDecreaseGini)) +
-#   geom_point() +
-#   labs(x = "Feature", y = "Mean Decrease Gini",
-#        title = "Scatter Plot: Features from Lowest to Highest Mean Decrease Gini") +
-#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-### Option 2: Use Both SB and ENV to predict ENV
-Run prediction separatedly on each analytical dataset and only use significant features from GBFE and pairwise test asinput for combined data
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_svc_analysis_list_SB_and_ENV_train <- vector("list", length(data_combinations))
-names(run_svc_analysis_list_SB_and_ENV_train) <- c("gc_SB_and_ENV_train",
-                                                  "hplc_SB_and_ENV_train",
-                                                  "icp_SB_and_ENV_train",
-                                                  "gc_hplc_SB_and_ENV_train",
-                                                  "gc_icp_SB_and_ENV_train",
-                                                  "hplc_icp_SB_and_ENV_train",
-                                                  "gc_hplc_icp_SB_and_ENV_train")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_svc_analysis_list_SB_and_ENV_train[[names(run_svc_analysis_list_SB_and_ENV_train)[i]]] <- run_svm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(data_combinations)[i], 
-    use_source_split = TRUE,
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-### Option 3: Use SB to predict SB
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_SB_clean,
-  hplc               = hplc_SB_clean,
-  icp                = icp_SB_clean ,
-  gc_hplc            = gc_hplc_SB_clean,
-  gc_icp             = gc_icp_SB_clean,
-  hplc_icp           = hplc_icp_SB_clean,
-  gc_hplc_icp        = gc_hplc_icp_SB_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_svc_analysis_list_SB_only <- vector("list", length(data_combinations))
-names(run_svc_analysis_list_SB_only) <- c("gc_SB",
-                                         "hplc_SB",
-                                         "icp_SB",
-                                         "gc_hplc_SB",
-                                         "gc_icp_SB",
-                                         "hplc_icp_SB",
-                                         "gc_hplc_icp_SB")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_svc_analysis_list_SB_only[[names(run_svc_analysis_list_SB_only)[i]]] <- run_svm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(run_svc_analysis_list_SB_only)[i], 
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-### Option 4: Use ENV to predict ENV
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_ENV_clean,
-  hplc               = hplc_ENV_clean,
-  icp                = icp_ENV_clean ,
-  gc_hplc            = gc_hplc_ENV_clean,
-  gc_icp             = gc_icp_ENV_clean,
-  hplc_icp           = hplc_icp_ENV_clean,
-  gc_hplc_icp        = gc_hplc_icp_ENV_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_svc_analysis_list_ENV_only <- vector("list", length(data_combinations))
-names(run_svc_analysis_list_ENV_only) <- c("gc_ENV",
-                                          "hplc_ENV",
-                                          "icp_ENV",
-                                          "gc_hplc_ENV",
-                                          "gc_icp_ENV",
-                                          "hplc_icp_ENV",
-                                          "gc_hplc_icp_ENV")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_svc_analysis_list_ENV_only[[names(run_svc_analysis_list_ENV_only)[i]]] <- run_svm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(run_svc_analysis_list_ENV_only)[i], 
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-# GBM
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-run_gbm_analysis_manuscript1 <- function(data,
-                                         type_col,
-                                         remove_cols,
-                                         train_proportion        = 0.5,
-                                         use_source_split        = FALSE,               # Option 1: environmental 50:50 split and combine with store-bought
-                                         use_store_vs_environmental_split = FALSE,       # Option 2: use store-bought for training and environmental for testing
-                                         use_polymer             = FALSE,               # Whether to include "Polymer" as a predictor
-                                         do_pairwise_test        = FALSE,               # Run pairwise/ANOVA tests on imputed/normalized data
-                                         do_top_importance_selection = FALSE,           # Run additional classification using top-N features by importance
-                                         top_importance_counts   = c(100, 50, 25, 10),   # Which top features to try
-                                         data_name,              # Name of the input data combination for figure titles
-                                         seed                    = NULL,
-                                         ntree_candidates        = c(100, 500, 1000, 2500), # Used for gbm's n.trees parameter
-                                         metric                  = "Accuracy",
-                                         do_rfe                  = FALSE,
-                                         rfe_folds               = 5,
-                                         do_gbfe                 = FALSE,
-                                         do_impute_norm_screen   = TRUE,
-                                         group_for_significance  = "Subcategory") {
-  
-  # 1) Prepare Target Variable and Remove Classes with a Single Sample
-  if(!is.null(seed)) set.seed(seed)
-  data[[type_col]] <- as.factor(data[[type_col]])
-  levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
-  
-  class_counts  <- table(data[[type_col]])
-  keep_classes  <- names(class_counts[class_counts > 1])
-  data          <- data[data[[type_col]] %in% keep_classes, ]
-  data[[type_col]] <- droplevels(data[[type_col]])
-  
-  # 2) Handle Polymer Column if Required
-  if(use_polymer) {
-    remove_cols <- setdiff(remove_cols, "Polymer")
-    if("Polymer" %in% colnames(data)){
-      data$Polymer <- as.factor(data$Polymer)
-    }
-  }
-  
-  # 3) Imputation and Normalization on Clean Data
-  best_imp  <- "No_imputation"
-  best_norm <- "No_normalization"
-  if(do_impute_norm_screen){
-    cat("\n### Screening Best Imputation + Normalization Combo ###\n")
-    
-    # Identify numeric columns (excluding remove_cols and target)
-    numeric_data <- data[!apply(data %>% dplyr::select(-all_of(remove_cols), -all_of(type_col)), 1, function(x) all(is.na(x))), ]
-    numeric_cols <- names(which(sapply(numeric_data, is.numeric)))
-    
-    best_res <- find_best_impute_normalize(
-      df = data,
-      class_col = type_col,
-      group_for_significance = group_for_significance,
-      remove_cols = remove_cols
-    )
-    cat("\n*** Summary of Imputation/Normalization Combos ***\n")
-    print(best_res$results_table)
-    cat("\n*** Best Combo ***\n")
-    print(best_res$best_combo)
-    
-    best_imp  <- best_res$best_combo$Imputation
-    best_norm <- best_res$best_combo$Normalization
-    
-    X_original <- data[, numeric_cols, drop = FALSE]
-    X_imputed <- imputation_methods[[best_imp]](X_original)
-    X_final <- normalization_methods[[best_norm]](X_imputed)
-    data[, numeric_cols] <- X_final
-    
-  } else {
-    cat("\n### Skipping Imputation + Normalization; Using Raw Data ###\n")
-  }
-  
-  cat("NAs in original data:", sum(is.na(data)), "\n")
-  cat("NAs after imputation+normalization:", sum(is.na(data)), "\n")
-  
-  # 4) Run Pairwise/ANOVA Tests on Cleaned Data (if selected)
-  if(do_pairwise_test) {
-    cat("\n### Running Pairwise Significance Tests on Cleaned Data ###\n")
-    pairwise_res <- pairwise_significance_tests(input_df = data, 
-                                                group_col = group_for_significance, 
-                                                start_col_index = 6)
-    pairwise_sig_features <- pairwise_res$corrected
-    if(length(pairwise_sig_features) == 0) {
-      cat("No significant features found from pairwise tests. Skipping pairwise feature selection.\n")
-      do_pairwise_test <- FALSE
-    }
-  }
-  
-  # 5) Train/Test Split
-  if(use_store_vs_environmental_split){
-    cat("\n### Using Store-vs-Environmental Splitting ###\n")
-    train_data <- data[data$Source == "Store-Bought", ]
-    test_data  <- data[data$Source == "Environmental", ]
-    if(nrow(train_data) < 1) stop("No 'Store-Bought' samples for training!")
-    if(nrow(test_data) < 1) stop("No 'Environmental' samples for testing!")
-  } else if(use_source_split){
-    cat("\n### Using Source-based Splitting with Environmental 50:50 Split ###\n")
-    store_bought_set <- data[data$Source == "Store-Bought", ]
-    environmental_set <- data[data$Source == "Environmental", ]
-    if(!is.null(seed)) {
-      set.seed(seed)
-    } else {
-      set.seed(sample.int(999, 1))
-    }
-    env_train_index <- caret::createDataPartition(environmental_set[[type_col]], p = 0.5, list = FALSE)
-    environmental_training_set <- environmental_set[env_train_index, ]
-    environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
-    train_data <- rbind(store_bought_set, environmental_training_set)
-    test_data  <- environmental_hold_out_testing_set
-    if(nrow(train_data) < 1) stop("Training data is empty!")
-    if(nrow(test_data) < 1) stop("Test data is empty!")
-  } else {
-    cat("\n### Using Original Train/Test Split ###\n")
-    X <- data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-    y <- data[[type_col]]
-    if(is.null(seed)) {
-      set.seed(sample.int(999, 1))
-    }
-    train_index <- caret::createDataPartition(y, p = train_proportion, list = FALSE)
-    train_data <- data[train_index, ]
-    test_data  <- data[-train_index, ]
-  }
-  
-  # Drop unused factor levels after splitting
-  train_data[[type_col]] <- droplevels(train_data[[type_col]])
-  test_data[[type_col]]  <- droplevels(test_data[[type_col]])
-  
-  # 6) Prepare Predictors and Response for Full-Feature Classification
-  X_train <- train_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_train <- train_data[[type_col]]
-  X_test  <- test_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_test  <- test_data[[type_col]]
-  
-  # 7) Setup Cross-Validation Control
-  min_class_count <- min(table(y_train))
-  folds <- ifelse(min_class_count > 1, min_class_count, 2)
-  cv_ctrl <- caret::trainControl(method = "cv", number = folds, classProbs = TRUE)
-  
-  # 8) Full-Feature Classification: Grid Search over (n.trees, interaction.depth)
-  best_model <- NULL
-  best_metric_val <- -Inf
-  best_n_trees <- NA
-  best_interaction_depth <- NA
-  best_n_minobsinnode <- NA
-  best_shrinkage <- NA
-  dist_param <- if(nlevels(y_train) == 2) "bernoulli" else "multinomial"
-  
-  for(n_trees in ntree_candidates){
-    set.seed(sample.int(999, 1))
-    gbm_grid <- expand.grid(n.trees = n_trees,
-                            shrinkage = c(0.01, 0.1),
-                            n.minobsinnode = c(1,2),
-                            interaction.depth = c(1,2,3))
-    gbm_fit <- caret::train(x = X_train,
-                            y = as.factor(y_train),
-                            method = "gbm",
-                            trControl = cv_ctrl,
-                            tuneGrid = gbm_grid,
-                            metric = metric,
-                            distribution = dist_param,
-                            bag.fraction = 1, # use full sample instead of subsampling
-                            verbose = FALSE)
-    current_best <- max(gbm_fit$results[[metric]])
-    if(current_best > best_metric_val){
-      best_metric_val <- current_best
-      best_model <- gbm_fit
-      best_n_trees <- n_trees
-      best_interaction_depth <- gbm_fit$bestTune$interaction.depth
-      best_n_minobsinnode <- gbm_fit$bestTune$n.minobsinnode
-      best_shrinkage <- gbm_fit$bestTune$shrinkage
-    }
-  }
-  
-  cat("Best Full-Feature Model", metric, "on Training =", best_metric_val,
-      " with n.trees =", best_n_trees,
-      " and interaction.depth =", best_interaction_depth, "\n")
-  
-  final_gbm <- best_model$finalModel
-  
-  pred_prob_test <- predict(best_model, newdata = X_test, type = "prob")
-  new_pred_df_test <- as.data.frame(pred_prob_test)
-  new_pred_df_test[[type_col]] <- y_test
-  
-  y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-  pred_class_test <- predict(best_model, newdata = X_test, type = "raw")
-  pred_class_test_aligned <- factor(as.character(pred_class_test), levels = levels(y_train))
-  
-  acc_full <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_class_test_aligned)
-  
-  # --- Generate Heatmap (Full Features) ---
-  {
-    df_heatmap <- new_pred_df_test
-    row_names <- as.character(df_heatmap[[type_col]])
-    new_row_names <- ave(row_names, row_names, FUN = function(x) {
-      if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-    })
-    rownames(df_heatmap) <- new_row_names
-    df_heatmap[[type_col]] <- NULL
-    prob_matrix <- as.matrix(df_heatmap)
-    
-    pheatmap::pheatmap(prob_matrix,
-                       fontsize = 15,
-                       cluster_rows = FALSE,
-                       cluster_cols = FALSE,
-                       color = viridis::viridis(100),
-                       display_numbers = TRUE,
-                       number_format = "%.2f",
-                       main = paste("Classification Probability (All Features) -", data_name, 
-                                    sprintf("| Balanced Test Accuracy: %.2f", acc_full)),
-                       breaks = seq(0, 1, length.out = 101))
-  }
-  
-  # Obtain feature importance via relative influence
-  gbm_importances <- summary(best_model$finalModel, plotit = FALSE)
-  gbm_importances <- gbm_importances[order(gbm_importances$rel.inf, decreasing = TRUE), ]
-  cat("\nTop Features by Relative Influence (Full Features):\n")
-  print(head(gbm_importances))
-  
-  # 9) Classification with Pairwise/ANOVA Selected Features (if requested)
-  if(do_pairwise_test){
-    pairwise_features <- intersect(colnames(X_train), pairwise_sig_features)
-    
-    if(length(pairwise_features) == 0){
-      cat("No overlapping pairwise significant features found in predictors. Skipping pairwise model.\n")
-    } else {
-      X_train_pair <- X_train[, pairwise_features, drop = FALSE]
-      X_test_pair  <- X_test[, pairwise_features, drop = FALSE]
-      
-      cat("\n### Running Classification on Pairwise Selected Features ###\n")
-      cat("Using Pairwise Features:", paste(pairwise_features, collapse = ", "), "\n")
-      
-      gbm_grid_pair <- expand.grid(n.trees = best_n_trees, 
-                                   shrinkage = c(0.01, 0.1),
-                                   n.minobsinnode = c(1,2),
-                                   interaction.depth = c(1,2,3))
-      
-      best_model_pair <- caret::train(x = X_train_pair,
-                                      y = as.factor(y_train),
-                                      method = "gbm",
-                                      trControl = cv_ctrl,
-                                      tuneGrid = gbm_grid_pair,
-                                      metric = metric,
-                                      distribution = dist_param,
-                                      bag.fraction = 1, # use full sample instead of subsampling
-                                      verbose = FALSE)
-      cat("Pairwise Model", metric, "on Training =", max(best_model_pair$results[[metric]]), "\n")
-      
-      final_gbm_pair <- best_model_pair$finalModel
-      
-      pred_prob_test_pair <- predict(best_model_pair, newdata = X_test_pair, type = "prob")
-      new_pred_df_test_pair <- as.data.frame(pred_prob_test_pair)
-      new_pred_df_test_pair[[type_col]] <- y_test
-      
-      y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-      pred_class_pair <- predict(best_model_pair, newdata = X_test_pair, type = "raw")
-      pred_class_pair_aligned <- factor(as.character(pred_class_pair), levels = levels(y_train))
-      
-      acc_pair <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_class_pair_aligned)
-      
-      {
-        df_heatmap_pair <- new_pred_df_test_pair
-        row_names_pair <- as.character(df_heatmap_pair[[type_col]])
-        new_row_names_pair <- ave(row_names_pair, row_names_pair, FUN = function(x) {
-          if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-        })
-        rownames(df_heatmap_pair) <- new_row_names_pair
-        df_heatmap_pair[[type_col]] <- NULL
-        prob_matrix_pair <- as.matrix(df_heatmap_pair)
-        
-        pheatmap::pheatmap(prob_matrix_pair,
-                           fontsize = 15,
-                           cluster_rows = FALSE,
-                           cluster_cols = FALSE,
-                           color = viridis::viridis(100),
-                           display_numbers = TRUE,
-                           number_format = "%.2f",
-                           main = paste("Classification Probability (Pairwise Features) -", data_name, 
-                                        sprintf("| Balanced Test Accuracy: %.2f", acc_pair)),
-                           breaks = seq(0, 1, length.out = 101))
-      }
-    }
-  }
-  
-  # 10) Classification with Top-N Features by Importance (if requested)
-  if(do_top_importance_selection){
-    cat("\n### Running Classification on Top-N Features by Importance ###\n")
-    top_importance_results <- list()
-    total_features <- nrow(gbm_importances)
-    
-    for(top_n in top_importance_counts){
-      if(total_features < top_n){
-        selected_features <- gbm_importances$var
-        cat(sprintf("Only %d features available; using all.\n", total_features))
-      } else {
-        selected_features <- head(gbm_importances$var, top_n)
-      }
-      
-      X_train_top <- X_train[, selected_features, drop = FALSE]
-      X_test_top  <- X_test[, selected_features, drop = FALSE]
-      
-      gbm_grid_top <- expand.grid(n.trees = best_n_trees, 
-                                  shrinkage = c(0.01, 0.1),
-                                  n.minobsinnode = c(1,2),
-                                  interaction.depth = c(1,2,3))
-      
-      best_model_top <- caret::train(
-        x = X_train_top,
-        y = as.factor(y_train),
-        method = "gbm",
-        trControl = cv_ctrl,
-        tuneGrid = gbm_grid_top,
-        metric = metric,
-        distribution = dist_param,
-        bag.fraction = 1,
-        verbose = FALSE)
-      
-      final_gbm_top <- best_model_top$finalModel
-      
-      pred_prob_test_top <- predict(best_model_top, newdata = X_test_top, type = "prob")
-      new_pred_df_test_top <- as.data.frame(pred_prob_test_top)
-      new_pred_df_test_top[[type_col]] <- y_test
-      
-      y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-      pred_class_top <- predict(best_model_top, newdata = X_test_top, type = "raw")
-      pred_class_top_aligned <- factor(as.character(pred_class_top), levels = levels(y_train))
-      
-      acc_top <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_class_top_aligned)
-      
-      cat(sprintf("Top-N (%d) Balanced Test Accuracy: %f\n", top_n, acc_top))
-      
-      {
-        df_heatmap_top <- new_pred_df_test_top
-        row_names_top <- as.character(df_heatmap_top[[type_col]])
-        new_row_names_top <- ave(row_names_top, row_names_top, FUN = function(x) {
-          if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-        })
-        rownames(df_heatmap_top) <- new_row_names_top
-        df_heatmap_top[[type_col]] <- NULL
-        prob_matrix_top <- as.matrix(df_heatmap_top)
-        pheatmap::pheatmap(prob_matrix_top,
-                           fontsize = 15,
-                           cluster_rows = FALSE,
-                           cluster_cols = FALSE,
-                           color = viridis::viridis(100),
-                           display_numbers = TRUE,
-                           number_format = "%.2f",
-                           main = paste("Classification Probability (Top", top_n, "Features) -", 
-                                        data_name, sprintf("| Balanced Test Accuracy: %.2f", acc_top)),
-                           breaks = seq(0, 1, length.out = 101))
-      }
-      
-      top_importance_results[[paste0("top_", top_n)]] <- list(
-        best_model = best_model_top,
-        best_metric_val = max(best_model_top$results[[metric]]),
-        best_n_trees = best_n_trees,
-        accuracy = acc_top,
-        selected_features = selected_features
-      )
-    }
-  }
-  
-  # 11) (Optional) RFE with Fixed Hyperparameters
-  final_gbm_opt <- NULL
-  rfe_results_fixed <- NULL
-  rfe_selected_feats <- NULL
-  
-  if(do_rfe){
-    my_gbmFuncs <- caret::gbmFuncs
-    my_gbmFuncs$fit <- function(x, y, first, last, ...) {
-      caret::train(x = x, y = y,
-                   method = "gbm",
-                   trControl = cv_ctrl,
-                   tuneGrid = expand.grid(n.trees = best_n_trees,
-                                          shrinkage = c(0.01, 0.1),
-                                          n.minobsinnode = c(1,2),
-                                          interaction.depth = c(1,2,3)),
-                   metric = metric,
-                   distribution = dist_param,
-                   bag.fraction = 1,
-                   verbose = FALSE)
-    }
-    rfe_ctrl_fixed <- caret::rfeControl(functions = my_gbmFuncs,
-                                        method = "cv",
-                                        number = rfe_folds,
-                                        repeats = 1,
-                                        saveDetails = TRUE,
-                                        returnResamp = "final")
-    subset_sizes <- seq_len(ncol(X_train))
-    set.seed(sample.int(999, 1))
-    rfe_results_fixed <- caret::rfe(x = X_train, y = y_train, sizes = subset_sizes,
-                                    rfeControl = rfe_ctrl_fixed)
-    cat("Best Subset Size =", rfe_results_fixed$bestSubset, "\n")
-    cat("Selected Features:\n")
-    print(rfe_results_fixed$optVariables)
-    rfe_selected_feats <- rfe_results_fixed$optVariables
-    
-    X_train_opt <- X_train[, rfe_selected_feats, drop = FALSE]
-    
-    best_model_opt <- caret::train(x = X_train_opt, y = as.factor(y_train),
-                                   method = "gbm",
-                                   trControl = cv_ctrl,
-                                   tuneGrid = expand.grid(n.trees = best_n_trees, 
-                                                          shrinkage = c(0.01, 0.1),
-                                                          n.minobsinnode = c(1,2),
-                                                          interaction.depth = c(1,2,3)),
-                                   metric = metric,
-                                   distribution = dist_param,
-                                   bag.fraction = 1,
-                                   verbose = FALSE)
-    
-    final_gbm_opt <- best_model_opt$finalModel
-    X_test_opt <- X_test[, rfe_selected_feats, drop = FALSE]
-    pred_prob_test_opt <- predict(best_model_opt, newdata = X_test_opt, type = "prob")
-    new_pred_df_test_opt <- as.data.frame(pred_prob_test_opt)
-    new_pred_df_test_opt[[type_col]] <- y_test
-    
-    y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-    pred_class_opt <- predict(best_model_opt, newdata = X_test_opt, type = "raw")
-    pred_class_opt_aligned <- factor(as.character(pred_class_opt), levels = levels(y_train))
-    
-    acc_opt <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_class_opt_aligned)
-    
-    {
-      df_heatmap_opt <- new_pred_df_test_opt
-      row_names_opt <- as.character(df_heatmap_opt[[type_col]])
-      new_row_names_opt <- ave(row_names_opt, row_names_opt, FUN = function(x) {
-        if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-      })
-      rownames(df_heatmap_opt) <- new_row_names_opt
-      df_heatmap_opt[[type_col]] <- NULL
-      prob_matrix_opt <- as.matrix(df_heatmap_opt)
-      pheatmap::pheatmap(prob_matrix_opt,
-                         fontsize = 15,
-                         cluster_rows = FALSE,
-                         cluster_cols = FALSE,
-                         color = viridis::viridis(100),
-                         display_numbers = TRUE,
-                         number_format = "%.2f",
-                         main = paste("Classification Probability (RFE Features) -", data_name, 
-                                      sprintf("| Balanced Test Accuracy: %.2f", acc_opt)),
-                         breaks = seq(0, 1, length.out = 101))
-    }
-    
-  }
-  
-  # 12) (Optional) Greedy Backward Feature Elimination (GBFE)
-  gbfe_selected_feats <- colnames(X_train)
-  final_gbm_gbfe <- NULL
-  
-  if(do_gbfe){
-    cat("\n========== BEGIN GREEDY BACKWARD FEATURE ELIMINATION (GBFE) ==========\n")
-    baseline_test_acc <- acc_full
-    current_features <- colnames(X_train)
-    improved <- TRUE
-    
-    while(improved && length(current_features) > 1){
-      improved <- FALSE
-      for(feature_to_remove in current_features){
-        trial_features <- setdiff(current_features, feature_to_remove)
-        set.seed(sample.int(999, 1))
-        trial_model <- caret::train(x = X_train[, trial_features, drop = FALSE],
-                                    y = as.factor(y_train),
-                                    method = "gbm",
-                                    trControl = cv_ctrl,
-                                    tuneGrid = expand.grid(n.trees = best_n_trees,
-                                                           interaction.depth = min(best_interaction_depth, length(trial_features)),
-                                                           shrinkage = c(0.01, 0.1),
-                                                           n.minobsinnode = c(1,2,3)),
-                                    metric = metric,
-                                    distribution = dist_param,
-                                    bag.fraction = 1,
-                                    verbose = FALSE)
-        pred_trial <- predict(trial_model, newdata = X_test[, trial_features, drop = FALSE], type = "raw")
-        pred_trial_aligned <- factor(as.character(pred_trial), levels = levels(y_train))
-        trial_acc <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_trial_aligned)
-        if(!is.na(trial_acc) && trial_acc < baseline_test_acc){
-          cat(sprintf("Removing feature '%s' (Balanced test acc: %.3f < baseline: %.3f)\n",
-                      feature_to_remove, trial_acc, baseline_test_acc))
-          current_features <- trial_features
-          improved <- TRUE
-          baseline_test_acc <- trial_acc
-          break
-        }
-      }
-    }
-    
-    gbfe_selected_feats <- current_features
-    cat("\nFinal GBFE Selected Features:\n")
-    print(gbfe_selected_feats)
-    
-    best_model_gbfe <- caret::train(x = X_train[, gbfe_selected_feats, drop = FALSE],
-                                    y = as.factor(y_train),
-                                    method = "gbm",
-                                    trControl = cv_ctrl,
-                                    tuneGrid = expand.grid(n.trees = best_n_trees,
-                                                           interaction.depth = min(best_interaction_depth, ncol(X_train[, gbfe_selected_feats, drop = FALSE])),
-                                                           shrinkage = c(0.01, 0.1),
-                                                           n.minobsinnode = c(1,2,3)),
-                                    metric = metric,
-                                    distribution = dist_param,
-                                    bag.fraction = 1,
-                                    verbose = FALSE)
-    
-    final_gbm_gbfe <- best_model_gbfe$finalModel
-    X_test_gbfe <- X_test[, gbfe_selected_feats, drop = FALSE]
-    pred_prob_test_gbfe <- predict(best_model_gbfe, newdata = X_test_gbfe, type = "prob")
-    new_pred_df_test_gbfe <- as.data.frame(pred_prob_test_gbfe)
-    new_pred_df_test_gbfe[[type_col]] <- y_test
-    
-    y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-    pred_class_gbfe <- predict(best_model_gbfe, newdata = X_test_gbfe, type = "raw")
-    pred_class_gbfe_aligned <- factor(as.character(pred_class_gbfe), levels = levels(y_train))
-    acc_gbfe <- compute_balanced_accuracy(true = y_test_aligned, pred = pred_class_gbfe_aligned)
-    
-    {
-      df_heatmap_gbfe <- new_pred_df_test_gbfe
-      row_names_gbfe <- as.character(df_heatmap_gbfe[[type_col]])
-      new_row_names_gbfe <- ave(row_names_gbfe, row_names_gbfe, FUN = function(x) {
-        if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-      })
-      rownames(df_heatmap_gbfe) <- new_row_names_gbfe
-      df_heatmap_gbfe[[type_col]] <- NULL
-      prob_matrix_gbfe <- as.matrix(df_heatmap_gbfe)
-      pheatmap::pheatmap(prob_matrix_gbfe,
-                         fontsize = 15,
-                         cluster_rows = FALSE,
-                         cluster_cols = FALSE,
-                         color = viridis::viridis(100),
-                         display_numbers = TRUE,
-                         number_format = "%.2f",
-                         main = paste("Classification Probability (GBFE Features) -", data_name, 
-                                      sprintf("| Balanced Test Accuracy: %.2f", acc_gbfe)),
-                         breaks = seq(0, 1, length.out = 101))
-    }
-    
-  }
-  
-  cat("\nFull-Feature Balanced Test Accuracy:", acc_full, "\n")
-  if(do_rfe) cat("\nRFE-Optimized Balanced Test Accuracy:", acc_opt, "\n")
-  if(do_gbfe) cat("\nGBFE-Selected Balanced Test Accuracy:", acc_gbfe, "\n")
-  if(do_pairwise_test) cat("\nPairwise Selected Features Balanced Test Accuracy:", acc_pair, "\n")
-  
-  result_list <- list(
-    final_imp_norm_dat    = data,
-    imp_norm_res_table    = best_res$results_table,
-    best_imputatation     = best_imp,
-    best_normalization    = best_norm,
-    best_caret_model      = best_model,
-    final_gbm_all_feats   = final_gbm,
-    full_features_acc     = acc_full,
-    rfe_model             = rfe_results_fixed,
-    final_gbm_opt         = final_gbm_opt,
-    rfe_selected_features = rfe_selected_feats,
-    gbfe_model            = final_gbm_gbfe,
-    gbfe_selected_feats   = gbfe_selected_feats
-  )
-  
-  if(do_pairwise_test){
-    result_list$pairwise_model    <- best_model_pair
-    result_list$final_gbm_pair    <- final_gbm_pair
-    result_list$pairwise_features <- pairwise_features
-    result_list$pairwise_test_acc <- acc_pair
-  }
-  
-  if(do_top_importance_selection){
-    result_list$top_importance_results <- top_importance_results
-  }
-  
-  return(result_list)
-}
-```
-
-### Option 1: Use SB to predict ENV - Only select shared features between training and testing 
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-###################################################################################
-## Explanation of the parameter of run_rf_analysis()
-# split environmental into 50:50 and combine with store_bought -> use_source_split = FALSE
-# use store-bought as training and environmental as testing -> use_store_vs_environmental_split = TRUE
-###################################################################################
-
-data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_gbm_analysis_list_SB_train <- vector("list", length(data_combinations))
-names(run_gbm_analysis_list_SB_train) <- c("gc_USSB_train",
-                                          "hplc_USSB_train",
-                                          "icp_USSB_train",
-                                          "gc_hplc_USSB_train",
-                                          "gc_icp_USSB_train",
-                                          "hplc_icp_USSB_train",
-                                          "gc_hplc_icp_USSB_train")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_gbm_analysis_list_SB_train[[names(run_gbm_analysis_list_SB_train)[i]]] <- run_gbm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(data_combinations)[i], 
-    use_store_vs_environmental_split = TRUE,
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-
-
-# Scatter plot features importance -------
-# gbm_importances <- as.data.frame(run_gbm_analysis_list_SB_train$gc_USSB_train$final_gbm_all_feats$importance)
-# gbm_importances$Feature <- rownames(gbm_importances)
-# gbm_importances <- gbm_importances[order(gbm_importances$MeanDecreaseGini, decreasing = TRUE), ]
-# 
-# ggplot(gbm_importances, aes(x = reorder(Feature, 
-#                                        MeanDecreaseGini), y = MeanDecreaseGini)) +
-#   geom_point() +
-#   labs(x = "Feature", y = "Mean Decrease Gini",
-#        title = "Scatter Plot: Features from Lowest to Highest Mean Decrease Gini") +
-#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-### Option 2: Use Both SB and ENV to predict ENV
-Run prediction separatedly on each analytical dataset and only use significant features from GBFE and pairwise test asinput for combined data
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_gbm_analysis_list_SB_and_ENV_train <- vector("list", length(data_combinations))
-names(run_gbm_analysis_list_SB_and_ENV_train) <- c("gc_SB_and_ENV_train",
-                                                  "hplc_SB_and_ENV_train",
-                                                  "icp_SB_and_ENV_train",
-                                                  "gc_hplc_SB_and_ENV_train",
-                                                  "gc_icp_SB_and_ENV_train",
-                                                  "hplc_icp_SB_and_ENV_train",
-                                                  "gc_hplc_icp_SB_and_ENV_train")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_gbm_analysis_list_SB_and_ENV_train[[names(run_gbm_analysis_list_SB_and_ENV_train)[i]]] <- run_gbm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(data_combinations)[i], 
-    use_source_split = TRUE,
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-### Option 3: Use SB to predict SB
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_SB_clean,
-  hplc               = hplc_SB_clean,
-  icp                = icp_SB_clean ,
-  gc_hplc            = gc_hplc_SB_clean,
-  gc_icp             = gc_icp_SB_clean,
-  hplc_icp           = hplc_icp_SB_clean,
-  gc_hplc_icp        = gc_hplc_icp_SB_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_gbm_analysis_list_SB_only <- vector("list", length(data_combinations))
-names(run_gbm_analysis_list_SB_only) <- c("gc_SB",
-                                         "hplc_SB",
-                                         "icp_SB",
-                                         "gc_hplc_SB",
-                                         "gc_icp_SB",
-                                         "hplc_icp_SB",
-                                         "gc_hplc_icp_SB")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_gbm_analysis_list_SB_only[[names(run_gbm_analysis_list_SB_only)[i]]] <- run_gbm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(run_gbm_analysis_list_SB_only)[i], 
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-### Option 4: Use ENV to predict ENV
-
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-data_combinations <- list(
-  gc                 = gc_ENV_clean,
-  hplc               = hplc_ENV_clean,
-  icp                = icp_ENV_clean ,
-  gc_hplc            = gc_hplc_ENV_clean,
-  gc_icp             = gc_icp_ENV_clean,
-  hplc_icp           = hplc_icp_ENV_clean,
-  gc_hplc_icp        = gc_hplc_icp_ENV_clean
-)
-
-# Predefine the result list with names from data_combinations
-run_gbm_analysis_list_ENV_only <- vector("list", length(data_combinations))
-names(run_gbm_analysis_list_ENV_only) <- c("gc_ENV",
-                                          "hplc_ENV",
-                                          "icp_ENV",
-                                          "gc_hplc_ENV",
-                                          "gc_icp_ENV",
-                                          "hplc_icp_ENV",
-                                          "gc_hplc_icp_ENV")
-
-# Iterate through each data combination by index
-for(i in seq_along(data_combinations)) {
-  cat("Processing dataset:", names(data_combinations)[i], "\n")
-  
-  # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_gbm_analysis_list_ENV_only[[names(run_gbm_analysis_list_ENV_only)[i]]] <- run_gbm_analysis_manuscript1(
-    data = data_combinations[[i]],
-    data_name = names(run_gbm_analysis_list_ENV_only)[i], 
-    type_col                = "Plastic_type", 
-    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
-    do_gbfe = TRUE,
-    seed = 123)
-}
-```
-
-
-## Elastic Net
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-run_enet_analysis <- function(data,
-                              type_col         = "Subcategory",
-                              remove_cols      = c("Source", "Polymer", "technique"),
-                              train_proportion = 0.5,
-                              use_source_split = FALSE,               # Option 1: environmental 50:50 split and combine with store-bought
-                              use_store_vs_environmental_split = FALSE, # Option 2: use store-bought for training and environmental for testing
-                              seed             = NULL,
-                              metric           = "Accuracy",
-                              do_rfe           = FALSE,
-                              rfe_folds        = 5,
-                              do_gbfe          = TRUE,
-                              do_impute_norm_screen = TRUE,
-                              group_for_significance = "Subcategory") {
-  
-  # 0) Optional set seed
-  if(!is.null(seed)) set.seed(seed)
-  
-  # 1) Factorize the target column and remove classes with only one sample
-  data[[type_col]] <- as.factor(data[[type_col]])
-  levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
-  
-  # Remove single-member classes
-  class_counts  <- table(data[[type_col]])
-  keep_classes  <- names(class_counts[class_counts > 1])
-  data          <- data[data[[type_col]] %in% keep_classes, ]
-  data[[type_col]] <- droplevels(data[[type_col]])
-  
-  # 2) Imputation and normalization (if requested)
-  best_imp  <- "No_imputation"
-  best_norm <- "No_normalization"
-  if(do_impute_norm_screen){
-    cat("\n### Screening best Imputation + Normalization combo ###\n")
-    best_res <- find_best_impute_normalize(
-      df = data,
-      class_col = type_col,
-      group_for_significance = group_for_significance,
-      remove_cols = setdiff(remove_cols, type_col)
-    )
-    cat("\n*** Summary of all combos ***\n")
-    print(best_res$results_table)
-    
-    cat("\n*** Best combo ***\n")
-    print(best_res$best_combo)
-    
-    best_imp  <- best_res$best_combo$Imputation
-    best_norm <- best_res$best_combo$Normalization
-    
-    numeric_cols <- colnames(data %>% dplyr::select(-all_of(remove_cols), -all_of(type_col)))
-    X_original   <- data[, numeric_cols, drop = FALSE]
-    X_imputed    <- imputation_methods[[best_imp]](X_original)
-    X_final      <- normalization_methods[[best_norm]](X_imputed)
-    data[, numeric_cols] <- X_final
-  } else {
-    cat("\n### Skipping impute+norm screen; using raw data ###\n")
-  }
-  
-  cat("NAs in original data:", sum(is.na(data)), "\n")
-  cat("NAs after final imputation+normalization:", sum(is.na(data)), "\n")
-  
-  # --- Conditional Train/Test Split ---
-  if(use_store_vs_environmental_split){
-    cat("\n### Using Store-vs-Environmental splitting ###\n")
-    # Training set: only "Store-Bought"; Test set: only "Environmental"
-    train_data <- data[data$Source == "Store-Bought", ]
-    test_data  <- data[data$Source == "Environmental", ]
-    
-    if(nrow(train_data) < 1) stop("No 'Store-Bought' samples found for training!")
-    if(nrow(test_data) < 1) stop("No 'Environmental' samples found for testing!")
-    
-  } else if(use_source_split){
-    cat("\n### Using Source-based splitting with environmental 50:50 split ###\n")
-    store_bought_set <- data[data$Source == "Store-Bought", ]
-    environmental_set <- data[data$Source == "Environmental", ]
-    
-    if(!is.null(seed)) {
-      set.seed(seed)
-    } else {
-      set.seed(sample.int(999, 1))
-    }
-    env_train_index <- caret::createDataPartition(environmental_set[[type_col]], p = 0.5, list = FALSE)
-    environmental_training_set <- environmental_set[env_train_index, ]
-    environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
-    
-    train_data <- rbind(store_bought_set, environmental_training_set)
-    test_data  <- environmental_hold_out_testing_set
-    
-    if(nrow(train_data) < 1) stop("Training data is empty after source-based splitting!")
-    if(nrow(test_data) < 1) stop("Test data is empty after source-based splitting!")
-    
-  } else {
-    cat("\n### Using original train/test split ###\n")
-    X <- data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-    y <- data[[type_col]]
-    if(is.null(seed)) {
-      set.seed(sample.int(999, 1))
-    }
-    train_index <- caret::createDataPartition(y, p = train_proportion, list = FALSE)
-    train_data <- data[train_index, ]
-    test_data  <- data[-train_index, ]
-  }
-  
-  # Drop unused factor levels in the outcome variable after splitting
-  train_data[[type_col]] <- droplevels(train_data[[type_col]])
-  test_data[[type_col]]  <- droplevels(test_data[[type_col]])
-  
-  X_train <- train_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_train <- train_data[[type_col]]
-  X_test  <- test_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
-  y_test  <- test_data[[type_col]]
-  
-  # ========= Continue with model training =========
-  
-  # 4) Cross-validation control
-  min_class_count <- min(table(y_train))
-  folds <- ifelse(min_class_count > 1, min_class_count, 2)
-  cv_ctrl <- caret::trainControl(
-    method = "cv",
-    number = folds,
-    classProbs = TRUE
-  )
-  
-  # 5) Elastic Net grid search.
-  # Here we fix alpha = 0.5 and tune over a range of lambda values.
-  enet_grid <- expand.grid(alpha = 0.5, lambda = 10^seq(-4, 1, length = 50))
-  set.seed(sample.int(999, 1))
-  enet_fit <- caret::train(
-    x = X_train,
-    y = y_train,
-    method = "glmnet",
-    trControl = cv_ctrl,
-    tuneGrid = enet_grid,
-    metric = metric
-  )
-  best_model <- enet_fit
-  best_metric_val <- max(best_model$results[[metric]])
-  cat("Best Model", metric, "on training =", best_metric_val,
-      "with bestTune: alpha =", best_model$bestTune$alpha,
-      "and lambda =", best_model$bestTune$lambda, "\n")
-  
-  # 6) Final model predictions on the test set (Full Feature Set)
-  pred_prob_test <- predict(best_model, newdata = X_test, type = "prob")
-  new_pred_df_test <- as.data.frame(pred_prob_test)
-  new_pred_df_test$Subcategory <- y_test
-  
-  # Enforce common factor levels: re-factor using training levels.
-  y_test_aligned <- factor(as.character(y_test), levels = levels(y_train))
-  pred_class_test <- predict(best_model, newdata = X_test, type = "raw")
-  pred_class_test_aligned <- factor(as.character(pred_class_test), levels = levels(y_train))
-  
-  # Compute accuracy, treating any NA as incorrect.
-  acc_full <- sum(pred_class_test_aligned == y_test_aligned, na.rm = TRUE) / length(y_test_aligned)
-  
-  # 7) Feature Importances (using coefficient magnitudes)
-  enet_coefs <- as.matrix(coef(best_model$finalModel, s = best_model$bestTune$lambda))
-  enet_coefs <- enet_coefs[-1, , drop = FALSE]  # Remove intercept
-  enet_importances <- data.frame(Feature = rownames(enet_coefs), Coefficient = as.vector(enet_coefs))
-  enet_importances <- enet_importances[order(abs(enet_importances$Coefficient), decreasing = TRUE), ]
-  cat("\nTop Features by Coefficient Magnitude:\n")
-  print(head(enet_importances))
-  
-  # 8) (Optional) RFE with fixed hyperparameters for Elastic Net
-  final_enet_opt <- NULL
-  rfe_results_fixed <- NULL
-  rfe_selected_feats <- NULL
-  
-  if(do_rfe){
-    # Define custom functions for Elastic Net for use with caret::rfe
-    enetFuncs <- list(
-      fit = function(x, y, first, last, ...){
-        caret::train(
-          x = x,
-          y = y,
-          method = "glmnet",
-          trControl = trainControl(method = "cv", number = rfe_folds, classProbs = TRUE),
-          tuneGrid = expand.grid(alpha = best_model$bestTune$alpha, lambda = best_model$bestTune$lambda),
-          metric = metric
-        )
-      },
-      pred = function(object, x) predict(object, newdata = x, type = "raw"),
-      rank = function(object, x, y) {
-        coefs <- as.matrix(coef(object$finalModel, s = object$bestTune$lambda))
-        coefs <- coefs[-1, , drop = FALSE]  # drop intercept
-        out <- abs(coefs)
-        out <- as.vector(out)
-        names(out) <- rownames(coefs)
-        out
-      },
-      selectSize = function(object, metric, ...) {
-        ncol(object$trainingData) - 1
-      },
-      selectVar = function(object, size) {
-        var_names <- rownames(as.matrix(coef(object$finalModel, s = object$bestTune$lambda)))[-1]
-        var_names
-      }
-    )
-    rfe_ctrl_fixed <- rfeControl(
-      functions = enetFuncs,
-      method = "cv",
-      number = rfe_folds,
-      repeats = 1,
-      saveDetails = TRUE,
-      returnResamp = "final"
-    )
-    subset_sizes <- seq_len(ncol(X_train))
-    set.seed(123)
-    rfe_results_fixed <- rfe(
-      x = X_train,
-      y = y_train,
-      sizes = subset_sizes,
-      rfeControl = rfe_ctrl_fixed
-    )
-    cat("Best Subset Size =", rfe_results_fixed$bestSubset, "\n")
-    cat("Selected Features:\n")
-    print(rfe_results_fixed$optVariables)
-    rfe_selected_feats <- rfe_results_fixed$optVariables
-    
-    X_train_opt <- X_train[, rfe_selected_feats, drop = FALSE]
-    final_enet_opt <- caret::train(
-      x = X_train_opt,
-      y = y_train,
-      method = "glmnet",
-      trControl = cv_ctrl,
-      tuneGrid = expand.grid(alpha = best_model$bestTune$alpha, lambda = best_model$bestTune$lambda),
-      metric = metric
-    )
-    
-    X_test_opt <- X_test[, rfe_selected_feats, drop = FALSE]
-    pred_class_opt <- predict(final_enet_opt, newdata = X_test_opt, type = "raw")
-    pred_class_opt_aligned <- factor(as.character(pred_class_opt), levels = levels(y_train))
-    acc_opt <- sum(pred_class_opt_aligned == y_test_aligned, na.rm = TRUE) / length(y_test_aligned)
-    
-    pred_prob_test_opt <- predict(final_enet_opt, newdata = X_test_opt, type = "prob")
-    new_pred_df_test_opt <- as.data.frame(pred_prob_test_opt)
-    new_pred_df_test_opt$Subcategory <- y_test
-    
-    {
-      df_heatmap_opt <- new_pred_df_test_opt
-      row_names_opt <- as.character(df_heatmap_opt$Subcategory)
-      new_row_names_opt <- ave(row_names_opt, row_names_opt, FUN = function(x) {
-        if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-      })
-      rownames(df_heatmap_opt) <- new_row_names_opt
-      df_heatmap_opt$Subcategory <- NULL
-      prob_matrix_opt <- as.matrix(df_heatmap_opt)
-      pheatmap(
-        prob_matrix_opt,
-        fontsize = 15,
-        cluster_rows = FALSE,
-        cluster_cols = FALSE,
-        color = viridis(100),
-        display_numbers = TRUE,
-        number_format = "%.2f",
-        main = "Classification Probability (RFE Features - Elastic Net)"
-      )
-    }
-  }
-  
-  # 9) (Optional) Greedy Backward Feature Elimination (GBFE) for Elastic Net
-  gbfe_selected_feats <- colnames(X_train)
-  final_enet_gbfe <- NULL
-  
-  if(do_gbfe){
-    cat("\n========== BEGIN GREEDY BACKWARD FEATURE ELIMINATION (GBFE) ==========\n")
-    baseline_test_acc <- acc_full
-    current_features <- colnames(X_train)
-    improved <- TRUE
-    
-    while(improved && length(current_features) > 1){
-      improved <- FALSE
-      
-      for(feature_to_remove in current_features){
-        trial_features <- setdiff(current_features, feature_to_remove)
-        set.seed(1000)
-        trial_model <- caret::train(
-          x = X_train[, trial_features, drop = FALSE],
-          y = y_train,
-          method = "glmnet",
-          trControl = cv_ctrl,
-          metric = metric,
-          tuneGrid = expand.grid(alpha = best_model$bestTune$alpha, lambda = best_model$bestTune$lambda)
-        )
-        pred_trial <- predict(trial_model, newdata = X_test[, trial_features, drop = FALSE], type = "raw")
-        pred_trial_aligned <- factor(as.character(pred_trial), levels = levels(y_train))
-        trial_acc <- sum(pred_trial_aligned == y_test_aligned, na.rm = TRUE) / length(y_test_aligned)
-        
-        if(!is.na(trial_acc) && trial_acc >= baseline_test_acc){
-          cat(sprintf("Removing feature '%s' (test acc: %.3f >= baseline: %.3f)\n",
-                      feature_to_remove, trial_acc, baseline_test_acc))
-          current_features <- trial_features
-          improved <- TRUE
-          break
-        }
-      }
-    }
-    
-    gbfe_selected_feats <- current_features
-    cat("\nFinal GBFE Selected Features:\n")
-    print(gbfe_selected_feats)
-    
-    final_enet_gbfe <- caret::train(
-      x = X_train[, gbfe_selected_feats, drop = FALSE],
-      y = y_train,
-      method = "glmnet",
-      trControl = cv_ctrl,
-      tuneGrid = expand.grid(alpha = best_model$bestTune$alpha, lambda = best_model$bestTune$lambda),
-      metric = metric
-    )
-    
-    X_test_gbfe <- X_test[, gbfe_selected_feats, drop = FALSE]
-    pred_class_gbfe <- predict(final_enet_gbfe, newdata = X_test_gbfe, type = "raw")
-    pred_class_gbfe_aligned <- factor(as.character(pred_class_gbfe), levels = levels(y_train))
-    acc_gbfe <- sum(pred_class_gbfe_aligned == y_test_aligned, na.rm = TRUE) / length(y_test_aligned)
-    
-    # Probability predictions on the test set
-    pred_prob_test_gbfe <- predict(final_enet_gbfe, newdata = X_test_gbfe, type = "prob")
-    new_pred_df_test_gbfe <- as.data.frame(pred_prob_test_gbfe)
-    new_pred_df_test_gbfe$Subcategory <- y_test
-    
-    {
-      df_heatmap_gbfe <- new_pred_df_test_gbfe
-      row_names_gbfe <- as.character(df_heatmap_gbfe$Subcategory)
-      new_row_names_gbfe <- ave(row_names_gbfe, row_names_gbfe, FUN = function(x) {
-        if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
-      })
-      rownames(df_heatmap_gbfe) <- new_row_names_gbfe
-      df_heatmap_gbfe$Subcategory <- NULL
-      prob_matrix_gbfe <- as.matrix(df_heatmap_gbfe)
-      pheatmap(
-        prob_matrix_gbfe,
-        fontsize = 15,
-        cluster_rows = FALSE,
-        cluster_cols = FALSE,
-        color = viridis(100),
-        display_numbers = TRUE,
-        number_format = "%.2f",
-        main = "Classification Probability (GBFE Features - Elastic Net)"
-      )
-    }
-  }
-  
-  cat("\nFull-Feature Test Accuracy:", acc_full, "\n")
-  if(do_rfe) cat("\nRFE-Optimized Test Accuracy:", acc_opt, "\n")
-  if(do_gbfe) cat("\nGBFE-Selected Test Accuracy:", acc_gbfe, "\n")
-  
-  return(list(
-    final_imp_norm_dat    = data,
-    best_imputation       = best_imp,
-    best_normalization    = best_norm,
-    best_caret_model      = best_model,
-    full_features_acc     = acc_full,
-    top_feature_importances = enet_importances,
-    rfe_model             = rfe_results_fixed,
-    rfe_selected_features = rfe_selected_feats,
-    gbfe_model            = final_enet_gbfe,
-    gbfe_selected_feats   = gbfe_selected_feats
-  ))
-}
-
-```
-
-## Loading reference databases
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-# Read in suspect screening result from Eric // PlasticMAP // PlastChem database
-sus_scr_eric_fries <- readxl::read_xlsx(path = paste0(getwd(), "/data/PMT Suspect Screening Plastics Results EF.xlsx"), skip = 1)
-plasticmap <- readxl::read_xlsx(path = paste0(getwd(), "/data/PlasticMAP_S1_210611.xlsx"), sheet = "S8 - PlasticMAP")
-plastchem <- readxl::read_xlsx(path = paste0(getwd(), "/data/plastchem_db_v1.0.xlsx"), sheet = "Full database")
-
-# Remove all legacy empty rows from Eric's Excel file 
-sus_scr_eric_fries <- sus_scr_eric_fries[rowSums(is.na(sus_scr_eric_fries)) != (ncol(sus_scr_eric_fries) - 1), ]
-
-# Massbank of North America (MoNA-LC-MS-Spectra)
-# library(jsonlite)
-# mona_lcms <- jsonlite::read_json(path = paste0(getwd(), "/data/MoNA-export-LC-MS_Spectra.json"), 
-#                                  flatten = TRUE, 
-#                                  simplifyVector = TRUE)
-# 
-# NORMAN-SLE
-# norman_sle <- read_xlsx(path = paste0(getwd(), "/data/norman_sle_susdat_2024-01-12-082351_ed.xlsx"))
-
 ```
 
 # Matching ML Classifier's Top contributions
