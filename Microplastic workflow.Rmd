@@ -2070,23 +2070,25 @@ ggplot(sil_df, aes(x = reorder(observation, sil_width), y = sil_width, fill = Su
    theme(legend.position = 'hidden')
 ```
 
-## PCA
+## Figure 2: PCA
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-select_feats <- c(run_rf_analysis_list_SB_and_ENV_train[[1]]$top_importance_results$top_100$selected_features, 
-                  colnames(run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat)[1:5])
+# select_feats <- c(run_rf_analysis_list_SB_and_ENV_train[[1]]$top_importance_results$top_100$selected_features, 
+#                   colnames(run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat)[1:5])
 
-df <- run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat %>% 
-       dplyr::select(all_of(select_feats)) %>%
-       dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
+# df <- run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat %>% 
+#        dplyr::select(all_of(select_feats)) %>%
+#        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- test$final_imp_norm_dat
+df <- run_rf_analysis_list_SB_and_ENV_train$icp_SB_and_ENV_train$final_imp_norm_dat %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
+
 res.pca <- FactoMineR::PCA(
-  df %>% dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")),
+  df %>% dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique", "Plastic_type_Source")),
   scale.unit = FALSE,
   graph = FALSE)
 
 # Scree plot
-# fviz_screeplot(res.pca, ncp=10)
+fviz_screeplot(res.pca)
 
 # Biplot
 pca_plot <- factoextra::fviz_pca_biplot(res.pca,
@@ -2095,30 +2097,30 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                             invisible = "var",
                             repel = TRUE,
                             labelsize = 10,
-                            habillage = factor(df$Plastic_type),
-                            addEllipses = TRUE,
-                            ellipse.level=0.95,
+                            habillage = factor(df$Plastic_type_Source),
+                            # addEllipses = TRUE,
+                            # ellipse.level=0.95,
                             ggtheme = ggplot2::theme_minimal(base_size = 20),
                             title = "",
-                            # xlim = c(-0.5, 0.8),
-                            # ylim = c(-0.5, 1.2)
+                            xlim = c(-0.6, 0.85),
+                            ylim = c(-1, 0.55)
                             ) +
-  guides(fill=guide_legend(ncol=6)) + # Specify the number of column of legend text labels
+  # guides(fill=guide_legend(ncol=4)) + # Specify the number of column of legend text labels
   # if has error "Too few points to calculate an ellipse"
-  # ggforce::geom_mark_ellipse(aes(fill = Groups,
-  #                                color = Groups),
-  #                            label.buffer = unit(40, 'mm')) +
+  ggforce::geom_mark_ellipse(aes(fill = Groups,
+                                 color = Groups),
+                             label.buffer = unit(40, 'mm')) +
   theme(legend.position = 'bottom',
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
         )
 pca_plot
 
-ggsave(filename = paste0("ICP_SBonly_Plastic_type", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+ggsave(filename = paste0("Figure 2_ICP_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
        plot = pca_plot, 
        device = "png",
        dpi = 600,        # Set DPI to 600
-       width = 20,       # Width in inches (adjust as needed)
+       width = 25,       # Width in inches (adjust as needed)
        height = 10,       # Height in inches (adjust as needed)
        units = "in")
 ```
@@ -3208,7 +3210,7 @@ ggsave(filename = paste0("rf_feat_imp.png"),
 
 ### Option 2: Use Both SB and ENV to predict ENV
 
-(IMPORTANT NOTE - 23 June 2025): for ICP only data, 
+(IMPORTANT NOTE !!! UPDATE 23 June 2025): for ICP only data, 
 1. you filter on total counts ≥ 3 before splitting.
 That means any Plastic type with ≥ 3 replicates across SB + ENV gets kept.
 
