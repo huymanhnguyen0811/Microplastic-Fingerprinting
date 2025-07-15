@@ -2079,7 +2079,7 @@ ggplot(sil_df, aes(x = reorder(observation, sil_width), y = sil_width, fill = Su
 #        dplyr::select(all_of(select_feats)) %>%
 #        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- run_rf_analysis_list_SB_and_ENV_train$icp_SB_and_ENV_train$final_imp_norm_dat %>%
+df <- run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$final_imp_norm_dat %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
 
 res.pca <- FactoMineR::PCA(
@@ -2092,19 +2092,19 @@ fviz_screeplot(res.pca)
 
 # Biplot
 pca_plot <- factoextra::fviz_pca_biplot(res.pca,
-                            geom = c("point", "text"),
-                            label = "none",
-                            invisible = "var",
-                            repel = TRUE,
-                            labelsize = 10,
-                            habillage = factor(df$Plastic_type_Source),
-                            # addEllipses = TRUE,
-                            # ellipse.level=0.95,
-                            ggtheme = ggplot2::theme_minimal(base_size = 20),
-                            title = "",
-                            xlim = c(-0.6, 0.85),
-                            ylim = c(-1, 0.55)
-                            ) +
+                                        axes = c(1,2), # PC1 and PC2
+                                        geom = c("point", "text"),
+                                        label = "none",
+                                        invisible = "var",
+                                        repel = TRUE,
+                                        labelsize = 10,
+                                        habillage = factor(df$Plastic_type_Source),
+                                        # addEllipses = TRUE,
+                                        # ellipse.level=0.95,
+                                        ggtheme = ggplot2::theme_minimal(base_size = 20),
+                                        title = "",
+                                        xlim = c(-0.75, 0.7),
+                                        ylim = c(-0.5, 0.8)) +
   # guides(fill=guide_legend(ncol=4)) + # Specify the number of column of legend text labels
   # if has error "Too few points to calculate an ellipse"
   ggforce::geom_mark_ellipse(aes(fill = Groups,
@@ -2116,7 +2116,7 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
         )
 pca_plot
 
-ggsave(filename = paste0("Figure 2_ICP_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+ggsave(filename = paste0("Figure 2_GCHPLCICP_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
        plot = pca_plot, 
        device = "png",
        dpi = 600,        # Set DPI to 600
