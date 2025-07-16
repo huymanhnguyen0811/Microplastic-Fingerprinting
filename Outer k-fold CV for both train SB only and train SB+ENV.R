@@ -285,17 +285,17 @@ conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
     # explicitly drop any size guide, keep only the fill (Recall) legend
     guides(size = "none") +
     labs(
-      title = paste0("Confusion Matrix of ENV → SB Mapping | ", conf_mat_title),
-      subtitle = paste0(
-        sprintf("Overall linking accuracy: %.2f%%\n", accuracy) 
-        # # " Recall per treated class (N=", cm_df$Total[1], 
-        # " replicates each)"
-      ),
+      # title = paste0("Confusion Matrix of ENV → SB Mapping | ", conf_mat_title),
+      # subtitle = paste0(
+      # sprintf("Overall linking accuracy: %.2f%%\n", accuracy) 
+      # # " Recall per treated class (N=", cm_df$Total[1], 
+      # " replicates each)"
+      # ),
       x = "Predicted Class (Store-Bought)",
       y = "Actual Class (Environmental)",
-      fill = "Percentage of Classification (%)" # "Recall %"
+      fill = "Percentage of\nClassification (%)" # "Recall %"
     ) +
-    theme_minimal(base_size = 14) +
+    theme_minimal(base_size = 20) +
     theme(
       axis.text.x  = element_text(angle = 45, hjust = 1),
       plot.title   = element_text(face = "bold", hjust = 0.5),
@@ -303,7 +303,6 @@ conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
     )
   return(conf_mat)
 }
-
 
 #─────────────────────────────────────────────────────────────────────────────
 
@@ -440,7 +439,7 @@ run_rf_analysis_manuscript1 <- function(data,
     # environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
     
     # train_data <- rbind(store_bought_set, environmental_training_set)
-    test_data  <- environmental_hold_out_testing_set
+    # test_data  <- environmental_hold_out_testing_set
     
     if(nrow(train_data) < 1) stop("Training data is empty!")
     if(nrow(test_data) < 1) stop("Test data is empty!")
@@ -735,25 +734,25 @@ run_rf_analysis_manuscript1 <- function(data,
 
 
 ###########################################################
-sb_only_train <- run_rf_analysis_manuscript1(
-  data = icp_combined_SB_ENV_shared_cols_ntr_clean,
-  data_name = "icp-sbonly", 
-  use_store_vs_environmental_split = TRUE,
-  type_col                = "Plastic_type", 
-  remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-  group_for_significance = "Plastic_type", 
-  do_pairwise_test = FALSE,             # Adjust parameters as needed
-  do_top_importance_selection = FALSE,
-  do_rfe = TRUE,
-  do_rfa = FALSE,
-  train_proportion = 0.8,
-  do_impute_norm_screen = TRUE,
-  seed = 123,
-  min_sample_numner = 3)
+# sb_only_train <- run_rf_analysis_manuscript1(
+#   data = gc_combined_SB_ENV_shared_cols_ntr_clean,
+#   data_name = "icp-sbonly", 
+#   use_store_vs_environmental_split = TRUE,
+#   type_col                = "Plastic_type", 
+#   remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
+#   group_for_significance = "Plastic_type", 
+#   do_pairwise_test = FALSE,             # Adjust parameters as needed
+#   do_top_importance_selection = FALSE,
+#   do_rfe = TRUE,
+#   do_rfa = FALSE,
+#   train_proportion = 0.8,
+#   do_impute_norm_screen = TRUE,
+#   seed = 123,
+#   min_sample_numner = 3)
 
 sb_env_train <- run_rf_analysis_manuscript1(
-  data = icp_combined_SB_ENV_shared_cols_ntr_clean,
-  data_name = "icp-sb-env", 
+  data = gc_combined_SB_ENV_shared_cols_ntr_clean,
+  data_name = "gc-sb-env", 
   use_source_split = TRUE,
   type_col                = "Plastic_type", 
   remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
