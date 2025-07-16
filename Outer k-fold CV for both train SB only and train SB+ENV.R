@@ -416,9 +416,6 @@ run_rf_analysis_manuscript1 <- function(data,
     K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
     K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
     
-    if(nrow(train_data) < 1) stop("No 'Store-Bought' samples for training!")
-    if(nrow(test_data) < 1) stop("No 'Environmental' samples for testing!")
-    
   } else if(use_source_split){
     cat("\n### Using Source-based Splitting with Environmental 50:50 Split ###\n")
     
