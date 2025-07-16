@@ -247,10 +247,11 @@ eval_metrics <- function(true_labels, prob_matrix, pred_labels){
 ####################################################
 conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
   # 1) Compute raw counts table: rows = treated labels, cols = predicted pristine labels
-  cm_tab <- table(
-    Actual    = as.character(y_test),
-    Predicted = as.character(preds)
-  )
+  all_classes <- unique(c(levels(preds), levels(y_test)))
+  y_f <- factor(y_test,  levels = all_classes)
+  p_f <- factor(preds,  levels = all_classes)
+  
+  cm_tab <- table(Actual = y_f, Predicted = p_f)
   
   # 2) Turn it into a data.frame for ggplot
   cm_df <- as.data.frame(cm_tab, stringsAsFactors = FALSE) %>%
@@ -264,13 +265,14 @@ conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
   }
   
   cm_df <- cm_df %>%
-    mutate(
+    dplyr::mutate(
       Percent = round(Freq / Total * 100, 2)
-    )
+    ) %>% 
+    dplyr::mutate(Percent = ifelse(is.nan(Percent), 0, Percent))
   
   
   cm_df <- cm_df %>%
-    mutate(
+    dplyr::mutate(
       Label = ifelse(Predicted == Actual,
                      paste0(round(Percent,1),"%"),
                      ""
