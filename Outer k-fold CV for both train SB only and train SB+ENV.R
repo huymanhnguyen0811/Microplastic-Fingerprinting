@@ -281,27 +281,27 @@ conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
   conf_mat <- ggplot(cm_df, aes(x = Predicted, y = Actual, fill = Percent)) +
     geom_tile(color = "white") +
     scale_fill_gradient(low = "white", high = "steelblue") + #, limits = c(0,1)) +
-    geom_text(aes(label = Percent), size = 5, show.legend = FALSE) +
+    geom_text(aes(label = Percent), size = 6, show.legend = FALSE) +
     # explicitly drop any size guide, keep only the fill (Recall) legend
     guides(size = "none") +
     labs(
-      # title = paste0("Confusion Matrix of ENV → SB Mapping | ", conf_mat_title),
-      # subtitle = paste0(
-      # sprintf("Overall linking accuracy: %.2f%%\n", accuracy) 
+      title = paste0("Confusion Matrix of ENV → SB Mapping | ", conf_mat_title),
+      subtitle = paste0(
+      sprintf("Overall linking accuracy: %.2f%%\n", accuracy)
       # # " Recall per treated class (N=", cm_df$Total[1], 
       # " replicates each)"
-      # ),
+      ),
       x = "Predicted Class (Store-Bought)",
       y = "Actual Class (Environmental)",
       fill = "Percentage of\nClassification (%)" # "Recall %"
     ) +
-    theme_minimal(base_size = 20) +
+    theme_minimal(base_size = 22) +
     theme(
       axis.text.x  = element_text(angle = 45, hjust = 1),
       plot.title   = element_text(face = "bold", hjust = 0.5),
       plot.subtitle= element_text(hjust = 0.5)
     )
-  return(conf_mat)
+  return(list(conf_mat = conf_mat, cm_df = cm_df))
 }
 
 #─────────────────────────────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ run_rf_analysis_manuscript1 <- function(data,
                                         metric                  = "Accuracy",
                                         do_rfe                  = FALSE,
                                         do_rfa                  = FALSE,
-                                        min_sample_numner,
+                                        min_sample_number,
                                         do_impute_norm_screen   = TRUE,
                                         group_for_significance) {
   
@@ -333,7 +333,7 @@ run_rf_analysis_manuscript1 <- function(data,
   
   # Set minimum number of observation for plastic category
   class_counts  <- table(data[[type_col]])
-  keep_classes  <- names(class_counts[class_counts >= min_sample_numner])
+  keep_classes  <- names(class_counts[class_counts >= min_sample_number])
   data          <- data[data[[type_col]] %in% keep_classes, ]
   data[[type_col]] <- droplevels(data[[type_col]])
   rownames(data) <- NULL
@@ -433,24 +433,9 @@ run_rf_analysis_manuscript1 <- function(data,
     # stratified folds on the full target vector
     K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
     K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
-    
-    # env_train_index <- caret::createDataPartition(as.character(environmental_set[[type_col]]), p = 0.5, list = FALSE)
-    # environmental_training_set <- environmental_set[env_train_index, ]
-    # environmental_hold_out_testing_set <- environmental_set[-env_train_index, ]
-    
-    # train_data <- rbind(store_bought_set, environmental_training_set)
-    # test_data  <- environmental_hold_out_testing_set
-    
-    if(nrow(train_data) < 1) stop("Training data is empty!")
-    if(nrow(test_data) < 1) stop("Test data is empty!")
   }
   
   # Setup K-folds CV 
-  # ==> maynot be possible because here we have train_data as compile of SB and ENV, if we split to K-fold, then the number of samples maybe too small to split further into k-fold subset trainSB+ENV and testENV
-  # min_class_count_all <- min(table(data[[type_col]]))
-  # K <- ifelse(min_class_count_all > 1, min_class_count_all, 2)
-  # # stratified folds on the full target vector
-  # K_folds <- createFolds(data[[type_col]], k = K, returnTrain = TRUE)
   final_final_res_list <- vector("list", length = K)
   i <- 1
   
@@ -463,7 +448,6 @@ run_rf_analysis_manuscript1 <- function(data,
       test_data  <- environmental_set[test_idx, ]
     } else if(use_source_split){
       train_idx_SB <- K_folds_SB[[f]]
-      
       train_idx_ENV  <- K_folds_ENV[[f]]
       test_idx_ENV  <- setdiff(seq_len(nrow(environmental_set)), K_folds_ENV[[f]])
       
@@ -495,7 +479,11 @@ run_rf_analysis_manuscript1 <- function(data,
     
     # --- Generate Heatmap (Full Features) ---
     {prob_matrix_all_feats <- all_feats$p_m
-      conf_mat_all_feats <- conf_mat_plot(y_test, all_feats$preds, conf_mat_title = paste0("All Features - ", data_name), accuracy = acc_full)
+      conf_mat <- conf_mat_plot(y_test, all_feats$preds, 
+                                          conf_mat_title = paste0("All Features - ", data_name), 
+                                          accuracy = acc_full)
+      conf_mat_all_feats <- conf_mat$conf_mat
+      cm_df_all_feats <- conf_mat$cm_df
     }
     
     eval_metrics_all_feats <- all_feats$eval_metrics
@@ -528,7 +516,11 @@ run_rf_analysis_manuscript1 <- function(data,
       }
       
       {prob_matrix_sig <- tmp_sig$p_m
-        conf_mat_sig <- conf_mat_plot(y_test, tmp_sig$preds, conf_mat_title = paste0("Pair-wise Significance-Based Features - ", data_name), accuracy = acc_sig)
+        conf_mat <- conf_mat_plot(y_test, tmp_sig$preds, 
+                                      conf_mat_title = paste0("Pair-wise Significance-Based Features - ", data_name), 
+                                      accuracy = acc_sig)
+        conf_mat_sig <- conf_mat$conf_mat
+        cm_df_sig <- conf_mat$cm_df 
       }
       
       eval_metrics_sig <- tmp_sig$eval_metrics
@@ -555,7 +547,11 @@ run_rf_analysis_manuscript1 <- function(data,
       
       prob_matrix_rfa <- rfa_res$prob_matrix
       
-      conf_mat_rfa <- conf_mat_plot(y_test, rfa_res$predictions, conf_mat_title = paste0("RFA Features - ", type_col), accuracy = acc_rfa)
+      conf_mat <- conf_mat_plot(y_test, rfa_res$predictions, 
+                                    conf_mat_title = paste0("RFA Features - ", type_col), 
+                                    accuracy = acc_rfa)
+      conf_mat_rfa <- conf_mat$conf_mat
+      cm_df_rfa <- conf_mat$cm_df
       
       eval_metrics_rfa <- rfa_res$eval_metrics
       
@@ -595,8 +591,12 @@ run_rf_analysis_manuscript1 <- function(data,
         final_rf_top <- tmp_top$model$finalModel
         
         prob_matrix_top <- tmp_top$p_m
-        conf_mat_top <- conf_mat_plot(y_test, tmp_top$preds, 
-                                      conf_mat_title = paste0("Top ", length(selected_features), " Features - ", data_name), accuracy = acc_top)
+        conf_mat <- conf_mat_plot(y_test, tmp_top$preds, 
+                                      conf_mat_title = paste0("Top ", length(selected_features), " Features - ", data_name),
+                                      accuracy = acc_top)
+        conf_mat_top <- conf_mat$conf_mat
+        cm_df_top <- conf_mat$cm_df
+        
         eval_metrics_top <- tmp_top$eval_metrics
         
         end_time_top_100_50_25_10   <- Sys.time()
@@ -610,6 +610,7 @@ run_rf_analysis_manuscript1 <- function(data,
           prob_matrix_top = prob_matrix_top,
           conf_mat_top=conf_mat_top,
           eval_metrics_top = eval_metrics_top,
+          cm_df_top = cm_df_top,
           time_top_100_50_25_10 = time_top_100_50_25_10
         )
       }
@@ -661,9 +662,11 @@ run_rf_analysis_manuscript1 <- function(data,
       
       # --- Generate Heatmap (RFE) ---
       {prob_matrix_rfe <- tmp_rfe$p_m
-        conf_mat_rfe <-  conf_mat_plot(y_test, tmp_rfe$preds, 
+        conf_mat <-  conf_mat_plot(y_test, tmp_rfe$preds, 
                                        conf_mat_title = paste0("RFE Features - ", data_name), 
                                        accuracy = acc_rfe)
+        conf_mat_rfe <- conf_mat$conf_mat
+        cm_df_rfe <- conf_mat$cm_df
       }
       
       eval_metrics_rfe <- tmp_rfe$eval_metrics
@@ -681,7 +684,8 @@ run_rf_analysis_manuscript1 <- function(data,
       all_features_acc     = acc_full,
       time_all_features = time_all_feats,
       eval_metrics_all_feats = eval_metrics_all_feats,
-      conf_mat_all_feats = conf_mat_all_feats
+      conf_mat_all_feats = conf_mat_all_feats, 
+      cm_df_all_feats = cm_df_all_feats
     )
     
     if(do_impute_norm_screen) {
@@ -699,6 +703,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$time_sig          <- time_sig
       result_list$eval_metrics_sig <- eval_metrics_sig
       result_list$conf_mat_sig <- conf_mat_sig
+      result_list$cm_df_sig <- cm_df_sig
     }
     
     if(do_rfa) {
@@ -709,6 +714,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$time_rfa                <- time_rfa
       result_list$eval_metrics_rfa <- eval_metrics_rfa
       result_list$conf_mat_rfa <- conf_mat_rfa
+      result_list$cm_df_rfa <- cm_df_rfa
     }
     
     if(do_rfe) {
@@ -720,6 +726,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$time_rfe              <- time_rfe
       result_list$eval_metrics_rfe <- eval_metrics_rfe
       result_list$conf_mat_rfe <- conf_mat_rfe
+      result_list$cm_df_rfe <- cm_df_rfe
     }
     
     if(do_top_importance_selection) {
@@ -733,35 +740,89 @@ run_rf_analysis_manuscript1 <- function(data,
 }
 
 
-###########################################################
-# sb_only_train <- run_rf_analysis_manuscript1(
-#   data = gc_combined_SB_ENV_shared_cols_ntr_clean,
-#   data_name = "icp-sbonly", 
-#   use_store_vs_environmental_split = TRUE,
-#   type_col                = "Plastic_type", 
-#   remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-#   group_for_significance = "Plastic_type", 
-#   do_pairwise_test = FALSE,             # Adjust parameters as needed
-#   do_top_importance_selection = FALSE,
-#   do_rfe = TRUE,
-#   do_rfa = FALSE,
-#   train_proportion = 0.8,
-#   do_impute_norm_screen = TRUE,
-#   seed = 123,
-#   min_sample_numner = 3)
+# Option 1: Use SB to predict ENV ##########################################################
+data_combinations <- list(
+  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
+  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
+  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
+  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
+)
 
-sb_env_train <- run_rf_analysis_manuscript1(
-  data = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  data_name = "gc-sb-env", 
-  use_source_split = TRUE,
-  type_col                = "Plastic_type", 
-  remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
-  group_for_significance = "Plastic_type",
-  do_pairwise_test = FALSE,             # Adjust parameters as needed
-  do_top_importance_selection = FALSE,
-  do_rfe = TRUE,
-  do_rfa = FALSE,
-  train_proportion = 0.8,
-  do_impute_norm_screen = TRUE,
-  seed = 123,
-  min_sample_numner = 3)
+# Predefine the result list with names from data_combinations
+run_rf_analysis_list_SB_train <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_train) <- c("gc_USSB_train",
+                                          "hplc_USSB_train",
+                                          "icp_USSB_train",
+                                          "gc_hplc_USSB_train",
+                                          "gc_icp_USSB_train",
+                                          "hplc_icp_USSB_train",
+                                          "gc_hplc_icp_USSB_train")
+
+# Iterate through each data combination by index
+for(i in seq_along(data_combinations)) {
+  cat("Processing dataset:", names(data_combinations)[i], "\n")
+  
+  # Run the analysis using the corresponding data and pass the custom name for figure titles
+  run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[i]],
+    data_name = names(data_combinations)[i], 
+    use_store_vs_environmental_split = TRUE,
+    type_col                = "Plastic_type", 
+    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
+    group_for_significance = "Plastic_type", 
+    do_pairwise_test = TRUE,             # Adjust parameters as needed
+    do_top_importance_selection = TRUE,
+    do_rfe = TRUE,
+    do_rfa = TRUE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 3)
+}
+
+## Option 2: Use Both SB and ENV to predict ENV ##########################################################
+data_combinations <- list(
+  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
+  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
+  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean,
+  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
+)
+
+# Predefine the result list with names from data_combinations
+run_rf_analysis_list_SB_and_ENV_train <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_and_ENV_train) <- c("gc_SB_and_ENV_train",
+                                                  "hplc_SB_and_ENV_train",
+                                                  "icp_SB_and_ENV_train",
+                                                  "gc_hplc_SB_and_ENV_train",
+                                                  "gc_icp_SB_and_ENV_train",
+                                                  "hplc_icp_SB_and_ENV_train",
+                                                  "gc_hplc_icp_SB_and_ENV_train")
+
+# Iterate through each data combination by index
+for(i in seq_along(data_combinations)) {
+  cat("Processing dataset:", names(data_combinations)[i], "\n")
+  
+  # Run the analysis using the corresponding data and pass the custom name for figure titles
+  run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[i]],
+    data_name = names(data_combinations)[i], 
+    use_source_split = TRUE,
+    type_col                = "Plastic_type", 
+    remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
+    group_for_significance = "Plastic_type",
+    do_pairwise_test = TRUE,             # Adjust parameters as needed
+    do_top_importance_selection = TRUE,
+    do_rfe = TRUE,
+    do_rfa = TRUE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 3)
+}
+
