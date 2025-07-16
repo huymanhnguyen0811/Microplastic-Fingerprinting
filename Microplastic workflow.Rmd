@@ -2400,7 +2400,7 @@ recursive_feature_addition <- function(X_train, y_train,
     X_test [, best_feats, drop = FALSE], y_test,
     ntree_candidates, metric
   )
-  best_mcc <- base_res$MCC_Multiclass
+  best_mcc <- base_res$MCC
   
   # 3) Iterative addition of remaining features
   while(length(remaining) > 0) {
@@ -2412,8 +2412,8 @@ recursive_feature_addition <- function(X_train, y_train,
         X_test [, trial_feats, drop = FALSE], y_test, ntree_candidates, metric
       )
       # Add feature only if all three metrics improve
-      if(res$MCC_Multiclass > best_mcc) {
-        best_mcc <- res$MCC_Multiclass
+      if(res$MCC > best_mcc) {
+        best_mcc <- res$MCC
         best_feats    <- trial_feats
         improved      <- TRUE
         break
@@ -2433,7 +2433,7 @@ recursive_feature_addition <- function(X_train, y_train,
   
   # 5) Return performance and selected features
   list(
-    best_mcc    = final_res$MCC_Multiclass,
+    best_mcc    = final_res$MCC,
     best_acc = final_res$Accuracy,
     best_features_rf = best_feats,
     final_model      = final_res$model,
@@ -2849,13 +2849,13 @@ run_rf_analysis_manuscript1 <- function(data,
     
     best_model_all_feats      <- all_feats$model
     best_trees_all_feats      <- all_feats$ntree
-    acc_full        <- all_feats$Accuracy
+    mcc_full        <- all_feats$MCC
     
     # --- Generate Heatmap (Full Features) ---
     {prob_matrix_all_feats <- all_feats$p_m
       conf_mat <- conf_mat_plot(y_test, all_feats$preds, 
                                           conf_mat_title = paste0("All Features - ", data_name), 
-                                          accuracy = acc_full)
+                                          accuracy = mcc_full)
       conf_mat_all_feats <- conf_mat$conf_mat
       cm_df_all_feats <- conf_mat$cm_df
     }
@@ -2885,14 +2885,14 @@ run_rf_analysis_manuscript1 <- function(data,
           X_test [, sig_feats, drop=FALSE], y_test,
           ntree_candidates, metric
         )
-        acc_sig         <- tmp_sig$Accuracy
+        mcc_sig         <- tmp_sig$MCC
         final_sig_model <- tmp_sig$model$finalModel
       }
       
       {prob_matrix_sig <- tmp_sig$p_m
         conf_mat <- conf_mat_plot(y_test, tmp_sig$preds, 
                                       conf_mat_title = paste0("Pair-wise Significance-Based Features - ", data_name), 
-                                      accuracy = acc_sig)
+                                      accuracy = mcc_sig)
         conf_mat_sig <- conf_mat$conf_mat
         cm_df_sig <- conf_mat$cm_df 
       }
@@ -2916,14 +2916,14 @@ run_rf_analysis_manuscript1 <- function(data,
       )
       
       rfa_selected_feats <- rfa_res$best_features_rf
-      acc_rfa                 <- rfa_res$best_accuracy
+      mcc_rfa                 <- rfa_res$best_mcc
       final_rf_rfa            <- rfa_res$final_model$finalModel
       
       prob_matrix_rfa <- rfa_res$prob_matrix
       
       conf_mat <- conf_mat_plot(y_test, rfa_res$predictions, 
                                     conf_mat_title = paste0("RFA Features - ", type_col), 
-                                    accuracy = acc_rfa)
+                                    accuracy = mcc_rfa)
       conf_mat_rfa <- conf_mat$conf_mat
       cm_df_rfa <- conf_mat$cm_df
       
@@ -2961,13 +2961,13 @@ run_rf_analysis_manuscript1 <- function(data,
           ntree_candidates, metric
         )
         
-        acc_top         <- tmp_top$Accuracy
+        mcc_top         <- tmp_top$MCC
         final_rf_top <- tmp_top$model$finalModel
         
         prob_matrix_top <- tmp_top$p_m
         conf_mat <- conf_mat_plot(y_test, tmp_top$preds, 
                                       conf_mat_title = paste0("Top ", length(selected_features), " Features - ", data_name),
-                                      accuracy = acc_top)
+                                      accuracy = mcc_top)
         conf_mat_top <- conf_mat$conf_mat
         cm_df_top <- conf_mat$cm_df
         
@@ -3031,14 +3031,14 @@ run_rf_analysis_manuscript1 <- function(data,
         X_test[, rfe_feats, drop=FALSE], y_test,
         ntree_candidates, metric
       )
-      acc_rfe          <- tmp_rfe$Accuracy
+      mcc_rfe          <- tmp_rfe$MCC
       final_rfe_model  <- tmp_rfe$model$finalModel
       
       # --- Generate Heatmap (RFE) ---
       {prob_matrix_rfe <- tmp_rfe$p_m
         conf_mat <-  conf_mat_plot(y_test, tmp_rfe$preds, 
                                        conf_mat_title = paste0("RFE Features - ", data_name), 
-                                       accuracy = acc_rfe)
+                                       accuracy = mcc_rfe)
         conf_mat_rfe <- conf_mat$conf_mat
         cm_df_rfe <- conf_mat$cm_df
       }
@@ -3055,7 +3055,7 @@ run_rf_analysis_manuscript1 <- function(data,
       best_model_all_feats      = best_model_all_feats,
       final_rf_all_feats    = best_model_all_feats$finalModel,
       prob_matrix = prob_matrix_all_feats,
-      all_features_acc     = acc_full,
+      all_features_mcc     = mcc_full,
       time_all_features = time_all_feats,
       eval_metrics_all_feats = eval_metrics_all_feats,
       conf_mat_all_feats = conf_mat_all_feats, 
@@ -3073,7 +3073,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$sig_model    <- final_sig_model
       result_list$sig_selected_feats <- sig_feats
       result_list$prob_matrix_sig <- prob_matrix_sig
-      result_list$acc_sig <- acc_sig
+      result_list$mcc_sig <- mcc_sig
       result_list$time_sig          <- time_sig
       result_list$eval_metrics_sig <- eval_metrics_sig
       result_list$conf_mat_sig <- conf_mat_sig
@@ -3084,7 +3084,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$rfa_model <- final_rf_rfa
       result_list$rfa_selected_feats <- rfa_selected_feats
       result_list$prob_matrix_rfa    <- prob_matrix_rfa
-      result_list$acc_rfa  <- acc_rfa
+      result_list$mcc_rfa  <- mcc_rfa
       result_list$time_rfa                <- time_rfa
       result_list$eval_metrics_rfa <- eval_metrics_rfa
       result_list$conf_mat_rfa <- conf_mat_rfa
@@ -3096,7 +3096,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$final_rf_rfe          <- final_rfe_model
       result_list$rfe_selected_features <- rfe_feats
       result_list$prob_matrix_rfe    <- prob_matrix_rfe
-      result_list$acc_rfe  <- acc_rfe
+      result_list$mcc_rfe  <- mcc_rfe
       result_list$time_rfe              <- time_rfe
       result_list$eval_metrics_rfe <- eval_metrics_rfe
       result_list$conf_mat_rfe <- conf_mat_rfe
