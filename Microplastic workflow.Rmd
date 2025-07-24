@@ -47,7 +47,7 @@ library(pROC)
 library(VIM)
 library(softImpute)
 library(purrr)
-
+library(ggpubr)
 # Functions -------------------------------------------------------------------------------------------------------
 '%notin%' <- Negate('%in%')
 
@@ -179,8 +179,6 @@ comp_filter_opt <- function(data) {
   return(list(all_other_compounds_idx = all_other_compounds_idx, 
               all_unique_compounds_idx  = all_unique_compounds_idx))
 }
-
-
 ```
 
 ## STEP 1.1: Data import
@@ -327,7 +325,9 @@ all_hplc <- rbind(hplc_batch0_step1.1,
                   hplc_batch2_step1.1) %>% arrange(RT)
 
 ## Stable Isotope data
-stable_isotope <- read_xlsx(path = paste0(getwd(), "/data/Isotope/Mikroplastik_Results_2ndRound_KCN-1.xlsx"))
+stable_isotope <- read_xlsx(path = paste0(getwd(), "/data/Isotope/Mikroplastik_Results_2ndRound_KCN-1.xlsx")) %>% 
+  tidyr::pivot_longer(cols = 4:5, names_to = "replicate", values_to = "Value") %>% 
+  dplyr::mutate(Value = abs(Value))
 ```
 
 
@@ -2323,29 +2323,28 @@ dev.off()
 
 ## Get unique m/z of the selected features
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-all_unique <- data.frame(comp = run_rf_analysis_list_SB_and_ENV_train$hplc_SB_and_ENV_train$top_importance_results$top_100$selected_features)
+all_unique <- data.frame(feature = run_rf_analysis_list_SB_and_ENV_train$gc_SB_and_ENV_train$sig_selected_feats)
 
 # Adding RT and molecular ions info of significant compounds:
 mean_mz <- c()
 for (row in 1:nrow(all_unique)) {
-  idx <- base::which(hplc$Feature == all_unique[row,])
+  idx <- base::which(gc$Feature == all_unique[row,])
   
-  mean_mz <- c(mean_mz, round(mean(hplc[idx,]$m.z), 4)) 
+  mean_mz <- c(mean_mz, round(mean(gc[idx,]$m.z), 4)) 
 }
 
 all_unique$mean_mz <- mean_mz
 ```
 
-## A. EF's Suspect Screening 
+### EF's Suspect Screening 
 
-### Find in all_unique the compounds that match with suspect hit list in all_unique with molecular ions in the range of +- 0.0005
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 df_list <- list()
 i <- 1
 
 for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
   # if the of the feature fall into the windows +-0.0005 of suspect, then fetch all row in sus_scr that match
-  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.0005) & all_unique$mean_mz >= (suspect_mz - 0.0005))
+  idx <- which(all_unique$mean_mz <= (suspect_mz + 0.005) & all_unique$mean_mz >= (suspect_mz - 0.005))
   # If not found any match in Suspect screening list then next
   if (base::identical(idx, integer(0))) {
     next
@@ -2359,93 +2358,178 @@ for (suspect_mz in unique(sus_scr$`[M+H]+`)) {
 
 all_matching_sus_scr <- bind_rows(df_list)
 View(all_matching_sus_scr)
+print(all_matching_sus_scr$Compound)
 ```
 
-### Figure S#: Stacked bar plot of compound match with EF's Suspect Screening 
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-# Replace all the compounds in plot_df with suspect screening matches 
-joined <- left_join(run_rf_analysis_list_SB_and_ENV_train$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
-                      pivot_longer(cols = 6:ncol(.), names_to = "Feature", values_to = "Values") %>%
-                      dplyr::select(Plastic_type, Feature, Values), 
-                    unique(all_matching_sus_scr %>%
-                             dplyr::select(Feature, `Suspect Name`)), by = "Feature") %>%
-  dplyr::filter(!is.na(`Suspect Name`)) %>%
-  # group and calculate the mean of Features with same subcategory
-  group_by(Feature, `Suspect Name`, Plastic_type) %>%
-  dplyr::summarise(across(Values, base::mean)) %>%
-  dplyr::mutate(Plastic_type = gsub(x=Plastic_type, pattern = ".", replacement=" ", fixed = TRUE))
+<!-- ### Figure S#: Stacked bar plot of compound match with EF's Suspect Screening  -->
+<!-- ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE} -->
+<!-- # Replace all the compounds in plot_df with suspect screening matches  -->
+<!-- joined <- left_join(run_rf_analysis_list_SB_and_ENV_train$hplc_SB_and_ENV_train$final_imp_norm_dat %>% -->
+<!--                       pivot_longer(cols = 6:ncol(.), names_to = "Feature", values_to = "Values") %>% -->
+<!--                       dplyr::select(Plastic_type, Feature, Values),  -->
+<!--                     unique(all_matching_sus_scr %>% -->
+<!--                              dplyr::select(Feature, `Suspect Name`)), by = "Feature") %>% -->
+<!--   dplyr::filter(!is.na(`Suspect Name`)) %>% -->
+<!--   # group and calculate the mean of Features with same subcategory -->
+<!--   group_by(Feature, `Suspect Name`, Plastic_type) %>% -->
+<!--   dplyr::summarise(across(Values, base::mean)) %>% -->
+<!--   dplyr::mutate(Plastic_type = gsub(x=Plastic_type, pattern = ".", replacement=" ", fixed = TRUE)) -->
 
-ggplot(data = joined, aes(x = Plastic_type, y = Values, fill = `Suspect Name`)) +
-  geom_bar(stat = "identity") +
-  labs(title = "", x = "Plastic product types", y = "Peak Height",
-       fill = "Top hits with database") +
-  theme_minimal(base_size = 25) +
-  theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"), 
-        axis.ticks.length.x = unit(0, "cm"),
-        legend.position = 'bottom',
-        panel.grid.minor.x = element_blank(),
-        panel.grid.minor.y = element_blank()) + 
-  scale_y_continuous(expand = c(0,0)) +
-  guides(fill=guide_legend(ncol=2))
-```
+<!-- ggplot(data = joined, aes(x = Plastic_type, y = Values, fill = `Suspect Name`)) + -->
+<!--   geom_bar(stat = "identity") + -->
+<!--   labs(title = "", x = "Plastic product types", y = "Peak Height", -->
+<!--        fill = "Top hits with database") + -->
+<!--   theme_minimal(base_size = 25) + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"),  -->
+<!--         axis.ticks.length.x = unit(0, "cm"), -->
+<!--         legend.position = 'bottom', -->
+<!--         panel.grid.minor.x = element_blank(), -->
+<!--         panel.grid.minor.y = element_blank()) +  -->
+<!--   scale_y_continuous(expand = c(0,0)) + -->
+<!--   guides(fill=guide_legend(ncol=2)) -->
+<!-- ``` -->
 
-# C. PlastChem (Hans Peter Arp et. al.) 
+### PlastChem (Hans Peter Arp et. al.) 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 plastchem <- read_xlsx(path = "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/plastchem_db_v1.01.xlsx", sheet = "Full database", skip = 1)
 
 df_list <- list()
 i <- 1
 
-for (mz in unique(na.omit(plastchem$monoisotopic_mass))) {
+for (mz in unique(na.omit(all_unique$mean_mz))) {
   # if the of the feature fall into the windows +-0.0005 of suspect in database, then fetch all row in sus_scr that match
-  idx <- which(all_unique$mean_mz <= (mz + 0.001) & all_unique$mean_mz >= (mz - 0.001))
+  idx <- which(plastchem$monoisotopic_mass <= (mz + 0.005) & plastchem$monoisotopic_mass >= (mz - 0.005))
   # If not found any match in Suspect screening list then next
   if (base::identical(idx, integer(0))) {
     next
   } else {
-    temp <- plastchem[which(plastchem$monoisotopic_mass == mz),]
-    temp$Feature <- paste(all_unique[idx,]$comp, collapse = ', ')
-    df_list[[i]] <- temp[1,] # here we just need 1 row of suspect name and corresponding Feature
+    temp <- plastchem[idx,]
+    temp$Feature <- paste(all_unique[idx,]$feature, collapse = ', ')
+    # print(temp)
+    df_list[[i]] <- temp # here we just need 1 row of suspect name and corresponding Feature
     i <- i + 1
   }
 }
 
-all_matching_sus_scr_plastchem <- bind_rows(df_list)
-View(all_matching_sus_scr_plastchem[, c(6,212,217, 234)])
+all_matching_plastchem <- bind_rows(df_list)
+View(all_matching_plastchem[, c(6, 211, 216)] %>% 
+       dplyr::filter(!is.na(Harmonized_functions)) %>%
+       dplyr::filter(!is.na(industrial_sector_plasticmap))
+     )
+#_----------------------------------------------------
+patterns <- c("Palladium")
+all_matching_sus_scr_plastchem <-plastchem %>%
+  dplyr::filter(
+    str_detect(
+      pubchem_name,
+      regex(patterns, ignore_case = TRUE)
+    )
+  )
+View(all_matching_sus_scr_plastchem[, c(6, 211:216)] %>% dplyr::filter(!is.na(Harmonized_functions) & !is.na(industrial_sector_plasticmap)))
+
 ```
 
-### Extract information about Functions and Industrial sectors in which plastics including this chemical suspects might be used
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-writexl::write_xlsx(all_matching_sus_scr_plastchem[, c(6,212,217)], "plastchem_suspect_function_industrialsector.xlsx")
-```
+<!-- ### Stacked bar plot of compound match with PlastChem  -->
+<!-- ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE} -->
+<!-- # Replace all the compounds in plot_df with suspect screening matches  -->
+<!-- joined <- left_join(df_percentage %>%  -->
+<!--                       pivot_longer(cols = 2:ncol(.), names_to = "Feature", values_to = "Values") %>% -->
+<!--                       dplyr::select(Subcategory, Feature, Values),  -->
+<!--                     unique(all_matching_sus_scr_plastchem %>% -->
+<!--                       dplyr::select(Feature, pubchem_name)), by = "Feature") %>% -->
+<!--   dplyr::filter(!is.na(pubchem_name)) %>% -->
+<!--   # group and calculate the mean of Features with same subcategory -->
+<!--   group_by(Feature, pubchem_name, Subcategory) %>% -->
+<!--   dplyr::summarise(across(Values, base::mean)) -->
 
-### Stacked bar plot of compound match with PlastChem 
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-# Replace all the compounds in plot_df with suspect screening matches 
-joined <- left_join(df_percentage %>% 
-                      pivot_longer(cols = 2:ncol(.), names_to = "Feature", values_to = "Values") %>%
-                      dplyr::select(Subcategory, Feature, Values), 
-                    unique(all_matching_sus_scr_plastchem %>%
-                      dplyr::select(Feature, pubchem_name)), by = "Feature") %>%
-  dplyr::filter(!is.na(pubchem_name)) %>%
-  # group and calculate the mean of Features with same subcategory
-  group_by(Feature, pubchem_name, Subcategory) %>%
-  dplyr::summarise(across(Values, base::mean))
+<!-- ggplot(data = joined, aes(x = Subcategory, y = Values, fill = pubchem_name)) + -->
+<!--   geom_bar(stat = "identity") + -->
+<!--   labs(title = "", x = "Plastic product types", y = "Normalized Peak Height (%)", -->
+<!--        fill = "Top hits with database") + -->
+<!--   theme_minimal(base_size = 20) + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"),  -->
+<!--         axis.ticks.length.x = unit(0, "cm"), -->
+<!--         # legend.text = element_text(size = 18), -->
+<!--         # legend.title = element_text(size = 20), -->
+<!--         legend.position = "bottom", -->
+<!--         panel.grid.minor.x = element_blank(), -->
+<!--         panel.grid.minor.y = element_blank()) +  -->
+<!--   scale_y_continuous(expand = c(0,0)) + -->
+<!--   guides(fill=guide_legend(ncol=2)) -->
+<!-- ``` -->
 
-ggplot(data = joined, aes(x = Subcategory, y = Values, fill = pubchem_name)) +
-  geom_bar(stat = "identity") +
-  labs(title = "", x = "Plastic product types", y = "Normalized Peak Height (%)",
-       fill = "Top hits with database") +
-  theme_minimal(base_size = 20) +
-  theme(axis.text.x = element_text(angle = 90, hjust =0.5, vjust = 0.25, color = "black", face = "bold"), 
-        axis.ticks.length.x = unit(0, "cm"),
-        # legend.text = element_text(size = 18),
-        # legend.title = element_text(size = 20),
-        legend.position = "bottom",
-        panel.grid.minor.x = element_blank(),
-        panel.grid.minor.y = element_blank()) + 
-  scale_y_continuous(expand = c(0,0)) +
-  guides(fill=guide_legend(ncol=2))
+## Table 6: Stable Isotope - Pairwise test
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Store-bought only ---------------------------------------
+stable_isotope_SB_pwtest <- pairwise_significance_tests(input_df = stable_isotope %>%
+                                                       dplyr::filter(Source == "Store-Bought"), 
+                                                     group_col = "Plastic_type", start_col_index = 5)
+
+stable_isotope_SB_pwtest$uncorrected$adjusted_pvalue <- p.adjust(stable_isotope_SB_pwtest$uncorrected$pval, method = "bonferroni")
+significant <- stable_isotope_SB_pwtest$uncorrected %>%
+  dplyr::filter(adjusted_pvalue < 0.05) %>%
+  arrange(adjusted_pvalue)
+
+plot <- ggplot(stable_isotope %>%
+                 dplyr::filter(Source == "Store-Bought"), aes(x=Plastic_type, y=Value, fill = Plastic_type)) +
+  geom_boxplot() +
+  stat_summary(fun.data = function(x) {
+    stats <- boxplot.stats(x)$stats  # stats: lower whisker, Q1, median, Q3, upper whisker
+    data.frame(ymin = stats[1], ymax = stats[1])
+  }, geom = "errorbar", width = 0.2, color = "black", linewidth = 1) +
+  # Add whisker caps at the upper whisker endpoint
+  stat_summary(fun.data = function(x) {
+    stats <- boxplot.stats(x)$stats
+    data.frame(ymin = stats[5], ymax = stats[5])
+  }, geom = "errorbar", width = 0.2, color = "black", linewidth = 1) +
+  ggpubr::geom_signif(comparisons=list(c("Plastic drinking straws","Plastic cups"),c("Plastic drinking straws", "Plastic bottles"),c("Plastic cord", "Plastic bottles"), c("Plastic cord", "Plastic cups"), c("Plastic drinking straws", "Balloons"), c("Plastic cups", "Plastic bottles")), test=t.test, test.args = list(paired = F), map_signif_level=TRUE, step_increase=0.08, textsize = 7, vjust = 0.5) +
+  # scale_y_continuous(limits = c(0, 1)) +
+  theme_bw(base_size = 25) +
+  labs(x = "Plastic categories", y = "Isotope value") +
+  theme(legend.position = "hidden",
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+plot
+
+ggsave(filename = paste0("Box_plot_stable isotope between store-bought plastic categories_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = plot, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in") 
+
+# Environmental only -> only have 2 sample per Plastic type, not possible to pairwise test --------------
+stable_isotope_ENV_pwtest <- pairwise_significance_tests(input_df = stable_isotope %>%
+                                                       dplyr::filter(Source == "Environmental"), 
+                                                     group_col = "Plastic_type", start_col_index = 5)
+
+stable_isotope_ENV_pwtest$uncorrected$adjusted_pvalue <- p.adjust(stable_isotope_ENV_pwtest$uncorrected$pval, method = "bonferroni")
+significant <- stable_isotope_ENV_pwtest$uncorrected %>%
+  dplyr::filter(adjusted_pvalue < 0.05) %>%
+  arrange(adjusted_pvalue)
+View(significant)
+
+# Store-bought and Environmental ---------------------------------
+stable_isotope_SB_ENV <- stable_isotope %>% 
+  dplyr::group_by(Source, Plastic_type) %>%
+  dplyr::summarize(mean_value = mean(Value),
+                   std_value = sd(Value))
+
+plot <- ggplot(data = stable_isotope_SB_ENV, aes(x = Plastic_type, y = mean_value, fill = Source, 
+                                                 color = Source)) +
+  geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
+  geom_errorbar(data = stable_isotope_SB_ENV, aes(x = Plastic_type,
+                                         ymin = mean_value - std_value,
+                                         ymax = mean_value + std_value, 
+                                         group = Source), position = "dodge", 
+                linewidth = 0.15, alpha = 1, size = 1.5) +
+  scale_color_manual(name = "Source", values = c("firebrick3", "dodgerblue3")) +
+  labs(x = "Plastic categories", y = "Isotope value", fill = "Source") +
+  theme_classic(base_size = 30) +
+  theme(axis.text.x = element_text(angle = 90, vjust =0.5, color = "black", face = "bold"),
+        axis.ticks.length.x = unit(0, "cm")) # +
+  # scale_y_continuous(breaks = seq(from = 0, to = 1, by =.1), expand = c(0,0))
+plot
 ```
 
 ## Venn Diagram: top PCA loadings vs. top ML contributors
