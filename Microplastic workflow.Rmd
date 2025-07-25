@@ -1672,7 +1672,8 @@ pairwise_significance_tests <- function(input_df,
           # append to df
           df_results <- rbind(df_results, data.frame(
             Feature = colnames(input_df)[feature_col],
-            comparison_pair = paste0(p_1, " & ", p_2),
+            Category_1 = p_1,
+            Category_2 = p_2,
             pval = as.numeric(pval_test),
             stringsAsFactors = FALSE
           ))
@@ -2216,6 +2217,8 @@ ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combin
 ```
 
 ## Figure 4: Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
+
+(UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(circlize)
 
@@ -2465,13 +2468,37 @@ stable_isotope_SB_pwtest <- pairwise_significance_tests(input_df = stable_isotop
                                                        dplyr::filter(Source == "Store-Bought"), 
                                                      group_col = "Plastic_type", start_col_index = 5)
 
-stable_isotope_SB_pwtest$uncorrected$adjusted_pvalue <- p.adjust(stable_isotope_SB_pwtest$uncorrected$pval, method = "bonferroni")
-significant <- stable_isotope_SB_pwtest$uncorrected %>%
-  dplyr::filter(adjusted_pvalue < 0.05) %>%
-  arrange(adjusted_pvalue)
+pw <- stable_isotope_SB_pwtest$uncorrected %>%
+  mutate(adjusted_p = p.adjust(pval, method = "bonferroni")) %>%
+  filter(adjusted_p < 0.05) %>%
+  arrange(adjusted_p) %>%
+  # rename the grouping columns to what geom_signif expects:
+  transmute(
+    group1       = Category_1,
+    group2       = Category_2,
+    p.adj        = adjusted_p,
+    annotations  = paste0("p = ", signif(p.adj, 3))
+  )
 
+# 2) Compute y‑positions so the brackets don’t overlap:
+max_y <- stable_isotope %>%
+  filter(Source == "Store-Bought") %>%
+  pull(Value) %>%
+  max(na.rm = TRUE)
+
+pw <- pw %>%
+  mutate(
+    y.position = seq(
+      from = max_y * 1.05,
+      to   = max_y * 1.4,
+      length.out = n()
+    )
+  )
+
+# 3) Build your plot
 plot <- ggplot(stable_isotope %>%
-                 dplyr::filter(Source == "Store-Bought"), aes(x=Plastic_type, y=Value, fill = Plastic_type)) +
+                 dplyr::filter(Source == "Store-Bought"), 
+               aes(x=Plastic_type, y=Value, fill = Plastic_type)) +
   geom_boxplot() +
   stat_summary(fun.data = function(x) {
     stats <- boxplot.stats(x)$stats  # stats: lower whisker, Q1, median, Q3, upper whisker
@@ -2482,20 +2509,34 @@ plot <- ggplot(stable_isotope %>%
     stats <- boxplot.stats(x)$stats
     data.frame(ymin = stats[5], ymax = stats[5])
   }, geom = "errorbar", width = 0.2, color = "black", linewidth = 1) +
-  ggpubr::geom_signif(comparisons=list(c("Plastic drinking straws","Plastic cups"),c("Plastic drinking straws", "Plastic bottles"),c("Plastic cord", "Plastic bottles"), c("Plastic cord", "Plastic cups"), c("Plastic drinking straws", "Balloons"), c("Plastic cups", "Plastic bottles")), test=t.test, test.args = list(paired = F), map_signif_level=TRUE, step_increase=0.08, textsize = 7, vjust = 0.5) +
+  # → manual p‑value annotations:
+  geom_signif(
+    data        = pw,
+    inherit.aes = FALSE,
+    manual      = TRUE,
+    aes(
+      xmin        = group1,
+      xmax        = group2,
+      y_position  = y.position,
+      annotations = annotations
+    ),
+    tip_length   = 0.02,
+    textsize     = 6, 
+    step_increase = 0.05
+  ) +
   # scale_y_continuous(limits = c(0, 1)) +
-  theme_bw(base_size = 25) +
+  theme_classic(base_size = 25) +
   labs(x = "Plastic categories", y = "Isotope value") +
   theme(legend.position = "hidden",
         axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 plot
 
-ggsave(filename = paste0("Box_plot_stable isotope between store-bought plastic categories_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+ggsave(filename = paste0("Box_plot_stable isotope between only store-bought plastic categories_t-test_", format(Sys.time(), "%d-%m-%Y"),".png"), 
        plot = plot, 
        device = "png",
        dpi = 300,        # Set DPI to 600
        width = 15,       # Width in inches (adjust as needed)
-       height = 8,       # Height in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
        units = "in") 
 
 # Environmental only -> only have 2 sample per Plastic type, not possible to pairwise test --------------
@@ -2507,7 +2548,72 @@ stable_isotope_ENV_pwtest$uncorrected$adjusted_pvalue <- p.adjust(stable_isotope
 significant <- stable_isotope_ENV_pwtest$uncorrected %>%
   dplyr::filter(adjusted_pvalue < 0.05) %>%
   arrange(adjusted_pvalue)
-View(significant)
+View(significant) # no significant instance
+
+#### ANOVA with post-hoc Tukey test
+fit <- aov(Value ~ Plastic_type,
+           data = stable_isotope %>% filter(Source == "Environmental"))
+tuk <- TukeyHSD(fit, "Plastic_type")
+
+# 2) Tidy and keep only p < .05
+tuk_df <- as.data.frame(tuk$Plastic_type) %>%
+  rownames_to_column("comparison") %>%
+  separate(comparison, into = c("group1", "group2"), sep = "-") %>%
+  rename(p.adj = `p adj`) %>%
+  filter(p.adj < 0.05) %>%
+  # create the text you want to show:
+  dplyr::mutate(annotation  = sprintf("p = %.3f", p.adj))
+
+# 3) Compute y positions so they don’t all overlap:
+max_y <- max(stable_isotope_ENV$mean_value + stable_isotope_ENV$std_value)
+tuk_df <- tuk_df %>%
+  arrange(p.adj) %>%
+  mutate(y.position = seq(
+    from = max_y * 1.02,
+    to   = max_y * 1.58,
+    length.out = n()
+  ))
+
+# 4) Plot, feeding tuk_df into geom_signif manually:
+plot <- ggplot(stable_isotope_ENV,
+               aes(x = Plastic_type, y = mean_value, fill = Source)) +
+  geom_boxplot() +
+  geom_bar(position = position_dodge(width = 0.9),
+           stat     = "identity") +
+  geom_errorbar(aes(ymin = mean_value - std_value,
+                    ymax = mean_value + std_value,
+                    group = Source),
+                position = position_dodge(width = 0.9),
+                width = 0.2, size = 1) +
+  geom_signif(
+    data        = tuk_df,
+    inherit.aes = FALSE,    # drop the main mapping
+    manual      = TRUE,     # we’re supplying xmin/xmax ourselves
+    aes(xmin       = group1,
+        xmax       = group2,
+        y_position = y.position,
+        annotations = annotation),
+    tip_length = 0.02,
+    textsize   = 6,
+    step_increase = 0.10 # ← give yourself a full 10% more space between each
+  ) +
+  labs(x = "Plastic categories",
+       y = "Isotope value") +
+  theme_classic(base_size = 30) +
+  theme(legend.position     = "none",
+        axis.text.x         = element_text(angle = 90,
+                                         vjust = 0.5,
+                                         face = "bold"),
+        axis.ticks.length.x = unit(0, "cm"))
+plot
+
+ggsave(filename = paste0("Box_plot_stable isotope between only environmental plastic categories_ANOVA_posthocTukey_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = plot, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
+       units = "in") 
 
 # Store-bought and Environmental ---------------------------------
 stable_isotope_SB_ENV <- stable_isotope %>% 
@@ -2515,21 +2621,27 @@ stable_isotope_SB_ENV <- stable_isotope %>%
   dplyr::summarize(mean_value = mean(Value),
                    std_value = sd(Value))
 
-plot <- ggplot(data = stable_isotope_SB_ENV, aes(x = Plastic_type, y = mean_value, fill = Source, 
-                                                 color = Source)) +
+plot <- ggplot(data = stable_isotope_SB_ENV, aes(x = Plastic_type, y = mean_value, fill = Source)) +
+  geom_boxplot() +
   geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
   geom_errorbar(data = stable_isotope_SB_ENV, aes(x = Plastic_type,
                                          ymin = mean_value - std_value,
                                          ymax = mean_value + std_value, 
                                          group = Source), position = "dodge", 
                 linewidth = 0.15, alpha = 1, size = 1.5) +
-  scale_color_manual(name = "Source", values = c("firebrick3", "dodgerblue3")) +
   labs(x = "Plastic categories", y = "Isotope value", fill = "Source") +
   theme_classic(base_size = 30) +
   theme(axis.text.x = element_text(angle = 90, vjust =0.5, color = "black", face = "bold"),
-        axis.ticks.length.x = unit(0, "cm")) # +
-  # scale_y_continuous(breaks = seq(from = 0, to = 1, by =.1), expand = c(0,0))
+        axis.ticks.length.x = unit(0, "cm"))
 plot
+
+ggsave(filename = paste0("Box_plot_stable isotope between store-bought & environmental plastic categories_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = plot, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in") 
 ```
 
 ## Venn Diagram: top PCA loadings vs. top ML contributors
