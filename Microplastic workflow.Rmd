@@ -2219,6 +2219,7 @@ ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combin
 ## Figure 4: Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
 
 (UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
+
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(circlize)
 
@@ -2273,50 +2274,76 @@ for (i in 1:length(prob_mat_list)) {
 
 chorddiagram_df <- bind_rows(prob_mat_list) %>% 
   dplyr::filter(Predicted_Prob > 0.5) %>%
-  dplyr::select(c(Predicted_Class, Dataset, Predicted_Prob))
+  dplyr::select(c(Dataset, Predicted_Class, Predicted_Prob)) %>%
+  dplyr::mutate(Dataset = gsub(pattern = "-", replacement = "_", Dataset))
 
 png(
   filename = paste0("chord_diagram_", format(Sys.time(), "%d-%m-%Y"), ".png"),
-  width    = 15,      # in inches
-  height   = 15,      # in inches
+  width    = 18,      # in inches
+  height   = 18,      # in inches
   units    = "in",
   res      = 600     # 300 dpi for publication‑quality
 )
+
+# 1) Label mapping for bottom dataset sectors
+label_map <- c(
+  GC            = "GC",
+  HPLC          = "HPLC",
+  ICP           = "ICP",
+  GC_HPLC       = "GC-HPLC",
+  GC_ICP        = "GC-ICP",
+  HPLC_ICP      = "HPLC-ICP",
+  GC_HPLC_ICP   = "GC-HPLC-ICP"
+)
+# Have gaps between sectors
+circos.par(gap.after = c(rep(2, length(unique(chorddiagram_df[[1]]))-1), 15, 
+                         rep(2, length(unique(chorddiagram_df[[2]]))-1), 15))
+
+# Manually assign color to bottom sectors (Datasets)
+grid.col <- c(GC='#8dd3c7',HPLC='#ffffb3',ICP='#bebada',GC_ICP = '#fb8072',HPLC_ICP = '#80b1d3', GC_HPLC = '#fdb462',GC_HPLC_ICP = '#b3de69',
+              Balloons="grey", Plastic.Bottles="grey", Plastic.Drinking.Straws="grey", Bottle.Caps="grey", Construction.Material="grey", Mixed.Microplastics="grey", Plastic.Cups="grey", Shotgun.shells="grey", Fishing.Bait.Trays="grey", Food.Containers="grey", Food.Packaging="grey", Food.Wrappers="grey", Textile.Fabric.Face.Masks="grey", Toy.Balls="grey", Cigarillo.Tips="grey", Various.Plastic.Waste="grey", Plastic.Cutlery="grey", Cigarettes="grey", Cigarette.Lighters="grey", Plastic.Cord="grey", Plastic.Cable.Ties="grey", Plastic.Plates="grey")
+
 circlize::chordDiagram(chorddiagram_df,
+                       grid.col = grid.col,
                        small.gap = 2, 
-                       annotationTrack   = "grid",
+                       annotationTrack   = c("grid"),
                        preAllocateTracks = 1)
+
 circos.trackPlotRegion(
   track.index = 1, 
   bg.border = NA,
   panel.fun = function(x, y) {
     sector <- get.cell.meta.data("sector.index")
     xlim   <- get.cell.meta.data("xlim")
+    
+    # Use mapped label if available, otherwise keep original
+    label <- ifelse(sector %in% names(label_map), label_map[[sector]], sector)
+    
     circos.text(
       x       = mean(xlim), y = 0,
-      labels  = sector,
+      labels  = label,
       facing  = "clockwise",     # or "reverse.clockwise"
       niceFacing = TRUE,        # turns off auto-flip
       adj     = c(0, 0.5),
-      cex     = 1
+      cex     = 1.5
     )
   }
 )
 grid.text(
-  "Plastic categories",
+  "Individual and combined datasets",
   x    = unit(0.5, "npc"),        # centered horizontally
-  y    = unit(0.02, "npc"),           # 2 mm up from bottom
+  y    = unit(0.075, "npc"),           # 2 mm up from bottom
   just = "center",
-  gp   = gpar(fontsize = 14, fontface = "bold")
+  gp   = gpar(fontsize = 20, fontface = "bold")
 )
 
 # 2) And the top label for "Dataset"
 grid.text(
-  "Individual and combined datasets",
+  "Plastic categories",
   x    = unit(0.5, "npc"),        
-  y    = unit(0.95, "npc"),  # 5 mm down from top
+  y    = unit(0.98, "npc"),  # 5 mm down from top
   just = "center",
-  gp   = gpar(fontsize = 14, fontface = "bold")
+  gp   = gpar(fontsize = 20, fontface = "bold")
 )
 circos.clear()
 dev.off()
