@@ -2207,9 +2207,24 @@ round(fro_cov_off,3)
 
 ## Figure 3: Bar plot Comparing Feature selection - MCC score - 7 data combinations
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-for (names in )
-feature_selection <- read_xlsx(path = "Computational fingerprinting paper_SI tables_10July2025.xlsx", skip = 1) %>% 
-  mutate(Dataset = factor(Dataset, levels = c("GC", "HPLC", "ICP", "GC-ICP", "GC-HPLC", "HPLC-ICP", "GC-HPLC-ICP")))
+df_list <- list()
+dataset_names <- c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")
+for (i in 1:length(names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025))) {
+  names <- names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i]
+  df_list[[i]] <- data.frame(time = round(c(dim(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$final_imp_norm_dat)[2],
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$sig_selected_feats),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$rfa_selected_feats),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_100$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_50$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_25$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_10$selected_features)), 3)) %>% dplyr::mutate(Dataset = dataset_names[i]) %>% dplyr::mutate(Selection = c("All features", "Pairwise", "RFA", "Top 100", "Top 50", "Top 25", "Top 10"))
+}
+View(bind_rows(df_list))
+write_xlsx(bind_rows(df_list), path = paste0("Computational fingerprinting paper_feature selection comparison_train SB+ENV_04Aug2025_number selected features_", format(Sys.time(), "%d-%m-%Y"), ".xlsx"))
+
+# PLot =============================
+feature_selection <- read_xlsx(path = "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/Computational fingerprinting paper_feature selection comparison_train SB+ENV_MCC score_time_feature number_04Aug2025.xlsx") %>%  
+  dplyr::mutate(Dataset = factor(Dataset, levels = c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")))
 
 feature_selection_plot <- ggplot(data = feature_selection, aes(x = Dataset, y = MCC, fill = `Feature selection`)) + 
   geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
@@ -2217,12 +2232,13 @@ feature_selection_plot <- ggplot(data = feature_selection, aes(x = Dataset, y = 
   scale_y_continuous(breaks = seq(from = 0, to = 1, by =.1), expand = c(0,0), limits = c(0, 1)) +
   theme_bw(base_size = 20) +
   theme(axis.text.x = element_text(size =20), axis.text.y = element_text(size =20))
+feature_selection_plot
 
-ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combinations", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combinations_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
        plot = feature_selection_plot, 
        device = "png",
        dpi = 300,        # Set DPI to 600
-       width = 15,       # Width in inches (adjust as needed)
+       width = 18,       # Width in inches (adjust as needed)
        height = 8,       # Height in inches (adjust as needed)
        units = "in")
 ```
