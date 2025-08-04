@@ -184,7 +184,7 @@ comp_filter_opt <- function(data) {
 ## STEP 1.1: Data import
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic Manuscript 1/microplastic manuscript 1 - data/ATDGCMS")
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ATDGCMS")
 
 atdgcms_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
   .[!str_detect(., "2022")] %>%
@@ -237,8 +237,8 @@ atdgcms_blank <- dplyr::bind_rows(purrr::map(blank_list, read.csv)) %>%
 
 atdgcms_step1.1 <- rbind(atdgcms_step1.1, atdgcms_blank) %>% 
   arrange(RT) %>%
-  mutate(Replicate = ifelse(str_detect(File, "R1"), "R1",
-                            ifelse(str_detect(File, "R2"), "R2", "R3"))) %>%
+  # mutate(Replicate = ifelse(str_detect(File, "R1"), "R1",
+  #                           ifelse(str_detect(File, "R2"), "R2", "R3"))) %>%
   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, pattern = "-")[c(4, 5)], collapse = "-")))
 
 # HPLCTOFMS
@@ -331,10 +331,10 @@ stable_isotope <- read_xlsx(path = paste0(getwd(), "/data/Isotope/Mikroplastik_R
 ```
 
 
-#### Quality assurance: Histogram distribution of Peak values before data normalization
+#### Quality assurance: Histogram distribution of *Peak values* before data normalization
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS - Peak Area
-ggplot(data = combined_df1 %>% filter(type == "Sample")) +
+ggplot(data = atdgcms_step1.1  %>% filter(type == "Sample")) +
   geom_histogram(aes(y= Area)) +
   facet_wrap(~File) +
   theme_minimal(base_size = 20) +
@@ -343,7 +343,7 @@ ggplot(data = combined_df1 %>% filter(type == "Sample")) +
 
 
 # HPLCQTOFMS - Peak Height
-ggplot(data = combined_df2 %>% filter(type == "Sample")) +
+ggplot(data = all_hplc %>% filter(type == "Sample")) +
   geom_histogram(aes(y= Height)) +
   facet_wrap(~File) +
   theme_minimal(base_size = 20) +
@@ -351,11 +351,10 @@ ggplot(data = combined_df2 %>% filter(type == "Sample")) +
         axis.text.x = element_text(angle = 90, vjust = 0.5))
 ```
 
-
-#### Quality assurance: Histogram distribution of retention time before data normalization
+#### Quality assurance: Histogram distribution of *retention time* before data normalization
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
-ggplot(data = combined_df1 %>% filter(type == "Sample")) +
+ggplot(data = atdgcms_step1.1  %>% filter(type == "Sample")) +
   geom_histogram(aes(x= RT)) +
   facet_wrap(~File) +
   theme_minimal(base_size = 20) +
@@ -363,8 +362,18 @@ ggplot(data = combined_df1 %>% filter(type == "Sample")) +
 
 
 # HPLCQTOFMS
-ggplot(data = combined_df2 %>% filter(type == "Sample")) +
+ggplot(data = all_hplc %>% filter(type == "Sample")) +
   geom_histogram(aes(x= RT)) +
+  facet_wrap(~File) +
+  theme_minimal(base_size = 20) +
+  theme(strip.text = element_blank())
+```
+
+#### Quality assurance: Histogram distribution of *m/z* before data normalization
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+ggplot(data = atdgcms_step1.1  %>% filter(type == "Sample")) +
+  geom_histogram(aes(x= m.z)) +
   facet_wrap(~File) +
   theme_minimal(base_size = 20) +
   theme(strip.text = element_blank())
@@ -373,7 +382,7 @@ ggplot(data = combined_df2 %>% filter(type == "Sample")) +
 ### Quality assurance for STEP 1.3B: Examine variation in RT of 4 benchmark compounds in HPLC across all samples with histogram distribution of RT of 4 benchmark compounds 
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# ATDGCMS data
+# ATDGCMS data ------------------
 # Use excel sheets of Toluene-d8 benchmark to create scatterplot 
 bm_df_gcms <- atdgcms_step1.1 %>% filter(m.z >= 98 & m.z <= 98.5 & RT < 13.6)
 
@@ -382,20 +391,7 @@ hist(bm_df_gcms$RT,
        xlab = "RT", ylab ="", cex.axis = 2, cex.lab = 2, cex.main = 2,
        main = "Toluene-D8")
 
-# HPLC data
-# Use excel sheets of benchmark day "0, 2, 15, 34" from Final Leachates Benchmarks and Recovery.xlsx to create scatterplot dataframe
-# bm_sheets <- readxl::excel_sheets(path = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/HPLCTOFMS/Final Leachates Benchmarks and Recovery.xlsx")
-# 
-# bm_df_hplc_list <- list()
-# for (i in 1:length(bm_sheets)) {
-#   x <- readxl::read_xlsx("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/data/Final Leachates Benchmarks and Recovery.xlsx", sheet = bm_sheets[i]) %>% 
-#     select(c("Acetaminophen-d4 (m/z 156.0957)", "dTEP (m/z 198.1723)", "dTPrP (m/z 246.2568)",
-#              "13C-6PPD (m/z 305.1956)", "dTPP (m/z 342.1722)"))
-#   bm_df_hplc_list[[i]] <- x[-1,] %>% pivot_longer(cols = 1:ncol(x), names_to = "Benchmark", values_to = "RT")
-# }
-# 
-# bm_df_hplc <- bind_rows(bm_df_hplc_list)
-
+# HPLC data ----------------------
 # Find all peaks in our data that match m/z of benchmark compounds
 par(mfrow = c(3, 2))
 bm_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
@@ -483,7 +479,7 @@ for (row in 1:nrow(combi)) {
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
 atdgcms_grouped <- grouping_comp(atdgcms_step1.1,
-                                 rtthres1 = 0.05,
+                                 rtthres1 = 0.005,
                                  mzthres = 0.05,
                                  type = "ATDGCMS")
 
@@ -1364,12 +1360,19 @@ bayesian_pca_imputation <- function(df){
 ## 1.3 Mean Imputation
 mean_imputation <- function(df){
   df_numeric <- df
+  # Replace NA with mean of each column (aka mean across all samples of a feature)
   for(i in seq_along(df_numeric)){
     col_data <- df_numeric[[i]]
-    # Replace NA with mean
     col_data[is.na(col_data)] <- mean(col_data, na.rm = TRUE)
     df_numeric[[i]] <- col_data
   }
+  ## (UPDATE 31 Aug 2025): I tried replace the NA with mean of each row/samples, but that does not change the best imp-norm combo => result can be found in: run_rf_analysis_list_SB_and_ENV_train_test_new_mean_median_imp
+  # Replace NA with mean of each row, aka. samples (aka mean across each samples) -> this option introduced NAs because there are samples that have all NAs for all features (for ex, Balloons)
+  # for(i in seq_len(nrow(df_numeric))) {
+  #   row_data <- as.numeric(df_numeric[i,])
+  #   row_data[is.na(row_data)] <- mean(row_data, na.rm = TRUE)
+  #   df_numeric[i,] <- as.list(row_data)
+  # }
   return(df_numeric)
 }
 
@@ -1437,11 +1440,19 @@ half_min_imputation <- function(df){
 ## 1.8 Fill with median
 median_imputation <- function(df){
   df_imputed <- df
+  # Replace NA with median of each column (aka median across all samples of a feature)
   for(i in seq_along(df_imputed)){
     col_data <- df_imputed[[i]]
     col_data[is.na(col_data)] <- median(col_data, na.rm = TRUE)
     df_imputed[[i]] <- col_data
   }
+  ## (UPDATE 31 Aug 2025): I tried replace the NA with median of each row/samples, but that does not change the best imp-norm combo => result can be found in: run_rf_analysis_list_SB_and_ENV_train_test_new_mean_median_imp
+  ## Replace NA with median of each row, aka. samples (aka median across each samples) -> this option introduced NAs because there are samples that have all NAs for all features (for ex, Balloons)
+  # for(i in seq_len(nrow(df_numeric))) {
+  #   row_data <- as.numeric(df_numeric[i,])
+  #   row_data[is.na(row_data)] <- median(row_data, na.rm = TRUE)
+  #   df_numeric[i,] <- as.list(row_data)
+  # }
   return(df_imputed)
 }
 
@@ -1449,7 +1460,6 @@ median_imputation <- function(df){
 no_imputation <- function(x) {
   return(x)
 }
-
 
 ###############################
 ##   2. Normalization        ##
@@ -1801,8 +1811,8 @@ imputation_methods <- list(
 
 normalization_methods <- list(
   TSN_Normalization    = TSN_normalize_features,
-  # Min_Max_Scaler       = scale_minmax,
-  # Z_Score_Normalization= z_score_normalization,
+  Min_Max_Scaler       = scale_minmax,
+  Z_Score_Normalization= z_score_normalization,
   # Log10_Normalization  = log_normalize_rows,
   No_normalization     = no_normalization
 )
@@ -2195,8 +2205,9 @@ round(avg_abs_cor,3)
 round(fro_cov_off,3)
 ```
 
-## Figure 3: Feature selection - MCC score - 7 data combinations
+## Figure 3: Bar plot Comparing Feature selection - MCC score - 7 data combinations
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
+for (names in )
 feature_selection <- read_xlsx(path = "Computational fingerprinting paper_SI tables_10July2025.xlsx", skip = 1) %>% 
   mutate(Dataset = factor(Dataset, levels = c("GC", "HPLC", "ICP", "GC-ICP", "GC-HPLC", "HPLC-ICP", "GC-HPLC-ICP")))
 
@@ -2216,7 +2227,7 @@ ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combin
        units = "in")
 ```
 
-## Figure 4: Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
+## Figure SI: Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
 
 (UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
 
@@ -3224,13 +3235,13 @@ run_rf_analysis_manuscript1 <- function(data,
     environmental_set <- data[data$Source == "Environmental", ]
     
     # Setup k-fold
-    set.seed(123)
-    min_class_count_ENV <- min(table(as.character(environmental_set[[type_col]])))
-    min_class_count_SB <- min(table(as.character(environmental_set[[type_col]])))
-    K <- ifelse(min(min_class_count_ENV, min_class_count_SB) > 2, min_class_count_ENV, 2)
-    # stratified folds on the full target vector
-    K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
-    K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
+    # set.seed(123)
+    # min_class_count_ENV <- min(table(as.character(environmental_set[[type_col]])))
+    # min_class_count_SB <- min(table(as.character(environmental_set[[type_col]])))
+    # K <- ifelse(min(min_class_count_ENV, min_class_count_SB) > 2, min_class_count_ENV, 2)
+    # # stratified folds on the full target vector
+    # K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
+    # K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
     
   } else if(use_source_split){
     cat("\n### Using Source-based Splitting with Environmental 50:50 Split ###\n")
@@ -3239,13 +3250,15 @@ run_rf_analysis_manuscript1 <- function(data,
     environmental_set <- data[data$Source == "Environmental", ]
     
     # Setup k-fold
-    set.seed(123)
-    min_class_count_ENV <- min(table(as.character(environmental_set[[type_col]])))
-    min_class_count_SB <- min(table(as.character(environmental_set[[type_col]])))
-    K <- ifelse(min(min_class_count_ENV, min_class_count_SB) > 2, min_class_count_ENV, 2)
+    # set.seed(123)
+    # min_class_count_ENV <- min(table(as.character(environmental_set[[type_col]])))
+    # min_class_count_SB <- min(table(as.character(environmental_set[[type_col]])))
+    # K <- ifelse(min(min_class_count_ENV, min_class_count_SB) > 2, min_class_count_ENV, 2)
     # stratified folds on the full target vector
-    K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
-    K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
+    # K_folds_SB <- createFolds(store_bought_set[[type_col]], k = K, returnTrain = TRUE)
+    # K_folds_ENV <- createFolds(environmental_set[[type_col]], k = K, returnTrain = TRUE)
+    train_ENV_index <- caret::createDataPartition(environmental_set[[type_col]], p = 0.66, list = FALSE)
+    
   } else {
     y <- data[[type_col]]
     set.seed(123)
@@ -3264,18 +3277,20 @@ run_rf_analysis_manuscript1 <- function(data,
   
   # for(f in 1:K) {
     if(use_store_vs_environmental_split){
-      train_idx <- K_folds_SB[[f]]
-      test_idx  <- K_folds_ENV[[f]]
+      # train_idx <- K_folds_SB[[f]]
+      # test_idx  <- K_folds_ENV[[f]]
       
-      train_data <- store_bought_set[train_idx, ]
-      test_data  <- environmental_set[test_idx, ]
+      train_data <- store_bought_set #[train_idx, ]
+      test_data  <- environmental_set #[test_idx, ]
     } else if(use_source_split){
-      train_idx_SB <- K_folds_SB[[f]]
-      train_idx_ENV  <- K_folds_ENV[[f]]
-      test_idx_ENV  <- setdiff(seq_len(nrow(environmental_set)), K_folds_ENV[[f]])
-      
-      train_data <- rbind(store_bought_set[train_idx_SB, ], environmental_set[train_idx_ENV, ])
-      test_data  <- environmental_set[test_idx_ENV, ]
+      # train_idx_SB <- K_folds_SB[[f]]
+      # train_idx_ENV  <- K_folds_ENV[[f]]
+      # test_idx_ENV  <- setdiff(seq_len(nrow(environmental_set)), K_folds_ENV[[f]])
+      # 
+      # train_data <- rbind(store_bought_set[train_idx_SB, ], environmental_set[train_idx_ENV, ])
+      # test_data  <- environmental_set[test_idx_ENV, ]
+      train_data <- rbind(store_bought_set, environmental_set[train_ENV_index, ])
+      test_data <- environmental_set[-train_ENV_index, ]
     } else {
       # train_idx <- K_folds[[f]]
       # test_idx  <- setdiff(seq_len(nrow(data)), K_folds[[f]])
@@ -3619,7 +3634,9 @@ for(i in seq_along(data_combinations)) {
     do_pairwise_test = TRUE,             # Adjust parameters as needed
     do_top_importance_selection = TRUE,
     do_rfe = FALSE,
-    do_impute_norm_screen = FALSE,
+    do_rfa = TRUE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
   
