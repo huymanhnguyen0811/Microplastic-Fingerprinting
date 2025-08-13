@@ -383,28 +383,71 @@ ggplot(data = atdgcms_step1.1  %>% filter(type == "Sample")) +
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS data ------------------
-# Use excel sheets of Toluene-d8 benchmark to create scatterplot 
-bm_df_gcms <- atdgcms_step1.1 %>% filter(m.z >= 98 & m.z <= 98.5 & RT < 13.6)
+# Filter data
+bm_df_gcms <- atdgcms_step1.1 %>%
+  filter(m.z >= 98, m.z <= 98.5, RT < 13.6) %>%
+  mutate(RT = as.numeric(RT))
 
-# Plot histogram of RT distribution
-hist(bm_df_gcms$RT, 
-       xlab = "RT", ylab ="", cex.axis = 2, cex.lab = 2, cex.main = 2,
-       main = "Toluene-D8")
+# Plot in ggplot2 style to match your multi-panel code
+p <- ggplot(bm_df_gcms, aes(x = RT)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Toluene-D8",
+       x = "Retention time (seconds)",
+       y = "Count") +
+  theme_bw(base_size = 25) +
+  theme(
+    plot.margin = ggplot2::margin(t = 5, r = 40, b = 5, l = 10),  # more right padding
+    plot.title  = element_text(hjust = 0.5)                       # center title
+  )
+p
+# Save at 600 DPI, 20x10 inches (same output size as your PNG device)
+ggsave(
+  filename = sprintf("Figure S1_Histogram ATDGCMS benchmark Toluene D8_%s.png",
+                     format(Sys.time(), "%Y-%m-%d")),
+  plot = p,
+  device = "png",
+  dpi = 600,
+  width = 20,
+  height = 10,
+  units = "in"
+)
 
 # HPLC data ----------------------
-# Find all peaks in our data that match m/z of benchmark compounds
-par(mfrow = c(3, 2))
-bm_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+bm_mz   <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
 bm_name <- c("Acetaminophen-d4 (m/z 156.0957)", "dTEP (m/z 198.1723)", "dTPrP (m/z 246.2568)",
              "13C-6PPD (m/z 305.1956)", "dTPP (m/z 342.1722)")
-for (i in 1:length(bm_mz)) {
-  df <- hplc_batch2_step1.1 %>% # hplc_batch2_step1.1, hplc_batch1_step1.1; hplc_batch0_step1.1
-    filter(m.z >= (bm_mz[i] - 0.0005) &
-             m.z <= (bm_mz[i] + 0.0005))
-  hist(as.numeric(df$RT), 
-       xlab = "RT", ylab ="Count",
-       main = bm_name[i])
-}
+
+tol <- 0.0005
+
+# Build one long data frame with a facet label per target
+panel_df <- map2_dfr(bm_mz, bm_name, ~
+  hplc_batch2_step1.1 %>%
+    filter(m.z >= (.x - tol), m.z <= (.x + tol)) %>%
+    transmute(RT = as.numeric(RT), panel = .y)
+) %>% 
+  dplyr::filter(!is.na(RT))
+
+p <- ggplot(panel_df, aes(x = RT)) +
+  geom_histogram(bins = 100) +
+  facet_wrap(~ panel, ncol = 2, scales = "free") +     # free x AND y per facet
+  scale_x_continuous(expand = expansion(mult = 0)) +   # no x padding: tight to min/max
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +  # tiny headroom on y
+  labs(x = "Retention time (seconds)", y = "Count") +
+  theme_bw(base_size = 25) +
+  theme(
+    plot.margin = ggplot2::margin(t = 5, r = 5, b = 5, l = 20)  # extra left padding
+  )
+
+p
+
+ggsave(filename = sprintf("Figure S2_Histogram HPLCTOFMS benchmarks_%s.png",
+                     format(Sys.time(), "%Y-%m-%d")), 
+       plot = p, 
+       device = "png",
+       dpi = 600,        # Set DPI to 600
+       width = 20,       # Width in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
+       units = "in")
 ```
 
 ### Quality assurance for STEP 1.3B compound alignment - HPLC data
@@ -672,8 +715,6 @@ ggsave(filename = paste0("Number of compound remain & Percentage coverage", form
 ```
 
 
-
-
 ## STEP 3: Further data cleaning and removing feature only appear in 1 sample
 
 (Update 20 Feb 2024:)  Add column to distinguish which sample is from GC or HPLC or ICP-MS datasetss.
@@ -911,7 +952,7 @@ gc_hplc_icp <- bind_rows(icp,
 
 ## Data cleaning
 
-### Feature filtering: Regular 80% rule - Keep feature columns where there are more than 80% non-MVs
+### Feature filtering 1: Regular 80% rule - Keep feature columns where there are more than 80% non-MVs
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 df <- gc_hplc_icp %>% 
@@ -936,7 +977,7 @@ print(paste0("Number of chemical features before Regular 80% rule filtering: ", 
 print(paste0("Missing values before Regular 80% rule filtering (%) ", sum(is.na(regular_80_rule))/(dim(regular_80_rule)[1]*(dim(regular_80_rule)[2]-3))))
 ```
 
-### Feature filtering: Modified 80% rule
+### Feature filtering 2: Modified 80% rule
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # Assuming your dataframe is called `df`, and the class column is named `Class`
 # Define a function to filter features based on non-missing values within each class
@@ -1068,7 +1109,7 @@ if (high_corr) {
 }
 ```
 
-### Comprehensive_filtering 
+### Feature fitlering 3: In-house Comprehensive feature filtering 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 comprehensive_filtering <- function(input_df) {
   #-----------------------------#
@@ -2097,7 +2138,7 @@ run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$imp_norm_res_
 #        dplyr::select(all_of(select_feats)) %>%
 #        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$final_imp_norm_dat %>%
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_icp_SB_and_ENV_train$final_imp_norm_dat %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
@@ -2122,8 +2163,8 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         repel = TRUE,
                                         labelsize = 10,
                                         habillage = factor(df$Plastic_type_Source),
-                                        addEllipses = TRUE,
-                                        ellipse.level=0.95,
+                                        # addEllipses = TRUE,
+                                        # ellipse.level=0.95,
                                         ggtheme = ggplot2::theme_minimal(base_size = 20),
                                         title = "",
                                         # xlim = c(-0.7, 0.7),
@@ -2140,13 +2181,13 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
         )
 pca_plot
 
-ggsave(filename = paste0("Figure Sx_StableIsotopeData_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
+ggsave(filename = paste0("Figure S3_GC-HPLC-ICP_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
        plot = pca_plot, 
        device = "tiff",
        compression = "lzw",
-       dpi = 300,        # Set DPI to 600
+       dpi = 600,        # Set DPI to 600
        width = 25,       # Width in inches (adjust as needed)
-       height = 10,       # Height in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
        units = "in")
 ```
 
@@ -2243,7 +2284,29 @@ ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combin
        units = "in")
 ```
 
-## Figure SI: Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
+## Figure 4: Confusion matrices of training and testing on environmental plastics versus. training on store-bought plastics and testing on environmental plastics - 7 data combinations
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sb_train_only <- run_rf_analysis_list_SB_train$gc_USSB_train$conf_mat_sig
+sb_and_env_train <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$conf_mat_rfa
+
+ggsave(filename = paste0("Figure 4_confusion matrix_SB train only_", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+       plot = sb_train_only, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+
+ggsave(filename = paste0("Figure 4_confusion matrix_SB and ENV train", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+       plot = sb_and_env_train, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+```
+
+## Figure SI (For Roxana's paper): Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
 
 (UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
 
