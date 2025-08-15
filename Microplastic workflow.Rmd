@@ -2138,7 +2138,7 @@ run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$imp_norm_res_
 #        dplyr::select(all_of(select_feats)) %>%
 #        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_icp_SB_and_ENV_train$final_imp_norm_dat %>%
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$final_imp_norm_dat %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
@@ -2154,6 +2154,7 @@ res.pca <- FactoMineR::PCA(ncp =10,
 # Scree plot
 fviz_screeplot(res.pca)
 
+# 1) Define a bold, color-blind–safe 9-color palette (Okabe–Ito + gray)
 # Biplot
 pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         axes = c(1,2), # PC1 and PC2
@@ -2161,16 +2162,15 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         label = "none",
                                         invisible = "var",
                                         repel = TRUE,
-                                        labelsize = 10,
+                                        pointsize = 5,
                                         habillage = factor(df$Plastic_type_Source),
                                         # addEllipses = TRUE,
                                         # ellipse.level=0.95,
-                                        ggtheme = ggplot2::theme_minimal(base_size = 20),
+                                        ggtheme = ggplot2::theme_minimal(base_size =27),
                                         title = "",
                                         # xlim = c(-0.7, 0.7),
                                         # ylim = c(-0.5, 0.85)
                                         ) +
-  # guides(fill=guide_legend(ncol=4)) + # Specify the number of column of legend text labels
   # if has error "Too few points to calculate an ellipse"
   # ggforce::geom_mark_ellipse(aes(fill = Groups,
                                  # color = Groups),
@@ -2178,20 +2178,20 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
   theme(legend.position = 'bottom',
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
-        )
+        ) 
 pca_plot
 
-ggsave(filename = paste0("Figure S3_GC-HPLC-ICP_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
+ggsave(filename = paste0("Figure S4_ICP_Plastic_type_Source", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
        plot = pca_plot, 
        device = "tiff",
        compression = "lzw",
-       dpi = 600,        # Set DPI to 600
-       width = 25,       # Width in inches (adjust as needed)
-       height = 8,       # Height in inches (adjust as needed)
+       dpi = 300,        # Set DPI to 600
+       width = 35,       # Width in inches (adjust as needed)
+       height = 15,       # Height in inches (adjust as needed)
        units = "in")
 ```
 
-## Table 3: Correlation and covariance magnitude of features across 7 data combinations
+## Table S6: Correlation and covariance magnitude of features across 7 data combinations
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 ## Before imp_norm   ===============================================
 numeric_df <- gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean %>% 
@@ -2244,6 +2244,23 @@ fro_cov_off <- sqrt( sum(cov_off^2) )
 
 round(avg_abs_cor,3)
 round(fro_cov_off,3)
+```
+
+## Table S8. Significant compounds identified via pair-wise tests between plastic categories across seven data combinations
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+list_pairwise_df <- list()
+for (i in 1:length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)) {
+  pw <- pairwise_significance_tests(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[i]]$final_imp_norm_dat, 
+                                    group_col = "Plastic_type", start_col_index = 6)
+  list_pairwise_df[[i]] <- pw$uncorrected %>%
+    mutate(adjusted_p = p.adjust(pval, method = "bonferroni")) %>%
+    filter(adjusted_p < 0.05) %>%
+    arrange(adjusted_p) %>%
+    dplyr::mutate(Datasets = names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i])
+}
+
+pw_df <- bind_rows(list_pairwise_df)
+write_xlsx(pw_df, path = "Table S8_Significant compounds identified via pair-wise tests between plastic categories.xlsx")
 ```
 
 ## Figure 3: Bar plot Comparing Feature selection - MCC score - 7 data combinations
