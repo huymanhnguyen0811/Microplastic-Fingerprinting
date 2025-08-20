@@ -2138,18 +2138,18 @@ run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$imp_norm_res_
 #        dplyr::select(all_of(select_feats)) %>%
 #        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$final_imp_norm_dat %>%
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$final_imp_norm_dat %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
 
 # Must have more than 3 samples per plastic type
-df  <- df [!(df $Plastic_type %in% names(table(df $Plastic_type)[table(df $Plastic_type) < 3])),]
+# df  <- df [!(df $Plastic_type %in% names(table(df $Plastic_type)[table(df $Plastic_type) < 3])),]
 
 res.pca <- FactoMineR::PCA(ncp =10,
-  df %>% dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique", "Plastic_type_Source")),
-  scale.unit = FALSE,
-  graph = FALSE)
+                           df %>% dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique", "Plastic_type_Source")),
+                           scale.unit = FALSE,
+                           graph = FALSE)
 
 # Scree plot
 fviz_screeplot(res.pca)
@@ -2168,26 +2168,28 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         # ellipse.level=0.95,
                                         ggtheme = ggplot2::theme_minimal(base_size =27),
                                         title = "",
-                                        # xlim = c(-0.7, 0.7),
-                                        # ylim = c(-0.5, 0.85)
+                                        # xlab = "PC 1 (56.2%)",
+                                        # ylab = "PC 2 (14.6%)",
+                                        xlim = c(-0.5, 0.8),
+                                        ylim = c(-0.6, 0.45)
                                         ) +
   # if has error "Too few points to calculate an ellipse"
-  # ggforce::geom_mark_ellipse(aes(fill = Groups,
-                                 # color = Groups),
-                             # label.buffer = unit(40, 'mm')) +
+  ggforce::geom_mark_ellipse(aes(fill = Groups,
+                                 color = Groups),
+                             label.buffer = unit(40, 'mm')) +
   theme(legend.position = 'bottom',
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
         ) 
 pca_plot
 
-ggsave(filename = paste0("Figure S4_ICP_Plastic_type_Source", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
+ggsave(filename = paste0("Figure 2_GC_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
        plot = pca_plot, 
        device = "tiff",
        compression = "lzw",
-       dpi = 300,        # Set DPI to 600
-       width = 35,       # Width in inches (adjust as needed)
-       height = 15,       # Height in inches (adjust as needed)
+       dpi = 600,        # Set DPI to 600
+       width = 28,       # Width in inches (adjust as needed)
+       height = 12,       # Height in inches (adjust as needed)
        units = "in")
 ```
 
@@ -2454,6 +2456,331 @@ grid.text(
 )
 circos.clear()
 dev.off()
+```
+
+## Post-hoc Pearson GC-HPLC-ICP data
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+X_RFA <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$rfa_selected_feats)
+
+X_pairwise <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$sig_selected_feats)
+
+# y <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat$Plastic_type
+# 
+# library(FSelectorRcpp)
+# df1 <- data.frame(y = y, X_pairwise)
+# df2 <- data.frame(y = y, X_rfa)
+# 
+# ig1 <- information_gain(y ~ ., df1); ig2 <- information_gain(y ~ ., df2)
+# 
+# S1 <- cor(df1[-1], use="pairwise.complete.obs"); S2 <- cor(df2[-1], use="pairwise.complete.obs")
+# red1 <- rowMeans(abs(S1), na.rm=TRUE); red2 <- rowMeans(abs(S2), na.rm=TRUE)
+# 
+# mrmr1 <- ig1$importance - red1[ig1$attributes]
+# mrmr2 <- ig2$importance - red2[ig2$attributes]
+# summary(mrmr1); summary(mrmr2)
+# 
+# 
+# one_vs_rest_mi <- function(y, X){
+#   levs <- levels(y)
+#   res <- sapply(levs, function(cls){
+#     ybin <- factor(ifelse(y==cls, cls, "other"))
+#     information_gain(ybin ~ ., data.frame(ybin, X))$importance
+#   })
+#   rowMeans(res, na.rm=TRUE)           # avg MI across classes per feature
+# }
+# pc_pairwise <- one_vs_rest_mi(y, X_pairwise)
+# pc_rfa      <- one_vs_rest_mi(y, X_rfa)
+# summary(pc_pairwise); summary(pc_rfa)
+
+
+# ============================
+# Redundancy Diagnostics (R)
+# ============================
+
+# Packages
+suppressPackageStartupMessages({
+  require(igraph)   # graph metrics
+  require(Matrix)   # nearPD (for stabilizing correlation matrices)
+})
+
+# -- helpers -------------------------------------------------------------
+
+# Keep only numeric columns, drop zero-variance columns, and return as matrix
+.prepare_numeric_matrix <- function(X) {
+  Xnum <- X[, vapply(X, is.numeric, logical(1L)), drop = FALSE]
+  if (ncol(Xnum) == 0L) stop("No numeric columns in 'X'.")
+  # drop zero-variance columns (computed with pairwise NAs removed)
+  nzv <- vapply(Xnum, function(col) {
+    v <- var(col, na.rm = TRUE)
+    is.finite(v) && v > 0
+  }, logical(1L))
+  Xnum <- Xnum[, nzv, drop = FALSE]
+  if (ncol(Xnum) == 0L) stop("All numeric columns have zero variance.")
+  as.matrix(Xnum)
+}
+
+# Safe correlation matrix (pairwise) with optional method
+.safe_cor <- function(Xmat, method = c("pearson","spearman")) {
+  method <- match.arg(method)
+  S <- suppressWarnings(cor(Xmat, use = "pairwise.complete.obs", method = method))
+  # ensure symmetry and unit diagonal (occasionally numeric drift)
+  S <- (S + t(S)) / 2
+  diag(S) <- 1
+  S
+}
+
+# Extract absolute upper-triangle values
+.upper_abs <- function(S) {
+  abs(S[upper.tri(S, diag = FALSE)])
+}
+
+# Effective dimensionality from eigenvalues of correlation matrix
+.effective_dim <- function(S) {
+  e <- eigen(S, symmetric = TRUE, only.values = TRUE)$values
+  # Guard against tiny negative eigenvalues from numeric issues
+  e <- pmax(e, 0)
+  # probabilities
+  pe <- e / sum(e)
+  # add small epsilon in log to avoid log(0)
+  eps <- 1e-12
+  erank <- exp(-sum(pe * log(pe + eps)))
+  ENF   <- (sum(e)^2) / sum(e^2)  # for a correlation matrix sum(e)=p
+  list(erank = as.numeric(erank),
+       ENF   = as.numeric(ENF),
+       eigenvalues = e)
+}
+
+# Make a correlation matrix "near" SPD if solve() fails
+.make_spd_corr <- function(S) {
+  # nearPD with corr=TRUE projects to nearest correlation matrix (unit diag)
+  as.matrix(nearPD(S, corr = TRUE)$mat)
+}
+
+# VIF from correlation matrix: VIF_j = (R^{-1})_{jj}
+.vif_from_corr <- function(S) {
+  S <- (S + t(S)) / 2
+  diag(S) <- 1
+  inv_ok <- try(solve(S), silent = TRUE)
+  if (inherits(inv_ok, "try-error")) {
+    # Stabilize via nearest SPD correlation
+    S_spd <- .make_spd_corr(S)
+    inv_ok <- try(solve(S_spd), silent = TRUE)
+    if (inherits(inv_ok, "try-error")) {
+      # last-ditch ridge, then renormalize to correlation
+      p <- ncol(S)
+      S_ridge <- cov2cor(S + diag(1e-4, p))
+      inv_ok  <- solve(S_ridge)
+    }
+  }
+  diag(inv_ok)
+}
+
+# Graph metrics at one threshold tau (|r| >= tau)
+.graph_metrics_once <- function(S, tau) {
+  p <- ncol(S)
+  A <- (abs(S) >= tau) * 1
+  diag(A) <- 0L
+  g <- graph_from_adjacency_matrix(A, mode = "undirected", diag = FALSE)
+  dens  <- edge_density(g, loops = FALSE)
+  deg   <- degree(g)
+  avg_d <- if (length(deg)) mean(deg) else 0
+  nE    <- gsize(g)
+  nC    <- components(g)$no
+  # Number of maximal cliques and largest clique size
+  n_max_cliques <- count_max_cliques(g)
+  max_clique_sz <- clique_num(g)
+  trans         <- transitivity(g, type = "global") # clustering coefficient
+  data.frame(
+    tau = tau,
+    p = p,
+    edges = nE,
+    density = as.numeric(dens),
+    avg_degree = as.numeric(avg_d),
+    n_components = as.integer(nC),
+    n_max_cliques = as.integer(n_max_cliques),
+    largest_clique = as.integer(max_clique_sz),
+    transitivity = as.numeric(ifelse(is.na(trans), 0, trans))
+  )
+}
+
+# -- main function -------------------------------------------------------
+
+#' Redundancy diagnostics for a numeric matrix/data frame
+#'
+#' @param X data.frame or matrix of features (numeric columns will be used)
+#' @param method "pearson" (default) or "spearman" for correlation
+#' @param tau_grid vector of thresholds for |r| to build graphs (default c(.6,.7,.8,.9))
+#' @return a list with: cor_summary, graph_metrics, effective_dim, VIF
+redundancy_diagnostics <- function(X, method = c("pearson","spearman"),
+                                   tau_grid = c(0.6, 0.7, 0.8, 0.9)) {
+  method <- match.arg(method)
+  Xmat   <- .prepare_numeric_matrix(X)
+  S      <- .safe_cor(Xmat, method = method)
+  p      <- ncol(S)
+
+  up_abs <- .upper_abs(S)
+  MAC    <- mean(up_abs, na.rm = TRUE)
+  q90    <- as.numeric(quantile(up_abs, 0.90, na.rm = TRUE))
+  q95    <- as.numeric(quantile(up_abs, 0.95, na.rm = TRUE))
+  maxabs <- max(up_abs, na.rm = TRUE)
+
+  cor_summary <- list(
+    p = p,
+    MAC = MAC,
+    q90_abs_r = q90,
+    q95_abs_r = q95,
+    max_abs_r = maxabs
+  )
+
+  # Graph metrics over thresholds
+  graph_metrics <- do.call(rbind, lapply(tau_grid, function(tau) .graph_metrics_once(S, tau)))
+
+  # Effective dimensionality
+  eff <- .effective_dim(S)
+
+  # VIFs
+  vif_vals <- .vif_from_corr(S)
+  names(vif_vals) <- colnames(S)
+  vif_summary <- list(
+    mean  = mean(vif_vals, na.rm = TRUE),
+    median= median(vif_vals, na.rm = TRUE),
+    p90   = as.numeric(quantile(vif_vals, 0.90, na.rm = TRUE)),
+    max   = max(vif_vals, na.rm = TRUE),
+    VIF   = vif_vals
+  )
+
+  list(
+    cor_summary   = cor_summary,
+    graph_metrics = graph_metrics,
+    effective_dim = eff,
+    VIF_summary   = vif_summary,
+    corr_matrix   = S # included for optional downstream inspection
+  )
+}
+
+# -- convenience: compare two feature sets side-by-side ------------------
+
+#' Compare two feature matrices using the diagnostics above
+#' @param X1, X2 numeric data frames/matrices (possibly different columns)
+#' @param names character vector of length 2 for labeling
+compare_redundancy <- function(X1, X2, names = c("Set1","Set2"),
+                               method = "pearson",
+                               tau_grid = c(0.6,0.7,0.8,0.9)) {
+  if (length(names) != 2L) stop("'names' must be length 2.")
+  
+  d1 <- redundancy_diagnostics(X1, method = method, tau_grid = tau_grid)
+  d2 <- redundancy_diagnostics(X2, method = method, tau_grid = tau_grid)
+
+  sum_tbl <- data.frame(
+    set = names,
+    p   = c(d1$cor_summary$p, d2$cor_summary$p),
+    MAC = c(d1$cor_summary$MAC, d2$cor_summary$MAC),
+    q90 = c(d1$cor_summary$q90_abs_r, d2$cor_summary$q90_abs_r),
+    q95 = c(d1$cor_summary$q95_abs_r, d2$cor_summary$q95_abs_r),
+    max_abs_r = c(d1$cor_summary$max_abs_r, d2$cor_summary$max_abs_r),
+    ERANK = c(d1$effective_dim$erank, d2$effective_dim$erank),
+    ENF   = c(d1$effective_dim$ENF,   d2$effective_dim$ENF),
+    VIF_mean   = c(d1$VIF_summary$mean,  d2$VIF_summary$mean),
+    VIF_median = c(d1$VIF_summary$median,d2$VIF_summary$median),
+    VIF_p90    = c(d1$VIF_summary$p90,   d2$VIF_summary$p90),
+    VIF_max    = c(d1$VIF_summary$max,   d2$VIF_summary$max),
+    row.names = NULL
+  )
+
+  gm1 <- transform(d1$graph_metrics, set = names[1])
+  gm2 <- transform(d2$graph_metrics, set = names[2])
+  gm  <- rbind(gm1, gm2)
+
+  details <- setNames(list(d1, d2), names)
+
+  list(
+    summary_table = sum_tbl,
+    graph_metrics = gm,
+    details       = details
+  )
+}
+
+
+# ============================
+# Example usage
+# ============================
+# Suppose:
+#  - X_pairwise: data.frame/matrix of the features selected by your pairwise test
+#  - X_RFA     : data.frame/matrix of the features selected by RFA
+#
+# Run diagnostics for one set:
+diag_pairwise <- redundancy_diagnostics(X_pairwise, method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
+diag_RFA      <- redundancy_diagnostics(X_RFA,      method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
+#
+# Compare sets side-by-side:
+cmp <- compare_redundancy(X_pairwise, X_RFA, names = c("Pairwise","RFA"))
+cmp$summary_table          # quick numeric comparison
+cmp$graph_metrics          # per-threshold graph stats (density, avg_degree, cliques, etc.)
+#
+# Inspect VIFs (features with high multicollinearity):
+sort(diag_pairwise$VIF_summary$VIF, decreasing = TRUE)[1:15]
+sort(diag_RFA$VIF_summary$VIF,      decreasing = TRUE)[1:15]
+#
+# Effective dimensionality:
+diag_pairwise$effective_dim$erank
+diag_pairwise$effective_dim$ENF
+
+```
+# Figure S#: m/z and RT of HPLC data before and after RFA feature selection
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+all_feats_rt_mz <- hplc %>% 
+  dplyr::filter(Feature %in% colnames(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat[, 6:ncol(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat)])) %>%
+  dplyr::group_by(Feature) %>%
+  dplyr::summarize(mean_RT = mean(RT),
+                   mean_mz = mean(m.z))
+
+all_feats_rt_mz_plot <- ggplot(data =all_feats_rt_mz) +
+  geom_point(aes(x= mean_RT, y = mean_mz)) +
+  scale_x_continuous(limits = c(0, 18)) +
+  scale_y_continuous(limits = c(0, 800)) +
+  labs(x = NULL,
+       y = NULL,
+       title = "All features - HPLC") +
+  theme_light(base_size = 25) +
+  theme(
+    plot.title = element_text(hjust = 0.5)  # centers the title
+  )
+all_feats_rt_mz_plot
+
+
+RFA_feats_rt_mz <- hplc %>% 
+  dplyr::filter(Feature %in% run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$rfa_selected_feats) %>%
+  dplyr::group_by(Feature) %>%
+  dplyr::summarize(mean_RT = mean(RT),
+                   mean_mz = mean(m.z))
+
+RFA_feats_rt_mz_plot <- ggplot(data =RFA_feats_rt_mz) +
+  geom_point(aes(x= mean_RT, y = mean_mz)) +
+  scale_x_continuous(limits = c(0, 18)) +
+  scale_y_continuous(limits = c(0, 800)) +
+  labs(x = NULL,
+       y = NULL,
+       title = "RFA features - HPLC") +
+  theme_light(base_size = 25) +
+  theme(
+    plot.title = element_text(hjust = 0.5)  # centers the title
+  )
+RFA_feats_rt_mz_plot
+
+y <- textGrob("Mass-to-charge", rot = 90, gp = gpar(fontsize = 20))
+x <- textGrob("Retention time (minutes)", gp = gpar(fontsize = 20))
+
+ggsave(filename = paste0("Figure S9_mz and RT of HPLC data before and after RFA feature selection_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = grid.arrange(all_feats_rt_mz_plot, 
+             RFA_feats_rt_mz_plot, 
+             bottom = x, left =y), 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
+       units = "in") 
+
+
 ```
 
 # Table 5: Cross-referencing selected features with public databases
@@ -3805,8 +4132,8 @@ data_combinations <- list(
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_and_ENV_train <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_and_ENV_train) <- c("gc_SB_and_ENV_train",
+run_rf_analysis_list_SB_and_ENV_train_02Aug2025 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025) <- c("gc_SB_and_ENV_train",
                                                   "hplc_SB_and_ENV_train",
                                                   "icp_SB_and_ENV_train",
                                                   "gc_hplc_SB_and_ENV_train",
@@ -3819,7 +4146,7 @@ for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i], 
     use_source_split = TRUE,
@@ -3834,18 +4161,18 @@ for(i in seq_along(data_combinations)) {
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
-  
-   excel_list <- list(
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_pair),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_100$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_50$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_25$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_10$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_opt),
-    as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_gbfe))
-  write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_and_ENV_train)[i], "_collection of all_feature selections_prob_matrices.xlsx"))
 }
+#    excel_list <- list(
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_pair),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_100$prob_matrix_top),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_50$prob_matrix_top),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_25$prob_matrix_top),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$top_importance_results$top_10$prob_matrix_top),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_opt),
+#     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix_gbfe))
+#   write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_and_ENV_train)[i], "_collection of all_feature selections_prob_matrices.xlsx"))
+# }
 
 ```
 #### Confusion matrix
