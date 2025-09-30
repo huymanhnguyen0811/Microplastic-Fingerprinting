@@ -258,7 +258,7 @@ hplc_batch0_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch0, read_xls, skip =
                                         purrr::map(blank_hplc_batch0, read_xls, skip = 1)) %>%
   dplyr::select(m.z = `m/z`, RT, Height, File) %>%
   mutate(File = gsub("_", "-", File),
-         type = ifelse(File %in% names(hplc_batch0), "Sample", "Blanks"),
+         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
          Day = case_when(str_detect(File, "Day0") ~ "0",
                          str_detect(File, "Day2") ~ "2",
                          str_detect(File, "Day15") ~ "15",
@@ -582,8 +582,8 @@ process_atdgcms <- function(atdgcms_grouped) {
     } else {
       # Calculate the mean and sd for blanks
       blank_idx <- which(temp$type == "Blanks")
-      blank_mean <- base::mean(temp[blank_idx, "Area"], na.rm = TRUE)
-      blank_sd   <- stats::sd(temp[blank_idx, "Area"], na.rm = TRUE)
+      blank_mean <- base::mean(temp[blank_idx,]$Area, na.rm = TRUE)
+      blank_sd   <- stats::sd(temp[blank_idx,]$Area, na.rm = TRUE)
       
       # Exclude blanks from further processing
       temp <- temp[temp$type != "Blanks", ]
@@ -591,7 +591,7 @@ process_atdgcms <- function(atdgcms_grouped) {
       # Adjust the 'Area' for each sample within the feature
       for (sample in unique(temp$File)) {
         sample_idx <- which(temp$File == sample)
-        temp[sample_idx, "Area"] <- temp[sample_idx, "Area"] - blank_mean
+        temp[sample_idx,]$Area <- temp[sample_idx,]$Area - blank_mean
         
         # Keep only those entries with adjusted Area > 0 and > 3 * blank_sd
         positive_idx <- which(temp$Area > 0 & temp$Area > 3 * blank_sd)
@@ -612,33 +612,47 @@ process_atdgcms <- function(atdgcms_grouped) {
 atdgcms_adjusted_step3 <- process_atdgcms(atdgcms_grouped)
 
 # HPLCTOFMS  --------------
-library(dplyr)
+hplc_result_list <- list()
+idx <- 1
 
-adjust_data_step3 <- function(hplc_batch_grouped) {
-  
-  hplc_batch_grouped %>%
-    group_by(Batch_number, Feature) %>%
-    # Precompute mean and sd of 'Blanks' once per group
-    mutate(
-      has_blank  = any(type == "Blanks"),
-      blank_mean = if (has_blank) mean(Height[type == "Blanks"], na.rm = TRUE) else NA_real_,
-      blank_sd   = if (has_blank) sd(Height[type == "Blanks"], na.rm = TRUE)   else NA_real_
-    ) %>%
-    ungroup() %>%
-    # Subtract blank mean from all rows if the group has blanks
-    mutate(
-      Height = if_else(has_blank, Height - blank_mean, Height)
-    ) %>%
-    # Remove the blank rows themselves
-    filter(!(type == "Blanks" & has_blank)) %>%
-    # If the group has blanks, keep only those rows with Height > 3*blank_sd
-    # Otherwise keep everything
-    filter(!has_blank | Height > (3 * blank_sd)) %>%
-    # Drop the helper columns
-    select(-blank_mean, -blank_sd, -has_blank)
+# Iterate through each batch
+for (batch in unique(hplc_batch_grouped$Batch_number)) {
+  # Iterate through each unique feature within each batch
+  for (feature in unique(hplc_batch_grouped$Feature)) {
+    temp <- hplc_batch_grouped[which(hplc_batch_grouped$Feature == feature & hplc_batch_grouped$Batch_number == batch), ]
+    
+    # If no blanks exist for the current feature, add it as is
+    if (identical(which(temp$type == "Blanks"), integer(0))) {
+      hplc_result_list[[idx]] <- temp
+      idx <- idx + 1
+      next
+    } else { # if blanks exist for the current feature in the current batch number
+      # Calculate the mean and sd for blanks
+      blank_idx <- which(temp$type == "Blanks")
+      blank_mean <- base::mean(temp[blank_idx,]$Height, na.rm = TRUE)
+      blank_sd   <- stats::sd(temp[blank_idx,]$Height, na.rm = TRUE)
+      
+      # Exclude blanks from further processing
+      temp <- temp[temp$type != "Blanks", ]
+      
+      # Adjust the 'Height' for each sample within the feature
+      for (sample in unique(temp$File)) {
+        sample_idx <- which(temp$File == sample)
+        temp[sample_idx,]$Height <- temp[sample_idx,]$Height - blank_mean
+        
+        # Keep only those entries with adjusted Height > 0 and > 3 * blank_sd
+        positive_idx <- which(temp$Height > 0 & temp$Height > (3 * blank_sd))
+        temp <- temp[positive_idx, ]
+      }
+    }
+    
+    # Append processed data frame for this feature
+    hplc_result_list[[idx]] <- temp
+    idx <- idx + 1
+  }
 }
 
-hplc_adjusted_step3 <- adjust_data_step3(hplc_batch_grouped)
+hplc_adjusted_step3 <- dplyr::bind_rows(hplc_result_list)
 ```
 
 
@@ -744,7 +758,7 @@ hplc <- hplc_adjusted_step3[idx_list_filter2[[1]],] %>%
 hplc$technique <- "HPLC"
 ```
 
-## STEP 4.1: Import Trace metal data
+## STEP 4: Trace metal data
 
 #### Data prepping
 - Problem with icpms_round1 versus. icpms_round2: round1 has Li [No gas] that round2 does not.
@@ -914,7 +928,7 @@ icp <- icp %>%
 
 ## Combine Label Info with raw data
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/Sample Labelling_all data_GC+HPLC+ICP.xlsx"
+p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx"
 
 sampinfo <- readxl::read_excel(path = p)
 
@@ -1338,19 +1352,31 @@ comprehensive_filtering <- function(input_df) {
 # gc_hplc_icp_clean <- comprehensive_filtering(gc_hplc_icp)
 
 # Find shared features between SB and ENV
-SB <- gc %>% dplyr::filter(Source == "Store-Bought")
-ENV <- gc %>% dplyr::filter(Source == "Environmental")
-
-shared_cols_SB_ENV <- Reduce(intersect, list(unique(SB$Feature), 
-                                             unique(ENV$Feature)))
-
-combined_SB_ENV_shared_cols_ntr <- rbind(SB %>% 
-                                           dplyr::filter(Feature %in% shared_cols_SB_ENV),
-                                         ENV %>% 
-                                           dplyr::filter(Feature %in% shared_cols_SB_ENV))
+shared_feature_filtering <- function(dataset) {
+  SB <- dataset %>% dplyr::filter(Source == "Store-Bought")
+  ENV <- dataset %>% dplyr::filter(Source == "Environmental")
+  
+  shared_cols_SB_ENV <- Reduce(intersect, list(unique(SB$Feature), 
+                                               unique(ENV$Feature)))
+  
+  combined_SB_ENV_shared_cols_ntr <- rbind(SB %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV),
+                                           ENV %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV))
+  output <- comprehensive_filtering(combined_SB_ENV_shared_cols_ntr)
+  return(output)
+}
 
 # Then do data cleaning - change variable name accordingly to data combinations
-gc_combined_SB_ENV_shared_cols_ntr_clean <- comprehensive_filtering(combined_SB_ENV_shared_cols_ntr)
+gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean <- shared_feature_filtering(gc_hplc_icp)
+```
+
+## Table S5. Summary of missing values present in all seven data combinations across three feature reduction approaches.
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Percentage of chemical features retained after filtering
+
+# Percentage of missing values after filtering
+
 ```
 
 # Assessing for best Imputation and Normalization methods
@@ -2163,24 +2189,24 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         invisible = "var",
                                         repel = TRUE,
                                         pointsize = 5,
-                                        habillage = factor(df$Plastic_type_Source),
-                                        # addEllipses = TRUE,
-                                        # ellipse.level=0.95,
+                                        habillage = factor(df$Polymer),
+                                        addEllipses = TRUE,
+                                        ellipse.level=0.95,
                                         ggtheme = ggplot2::theme_minimal(base_size =27),
                                         title = "",
-                                        # xlab = "PC 1 (56.2%)",
-                                        # ylab = "PC 2 (14.6%)",
-                                        xlim = c(-0.5, 0.8),
-                                        ylim = c(-0.6, 0.45)
+                                        xlab = "PC 1 (13.7%)",
+                                        ylab = "PC 2 (11.5%)",
+                                        # xlim = c(-0.5, 0.8),
+                                        # ylim = c(-0.6, 0.45)
                                         ) +
   # if has error "Too few points to calculate an ellipse"
-  ggforce::geom_mark_ellipse(aes(fill = Groups,
-                                 color = Groups),
-                             label.buffer = unit(40, 'mm')) +
+  # ggforce::geom_mark_ellipse(aes(fill = Groups,
+  #                                color = Groups),
+  #                            label.buffer = unit(40, 'mm')) +
   theme(legend.position = 'bottom',
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
-        ) 
+        )
 pca_plot
 
 ggsave(filename = paste0("Figure 2_GC_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
@@ -3575,7 +3601,7 @@ run_rf_analysis_manuscript1 <- function(data,
                                         do_impute_norm_screen   = TRUE,
                                         group_for_significance) {
   
-  
+  set.seed(seed)
   # 1) Prepare Target Variable and Remove Classes with a Single Sample
   data[[type_col]] <- as.factor(data[[type_col]])
   levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
@@ -3875,6 +3901,7 @@ run_rf_analysis_manuscript1 <- function(data,
         top_importance_results[[paste0("top_", top_n)]] <- list(
           best_model = final_rf_top,
           selected_features = selected_features,
+          preds_for_buidling_confmat_top = tmp_top$preds,
           prob_matrix_top = prob_matrix_top,
           conf_mat_top=conf_mat_top,
           eval_metrics_top = eval_metrics_top,
@@ -3953,7 +3980,8 @@ run_rf_analysis_manuscript1 <- function(data,
       time_all_features = time_all_feats,
       eval_metrics_all_feats = eval_metrics_all_feats,
       conf_mat_all_feats = conf_mat_all_feats, 
-      cm_df_all_feats = cm_df_all_feats
+      cm_df_all_feats = cm_df_all_feats,
+      preds_for_buidling_confmat_all = all_feats$preds
     )
     
     if(do_impute_norm_screen) {
@@ -3972,6 +4000,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$eval_metrics_sig <- eval_metrics_sig
       result_list$conf_mat_sig <- conf_mat_sig
       result_list$cm_df_sig <- cm_df_sig
+      result_list$preds_for_buidling_confmat_sig <- tmp_sig$preds
     }
     
     if(do_rfa) {
@@ -3983,6 +4012,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$eval_metrics_rfa <- eval_metrics_rfa
       result_list$conf_mat_rfa <- conf_mat_rfa
       result_list$cm_df_rfa <- cm_df_rfa
+      result_list$preds_for_buidling_confmat_rfa <- rfa_res$predictions
     }
     
     if(do_rfe) {
@@ -3995,6 +4025,7 @@ run_rf_analysis_manuscript1 <- function(data,
       result_list$eval_metrics_rfe <- eval_metrics_rfe
       result_list$conf_mat_rfe <- conf_mat_rfe
       result_list$cm_df_rfe <- cm_df_rfe
+      result_list$preds_for_buidling_confmat_rfe <- tmp_rfe$preds
     }
     
     if(do_top_importance_selection) {
@@ -4023,31 +4054,32 @@ run_rf_analysis_manuscript1 <- function(data,
 ###################################################################################
 
 data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
+  # gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
   hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
+  # icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
   gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  # gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
   hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
   gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_train <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_train) <- c("gc_USSB_train",
-                                          "hplc_USSB_train",
-                                          "icp_USSB_train",
-                                          "gc_hplc_USSB_train",
-                                          "gc_icp_USSB_train",
-                                          "hplc_icp_USSB_train",
-                                          "gc_hplc_icp_USSB_train")
+run_rf_analysis_list_SB_train_30Sept2025 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_train_30Sept2025) <- c(
+  # "gc_USSB_train",
+  "hplc_USSB_train",
+  # "icp_USSB_train",
+  "gc_hplc_USSB_train",
+  "gc_icp_USSB_train",
+  "hplc_icp_USSB_train",
+  "gc_hplc_icp_USSB_train")
 
 # Iterate through each data combination by index
 for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i], 
     use_store_vs_environmental_split = TRUE,
@@ -4056,23 +4088,23 @@ for(i in seq_along(data_combinations)) {
     group_for_significance = "Plastic_type", 
     do_pairwise_test = TRUE,             # Adjust parameters as needed
     do_top_importance_selection = TRUE,
-    do_rfe = FALSE,
+    do_rfe = TRUE,
     do_rfa = TRUE,
     train_proportion = 0.8,
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
   
-  excel_list <- list(
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$prob_matrix),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$prob_matrix_pair),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$top_importance_results$top_100$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$top_importance_results$top_50$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$top_importance_results$top_25$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$top_importance_results$top_10$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$prob_matrix_opt),
-    as.data.frame(run_rf_analysis_list_SB_train[[names(run_rf_analysis_list_SB_train)[i]]]$prob_matrix_gbfe))
-  write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_train)[i], "_all_prob_matrices.xlsx"))
+  # excel_list <- list(
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_pair),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$top_importance_results$top_100$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$top_importance_results$top_50$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$top_importance_results$top_25$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$top_importance_results$top_10$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_opt),
+  #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_gbfe))
+  # write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_train_30Sept2025)[i], "_all_prob_matrices.xlsx"))
 }
 ```
 
@@ -4122,31 +4154,32 @@ you may end up asking for, say, a 2‐ or 3‐fold stratified CV on a class that
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 data_combinations <- list(
-  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
+  # gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
   hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean,
+  # icp                = icp_combined_SB_ENV_shared_cols_ntr_clean,
   gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+  # gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
   hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
   gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_and_ENV_train_02Aug2025 <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025) <- c("gc_SB_and_ENV_train",
-                                                  "hplc_SB_and_ENV_train",
-                                                  "icp_SB_and_ENV_train",
-                                                  "gc_hplc_SB_and_ENV_train",
-                                                  "gc_icp_SB_and_ENV_train",
-                                                  "hplc_icp_SB_and_ENV_train",
-                                                  "gc_hplc_icp_SB_and_ENV_train")
+run_rf_analysis_list_SB_and_ENV_train_30Sept2025 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_and_ENV_train_30Sept2025) <- c(
+  # "gc_SB_and_ENV_train",
+  "hplc_SB_and_ENV_train",
+  # "icp_SB_and_ENV_train",
+  "gc_hplc_SB_and_ENV_train",
+  "gc_icp_SB_and_ENV_train",
+  "hplc_icp_SB_and_ENV_train",
+  "gc_hplc_icp_SB_and_ENV_train")
 
 # Iterate through each data combination by index
 for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_and_ENV_train_30Sept2025[[names(run_rf_analysis_list_SB_and_ENV_train_30Sept2025)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i], 
     use_source_split = TRUE,
@@ -5558,7 +5591,7 @@ ggplot(data = joined, aes(x = Subcategory, y = Values, fill = pubchem_name)) +
 #### Option 1: Zero
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # Go through each row and replace all missing values in that row by zeros
-zero_df <- copy(gc_SB_clean)
+zero_df <- copy(hplc_clean)
 for (r in 1:nrow(zero_df)) { 
   zero_df[r, which(base::is.na(zero_df[r,]))] <- 0  #0.0001
 }
@@ -5867,6 +5900,10 @@ umap_plot <- plot_ly(layout, x = ~X1, y = ~X2, z = ~X3,
                                    yaxis = list(title = 'y-axis'), 
                                    zaxis = list(title = 'z-axis'))) 
 umap_plot
+```
+
+## DBSCAN
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
 ```
 
 ## Wilcoxon test
