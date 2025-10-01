@@ -4070,7 +4070,7 @@ names(run_rf_analysis_list_SB_train_30Sept2025) <- c(
   "hplc_USSB_train",
   # "icp_USSB_train",
   "gc_hplc_USSB_train",
-  "gc_icp_USSB_train",
+  # "gc_icp_USSB_train",
   "hplc_icp_USSB_train",
   "gc_hplc_icp_USSB_train")
 
@@ -4095,6 +4095,8 @@ for(i in seq_along(data_combinations)) {
     seed = 123,
     min_sample_number = 3)
   
+  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".RData"))
+}
   # excel_list <- list(
   #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix),
   #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_pair),
@@ -4105,7 +4107,7 @@ for(i in seq_along(data_combinations)) {
   #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_opt),
   #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix_gbfe))
   # write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_train_30Sept2025)[i], "_all_prob_matrices.xlsx"))
-}
+
 ```
 
 ### Scatter plot features importance -------
@@ -4170,7 +4172,7 @@ names(run_rf_analysis_list_SB_and_ENV_train_30Sept2025) <- c(
   "hplc_SB_and_ENV_train",
   # "icp_SB_and_ENV_train",
   "gc_hplc_SB_and_ENV_train",
-  "gc_icp_SB_and_ENV_train",
+  # "gc_icp_SB_and_ENV_train",
   "hplc_icp_SB_and_ENV_train",
   "gc_hplc_icp_SB_and_ENV_train")
 
@@ -4194,6 +4196,8 @@ for(i in seq_along(data_combinations)) {
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
+  
+  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".RData"))
 }
 #    excel_list <- list(
 #     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix),
