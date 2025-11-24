@@ -912,8 +912,9 @@ process_string <- function(name_vector) {
 
 # 4) Discard all metal that may appear in seawater - Sodium (Na), Magnesium (Mg), Potassium (K), Calcium (Ca), Sr (optional) --------------------------
 strings_to_remove <- c("Na", "Mg", "K", "Ca") #, "Sr")
-cols_to_remove <- sapply(strings_to_remove, function(x) grep(x, colnames(combined_icpms_round1_round2)))
-cols_to_remove <- unique(unlist(cols_to_remove))
+
+cols_to_remove <- unique(unlist(sapply(strings_to_remove, function(x) grep(x, colnames(combined_icpms_round1_round2)))))
+# remove the seawater metal from combined rounds ICP data
 combined_icpms_round1_round2 <- combined_icpms_round1_round2[, -cols_to_remove]
 
 icp <- combined_icpms_round1_round2 %>%
@@ -2053,9 +2054,9 @@ find_best_impute_normalize <- function(df,
   # Build an ordering index: primary by TestAcc, secondary by ClusterRes, etc.
   ord <- order(
     -df_results$MCC_Multiclass,
-    -df_results$F1_Weighted,
-     -df_results$AUC,
-    -df_results$TestAcc,
+    # -df_results$F1_Weighted,
+     # -df_results$AUC,
+    # -df_results$TestAcc,
     # -df_results$F1_Macro,
     -df_results$ClusterRes,
     # -df_results$CVmean,
@@ -2164,7 +2165,7 @@ run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$imp_norm_res_
 #        dplyr::select(all_of(select_feats)) %>%
 #        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
 
-df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$final_imp_norm_dat %>%
+df <- df_0.001_TSN %>% # run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
@@ -2173,12 +2174,14 @@ df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$final_
 # df  <- df [!(df $Plastic_type %in% names(table(df $Plastic_type)[table(df $Plastic_type) < 3])),]
 
 res.pca <- FactoMineR::PCA(ncp =10,
-                           df %>% dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique", "Plastic_type_Source")),
+                           df %>% 
+                             dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique",  "Plastic_type_Source")), # %>% # ,  "Plastic_type_Source")),
+                             # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$rfa_selected_feats),
                            scale.unit = FALSE,
                            graph = FALSE)
 
 # Scree plot
-fviz_screeplot(res.pca)
+# fviz_screeplot(res.pca)
 
 # 1) Define a bold, color-blind–safe 9-color palette (Okabe–Ito + gray)
 # Biplot
@@ -2189,27 +2192,27 @@ pca_plot <- factoextra::fviz_pca_biplot(res.pca,
                                         invisible = "var",
                                         repel = TRUE,
                                         pointsize = 5,
-                                        habillage = factor(df$Polymer),
-                                        addEllipses = TRUE,
-                                        ellipse.level=0.95,
-                                        ggtheme = ggplot2::theme_minimal(base_size =27),
-                                        title = "",
-                                        xlab = "PC 1 (13.7%)",
-                                        ylab = "PC 2 (11.5%)",
+                                        habillage = factor(df$Plastic_type),
+                                        # addEllipses = TRUE,
+                                        # ellipse.level=0.95,
+                                        ggtheme = ggplot2::theme_minimal(base_size = 25),
+                                        # title = "gc_SB_and_ENV_train - RFA features",
+                                        # xlab = "PC 1 (52.6%)",
+                                        # ylab = "PC 2 (36.2%)",
                                         # xlim = c(-0.5, 0.8),
                                         # ylim = c(-0.6, 0.45)
                                         ) +
   # if has error "Too few points to calculate an ellipse"
   # ggforce::geom_mark_ellipse(aes(fill = Groups,
-  #                                color = Groups),
-  #                            label.buffer = unit(40, 'mm')) +
+                                 # color = Groups),
+                             # label.buffer = unit(40, 'mm')) +
   theme(legend.position = 'bottom',
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
         )
 pca_plot
 
-ggsave(filename = paste0("Figure 2_GC_Plastic_type_Source_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
+ggsave(filename = paste0("Figure SI_GC_SB and ENV_0.0001-TSN_Plastic_type_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
        plot = pca_plot, 
        device = "tiff",
        compression = "lzw",
@@ -2218,6 +2221,126 @@ ggsave(filename = paste0("Figure 2_GC_Plastic_type_Source_", format(Sys.time(), 
        height = 12,       # Height in inches (adjust as needed)
        units = "in")
 ```
+
+## Figure 2: HCA
+
+If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
+
+This exercise does not seems to affect the HCa. Keep in mind that for all 3 cases of data combinations: none of them has compounds that occur in all samples. NONE of THEM!!!!!
+
+### Clustering of samples
+
+(Jan 11th 2024): 
+\ICP only data shows misgrouping between the following Subcategories: 
+- Cigarillo tip//Bottle caps
+- Food wrapper// Food packaging// Food containers//plastic drinking straws//Various plastic waste
+
+\GC+ICP data show clear separation between GC and ICP data into 2 clusters. From ICP cluster, the misgrouping between the following Subcategories is the same as the case of ICP only. From the GC cluster, the grouping is more or less the same as the case of GC only.
+
+\HPLC+ICP data, the cluster of both ICP and HPLC side change a bit. However for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For HPLC side, the organization of the sample into grouping change a bit as the plastic toy balls are separated into their own top cluster (same height level with ICP and rest of HPLC branches) 
+
+\GC+HPLC+ICP data, for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For GC + HPLC side, it looks almost exactly like the case of GC+HPLC.
+
+(UPdate 06 Feb 2024:) common metrics to evaluate performance of clustering models:
+- Silhouette Score (https://stackoverflow.com/questions/33999224/silhouette-plot-in-r): Higher score => better clustering
+- Calinski-Harabaz Index (https://search.r-project.org/CRAN/refmans/fpc/html/calinhara.html): Higher score => better clustering
+- Davies-Bouldin Index ():
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Data prep for HCA ---------------------
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
+  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
+
+hc_df <- df %>% 
+  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% #, "Plastic_type_Source")) %>%
+  dplyr::select(where(is.numeric)) %>%
+  as.data.frame()
+
+# --- Clean: remove bad rows & handle non-finite values ---
+# 1) Replace non-finite with 0 (or choose a more domain-specific imputation if appropriate)
+hc_df[!is.finite(as.matrix(hc_df))] <- 0
+
+# 2) Drop rows that are all zero (Bray–Curtis can yield NaN for empty rows)
+keep <- rowSums(hc_df, na.rm = TRUE) > 0
+hc_df_clean <- hc_df[keep, , drop = FALSE] #%>% 
+  # Select the features from best performance feature selection method
+  # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$rfa_selected_feats)
+labels_clean <- df$Plastic_type_Source[keep] # df$Plastic_type_Source[keep] 
+
+# 3) If any negatives remain, Bray–Curtis is invalid -> fall back to a metric that permits negatives
+use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
+
+if (use_bray) {
+  d <- vegan::vegdist(hc_df_clean, method = "manhattan")
+  link <- "average"
+} else {
+  # If your features were centered/scaled, Euclidean or Manhattan are appropriate.
+  # (Alternatively, if these are compositions, consider Aitchison with a small pseudocount.)
+  d <- dist(hc_df_clean, method = "robust.aitchison")
+  link <- "average"
+  message("Detected negative values; using Euclidean instead of Bray–Curtis.")
+}
+
+# --- Guard: ensure distance has no NA/NaN/Inf ---
+if (any(!is.finite(d))) {
+  stop("Distance matrix still has non-finite entries after cleaning. Re-check inputs.")
+}
+
+# --- Cluster & plot ---
+hca_samp <- hclust(d, method = link)
+
+cat("cophenetic correlation coefficient (CCC) from a hierarchical clustering (HCA) is:", cor(d, stats::cophenetic(hca_samp)), "\n")
+
+# tiff(filename = paste0("Figure SI_HCA_HPLC_SB_and_ENV_train_", format(Sys.time(), "%d-%m-%Y"),".tif"), width = 42*600, height = 15*600, res = 600, compression = "lzw")
+
+par(cex = 1)
+plot(hca_samp,
+     labels = labels_clean,
+     hang   = -1,
+     main   = "")
+# dev.off()
+```
+
+
+A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
+
+For selecting Dissimilarity Indices Calculated by vegan::vegdist(), since our data is continous, not normally distributed, and the data is sparse (meaning our data has lots of NA or NULL before data imputation, This basically because there are compounds that occur in some samples and not in the others). Manhattan dissimilarity index separating ATDGCMS and HPLCTOFMS into 2 big clusters, while Canberra//Aitchison//Robust.aitchison grouped ATDGCMS as a subgroup of a part of HPLCTOFMS data.
+
+Since for each observations of each sample, the sum of values of collapsed compounds is sum up to 100%, Aitchison or Robust.Aitchison are currently the best option for dissimilarity index.
+
+***Why Aitchison or Robust.Aitchison for OUR DATA, AKA. Compositional Data?***
+
+Compositional data have particular characteristics and constraints that standard distance metrics like Euclidean don't handle well. Here are some reasons why Aitchison distance is more suitable:
+
+**Closure Constraint:** Because the components in compositional data sum to a constant value (like 1 or 100%), the data is subject to a closure constraint. This constraint violates the assumption of independence between variables that many standard statistical techniques rely on. Aitchison distance accounts for this constraint.
+
+*Implications of Closure Constraint* *Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
+
+*Spurious Correlations:* The closure constraint can lead to spurious or misleading correlations between variables. For example, an increase in the proportion of Additive A will necessarily result in a decrease in the sum of the proportions of Additives B and C, even if there's no biological or chemical reason for them to be inversely related.
+
+*Non-Independence of Components:* In compositional data, the components are not independent of each other, violating the assumptions of independence that many statistical tests and measures (like the Euclidean distance) rely on.
+
+*Comparisons are Relative:* In compositional data, what matters is the relative sizes of the components, not their absolute sizes. Any analysis should, therefore, focus on these relative proportions rather than absolute values.
+
+For these reasons, specialized statistical methods like Aitchison distance are often used for compositional data. These methods take the closure constraint into account and focus on the relative proportions of the different components, providing a more accurate and interpretable analysis.
+
+In this workflow on tracking microplastic additives in aquatic environments, understanding the closure constraint can be pivotal. If you're looking at the relative abundances of different types of plastic additives in water samples, those abundances are compositional data subject to the closure constraint. Using standard statistical techniques without accounting for this constraint could lead to misleading conclusions.
+
+**Relative Importance:** In compositional data, what's generally important is the relative proportion between components, rather than their absolute values. The Aitchison distance is designed to capture the relationships between these relative values effectively.
+
+**Log-Ratio Transformation:** The Aitchison distance is based on log-ratio transformations, which have been proven to be an effective way to analyze compositional data. The log-ratio removes the closure constraint, making the data easier to analyze statistically.
+
+**Handling Zeros:** The robust variant of Aitchison distance often includes techniques for handling zeros in compositional data, which are common and challenging to deal with.
+
+**Scale-Invariance:** Aitchison distance is scale-invariant, meaning that multiplying a component by a constant will not change the distance. This is crucial for compositional data, where only the relative relationships between components matter.
+
+**Interpretable:** The distance measure reflects compositional difference in a way that's meaningful within the context of the data, making it easier to understand and interpret the results.
+
+
+
+So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
 
 ## Table S6: Correlation and covariance magnitude of features across 7 data combinations
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
@@ -3191,87 +3314,7 @@ grid.text(
 ```
 
 
-## HCA
 
-If we filter unique compounds by File (compounds appear in at least 2 files), then all File in df in gc_hplc_list are the same. That's why here we used gc_hplc_list[[1]]
-
-This exercise does not seems to affect the HCa. Keep in mind that for all 3 cases of data combinations: none of them has compounds that occur in all samples. NONE of THEM!!!!!
-
-### Clustering of samples
-
-(Jan 11th 2024): 
-\ICP only data shows misgrouping between the following Subcategories: 
-- Cigarillo tip//Bottle caps
-- Food wrapper// Food packaging// Food containers//plastic drinking straws//Various plastic waste
-
-\GC+ICP data show clear separation between GC and ICP data into 2 clusters. From ICP cluster, the misgrouping between the following Subcategories is the same as the case of ICP only. From the GC cluster, the grouping is more or less the same as the case of GC only.
-
-\HPLC+ICP data, the cluster of both ICP and HPLC side change a bit. However for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For HPLC side, the organization of the sample into grouping change a bit as the plastic toy balls are separated into their own top cluster (same height level with ICP and rest of HPLC branches) 
-
-\GC+HPLC+ICP data, for ICP side, misgrouping between the following Subcategories still remains as the case of ICP only. For GC + HPLC side, it looks almost exactly like the case of GC+HPLC.
-
-(UPdate 06 Feb 2024:) common metrics to evaluate performance of clustering models:
-- Silhouette Score (https://stackoverflow.com/questions/33999224/silhouette-plot-in-r): Higher score => better clustering
-- Calinski-Harabaz Index (https://search.r-project.org/CRAN/refmans/fpc/html/calinhara.html): Higher score => better clustering
-- Davies-Bouldin Index ():
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-# Data prep for HCA ---------------------
-df <- gc_combined_SB_ENV_shared_cols_ntr_clean_0.001_TSN
-
-hc_df <- df %>% 
-  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique"))
-
-## Dissimilarity Indices Calculated by vegan::vegdist()
-hca_samp <- stats::hclust(vegan::vegdist(hc_df,
-                                         method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
-
-par(cex = 1)
-
-plot(hca_samp,
-     labels = df$Subcategory, # rownames(df_percentage),# df_percentage$Subcategory,
-     hang = -1,
-     main = "")
-```
-
-
-A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
-
-For selecting Dissimilarity Indices Calculated by vegan::vegdist(), since our data is continous, not normally distributed, and the data is sparse (meaning our data has lots of NA or NULL before data imputation, This basically because there are compounds that occur in some samples and not in the others). Manhattan dissimilarity index separating ATDGCMS and HPLCTOFMS into 2 big clusters, while Canberra//Aitchison//Robust.aitchison grouped ATDGCMS as a subgroup of a part of HPLCTOFMS data.
-
-Since for each observations of each sample, the sum of values of collapsed compounds is sum up to 100%, Aitchison or Robust.Aitchison are currently the best option for dissimilarity index.
-
-***Why Aitchison or Robust.Aitchison for OUR DATA, AKA. Compositional Data?***
-
-Compositional data have particular characteristics and constraints that standard distance metrics like Euclidean don't handle well. Here are some reasons why Aitchison distance is more suitable:
-
-**Closure Constraint:** Because the components in compositional data sum to a constant value (like 1 or 100%), the data is subject to a closure constraint. This constraint violates the assumption of independence between variables that many standard statistical techniques rely on. Aitchison distance accounts for this constraint.
-
-*Implications of Closure Constraint* *Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
-
-*Spurious Correlations:* The closure constraint can lead to spurious or misleading correlations between variables. For example, an increase in the proportion of Additive A will necessarily result in a decrease in the sum of the proportions of Additives B and C, even if there's no biological or chemical reason for them to be inversely related.
-
-*Non-Independence of Components:* In compositional data, the components are not independent of each other, violating the assumptions of independence that many statistical tests and measures (like the Euclidean distance) rely on.
-
-*Comparisons are Relative:* In compositional data, what matters is the relative sizes of the components, not their absolute sizes. Any analysis should, therefore, focus on these relative proportions rather than absolute values.
-
-For these reasons, specialized statistical methods like Aitchison distance are often used for compositional data. These methods take the closure constraint into account and focus on the relative proportions of the different components, providing a more accurate and interpretable analysis.
-
-In this workflow on tracking microplastic additives in aquatic environments, understanding the closure constraint can be pivotal. If you're looking at the relative abundances of different types of plastic additives in water samples, those abundances are compositional data subject to the closure constraint. Using standard statistical techniques without accounting for this constraint could lead to misleading conclusions.
-
-**Relative Importance:** In compositional data, what's generally important is the relative proportion between components, rather than their absolute values. The Aitchison distance is designed to capture the relationships between these relative values effectively.
-
-**Log-Ratio Transformation:** The Aitchison distance is based on log-ratio transformations, which have been proven to be an effective way to analyze compositional data. The log-ratio removes the closure constraint, making the data easier to analyze statistically.
-
-**Handling Zeros:** The robust variant of Aitchison distance often includes techniques for handling zeros in compositional data, which are common and challenging to deal with.
-
-**Scale-Invariance:** Aitchison distance is scale-invariant, meaning that multiplying a component by a constant will not change the distance. This is crucial for compositional data, where only the relative relationships between components matter.
-
-**Interpretable:** The distance measure reflects compositional difference in a way that's meaningful within the context of the data, making it easier to understand and interpret the results.
-
-
-
-So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
 
 # Random Forest
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
@@ -4055,7 +4098,7 @@ run_rf_analysis_manuscript1 <- function(data,
 
 data_combinations <- list(
   # gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
+  # hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean,
   # icp                = icp_combined_SB_ENV_shared_cols_ntr_clean ,
   gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
   # gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
@@ -4064,10 +4107,10 @@ data_combinations <- list(
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_train_30Sept2025 <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_train_30Sept2025) <- c(
+run_rf_analysis_list_SB_train_30Sept2025_continue <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_train_30Sept2025_continue) <- c(
   # "gc_USSB_train",
-  "hplc_USSB_train",
+  # "hplc_USSB_train",
   # "icp_USSB_train",
   "gc_hplc_USSB_train",
   # "gc_icp_USSB_train",
@@ -4079,7 +4122,7 @@ for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_train_30Sept2025_continue[[names(run_rf_analysis_list_SB_train_30Sept2025_continue)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i], 
     use_store_vs_environmental_split = TRUE,
@@ -4088,14 +4131,14 @@ for(i in seq_along(data_combinations)) {
     group_for_significance = "Plastic_type", 
     do_pairwise_test = TRUE,             # Adjust parameters as needed
     do_top_importance_selection = TRUE,
-    do_rfe = TRUE,
+    do_rfe = FALSE,
     do_rfa = TRUE,
     train_proportion = 0.8,
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
   
-  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".RData"))
+  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d_%H-%M-%S"),".RData"))
 }
   # excel_list <- list(
   #   as.data.frame(run_rf_analysis_list_SB_train_30Sept2025[[names(run_rf_analysis_list_SB_train_30Sept2025)[i]]]$prob_matrix),
@@ -4190,14 +4233,14 @@ for(i in seq_along(data_combinations)) {
     group_for_significance = "Plastic_type",
     do_pairwise_test = TRUE,             # Adjust parameters as needed
     do_top_importance_selection = TRUE,
-    do_rfe = TRUE,
+    do_rfe = FALSE,
     do_rfa = TRUE,
     train_proportion = 0.8,
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 3)
   
-  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".RData"))
+  save.image(file = paste0("backup R environment_",format(Sys.time(), "%Y-%m-%d_%H-%M-%S"),".RData"))
 }
 #    excel_list <- list(
 #     as.data.frame(run_rf_analysis_list_SB_and_ENV_train[[names(run_rf_analysis_list_SB_and_ENV_train)[i]]]$prob_matrix),
@@ -4238,50 +4281,50 @@ ggplot(data = conf_matrix_table, aes(x = Actual, y = Predicted, fill = Frequency
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 data_combinations <- list(
-  # gc                 = gc_SB_clean,
-  hplc               = hplc_SB_clean %>% dplyr::filter(Plastic_type %in% c("Cigarette Lighters", "Cigarettes", "Plastic Cable Ties","Plastic Plates", "Plastic Cord", "Plastic Cutlery")),
-  icp                = icp_SB_clean %>%
-    dplyr::filter(Plastic_type %in% c("Cigarette Lighters", "Cigarettes", "Plastic Cable Ties","Plastic Plates", "Plastic Cord", "Plastic Cutlery")),
-  # gc_hplc            = gc_hplc_SB_clean,
-  # gc_icp             = gc_icp_SB_clean,
-  hplc_icp           = hplc_icp_SB_clean %>%
-    dplyr::filter(Plastic_type %in% c("Plastic Cutlery", "Plastic Plates", "Cigarettes", "Cigarette Lighters", "Plastic Cord", "Plastic Cable Ties")) #,
-  # gc_hplc_icp        = gc_hplc_icp_SB_clean
+  gc                 = gc_SB_clean,
+  hplc               = hplc_SB_clean, #%>% dplyr::filter(Plastic_type %in% c("Cigarette Lighters", "Cigarettes", "Plastic Cable Ties","Plastic Plates", "Plastic Cord", "Plastic Cutlery")),
+  icp                = icp_SB_clean, #%>%
+    # dplyr::filter(Plastic_type %in% c("Cigarette Lighters", "Cigarettes", "Plastic Cable Ties","Plastic Plates", "Plastic Cord", "Plastic Cutlery")),
+  gc_hplc            = gc_hplc_SB_clean,
+  gc_icp             = gc_icp_SB_clean,
+  hplc_icp           = hplc_icp_SB_clean, # %>%
+    # dplyr::filter(Plastic_type %in% c("Plastic Cutlery", "Plastic Plates", "Cigarettes", "Cigarette Lighters", "Plastic Cord", "Plastic Cable Ties")) #,
+  gc_hplc_icp        = gc_hplc_icp_SB_clean
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_only <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_only) <- c(
-  # "gc_SB",
+run_rf_analysis_list_SB_only_03Oct2025 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_only_03Oct2025) <- c(
+  "gc_SB",
   "hplc_SB",
   "icp_SB",
-  # "gc_hplc_SB",
-  # "gc_icp_SB",
-  "hplc_icp_SB" #,
-  # "gc_hplc_icp_SB"
+  "gc_hplc_SB",
+  "gc_icp_SB",
+  "hplc_icp_SB",
+  "gc_hplc_icp_SB"
 )
 
-train_proportion <- c(0.8, 0.66, 0.8)
+# train_proportion <- c(0.8, 0.66, 0.8)
 # Iterate through each data combination by index
 for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_only[[names(run_rf_analysis_list_SB_only)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_only_03Oct2025[[names(run_rf_analysis_list_SB_only_03Oct2025)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i],
     type_col                = "Plastic_type", 
     remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
     group_for_significance = "Plastic_type", 
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
+    do_pairwise_test = FALSE,             # Adjust parameters as needed
+    do_top_importance_selection = FALSE,
     do_rfe = FALSE,
-    do_rfa = TRUE,
-    train_proportion = train_proportion[i],
+    do_rfa = FALSE,
+    train_proportion = 0.66,# train_proportion[i],
     do_impute_norm_screen = TRUE,
     seed = 123,
-    min_sample_number = 3)
-  
+    min_sample_number = 1)
+}
   # excel_list <- list(
   #   as.data.frame(run_rf_analysis_list_SB_only[[names(run_rf_analysis_list_SB_only)[i]]]$prob_matrix),
   #   as.data.frame(run_rf_analysis_list_SB_only[[names(run_rf_analysis_list_SB_only)[i]]]$prob_matrix_pair),
@@ -4292,7 +4335,7 @@ for(i in seq_along(data_combinations)) {
   #   as.data.frame(run_rf_analysis_list_SB_only[[names(run_rf_analysis_list_SB_only)[i]]]$prob_matrix_opt),
   #   as.data.frame(run_rf_analysis_list_SB_only[[names(run_rf_analysis_list_SB_only)[i]]]$prob_matrix_gbfe))
   # write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_SB_only)[i], "_all_prob_matrices.xlsx"))
-}
+
 ```
 
 ### Option 4: Use ENV to predict ENV
@@ -4309,8 +4352,8 @@ data_combinations <- list(
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_ENV_only <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_ENV_only) <- c("gc_ENV",
+run_rf_analysis_list_ENV_only_03Oct2025 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_ENV_only_03Oct2025) <- c("gc_ENV",
                                           "hplc_ENV",
                                           "icp_ENV",
                                           "gc_hplc_ENV",
@@ -4323,29 +4366,32 @@ for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_ENV_only_03Oct2025[[names(run_rf_analysis_list_ENV_only_03Oct2025)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i],
     type_col                = "Plastic_type", 
     remove_cols             = c("Source", "Polymer", "technique", "Subcategory"),
     group_for_significance = "Plastic_type", 
-    do_pairwise_test = TRUE,             # Adjust parameters as needed
-    do_top_importance_selection = TRUE,
+    do_pairwise_test = FALSE,             # Adjust parameters as needed
+    do_top_importance_selection = FALSE,
     do_rfe = FALSE,
-    do_impute_norm_screen = FALSE,
-    seed = 123)
-  
-  excel_list <- list(
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_pair),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_100$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_50$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_25$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_10$prob_matrix_top),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_opt),
-    as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_gbfe))
-  write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_ENV_only)[i], "_all_prob_matrices.xlsx"))
-}
+    do_rfa = FALSE,
+    train_proportion = 0.66,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 1)
+} 
+  # excel_list <- list(
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_pair),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_100$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_50$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_25$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$top_importance_results$top_10$prob_matrix_top),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_opt),
+  #   as.data.frame(run_rf_analysis_list_ENV_only[[names(run_rf_analysis_list_ENV_only)[i]]]$prob_matrix_gbfe))
+  # write_xlsx(excel_list, path = paste0(names(run_rf_analysis_list_ENV_only)[i], "_all_prob_matrices.xlsx"))
+
 ```
 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
@@ -5595,9 +5641,9 @@ ggplot(data = joined, aes(x = Subcategory, y = Values, fill = pubchem_name)) +
 #### Option 1: Zero
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # Go through each row and replace all missing values in that row by zeros
-zero_df <- copy(hplc_clean)
+zero_df <- copy(hplc_combined_SB_ENV_shared_cols_ntr_clean)
 for (r in 1:nrow(zero_df)) { 
-  zero_df[r, which(base::is.na(zero_df[r,]))] <- 0  #0.0001
+  zero_df[r, which(base::is.na(zero_df[r,]))] <- 0.0001
 }
 ```
 
@@ -5883,24 +5929,23 @@ tsne_plot
 
 ```{r, echo=FALSE, warning = FALSE, message=FALSE}
 library(umap)
+library(plotly)
 
-dat <- df_percentage # gc_subcat[[3]]
+dat <- run_rf_analysis_list_ENV_only_02Oct2025$gc_ENV$final_imp_norm_dat # gc_subcat[[3]]
 # removgc_e any Subcategory that have less than 3 sample
-dat <- dat[!(dat$Subcategory %in% names(table(dat$Subcategory)[table(dat$Subcategory) < 3])),]
+# dat <- dat[!(dat$Subcategory %in% names(table(dat$Subcategory)[table(dat$Subcategory) < 3])),]
 
-features <- subset(dat, select = -c(Subcategory,
-                                    technique
-                                    ))
+features <- subset(dat, select = -c(Subcategory, Source, Plastic_type, Polymer, technique))
 
 umap <- umap(features, n_components = 3,
              method = 'naive', metric= "manhattan",
              alpha = 0.0001, gamma = 0.0001)
 
-layout <- cbind(data.frame(umap[["layout"]]), dat$Subcategory)
+layout <- cbind(data.frame(umap[["layout"]]), dat$Plastic_type)
 umap_plot <- plot_ly(layout, x = ~X1, y = ~X2, z = ~X3, 
-                color = ~dat$Subcategory) %>% 
+                color = ~dat$Plastic_type) %>% 
   add_markers() %>%
-  layout(scene = list(xaxis = list(title = 'x-axis'), 
+  plotly::layout(scene = list(xaxis = list(title = 'x-axis'), 
                                    yaxis = list(title = 'y-axis'), 
                                    zaxis = list(title = 'z-axis'))) 
 umap_plot
