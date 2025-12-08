@@ -182,6 +182,19 @@ comp_filter_opt <- function(data) {
 ```
 
 ## STEP 1.1: Data import
+
+## **!!! Update 30Sep2025 !!!**:  I fucked up the data import of HPLC => all sample from Batch 0 (not Blank) was labelled as Blank and was removed during blank subtraction. => Have to run the "grouping compound" section,"blank subtraction" section all again for all HPLC combinations, including HPLC, HPLC-ICP, GC-HPLC and GC-HPLC-ICP => I ran the whole pipeline from grouping compounds; blank subtraction; feature filtering to obtain the new:  
+
+gc_combined_SB_ENV_shared_cols_ntr_clean,
+hplc_combined_SB_ENV_shared_cols_ntr_clean,
+icp_combined_SB_ENV_shared_cols_ntr_clean ,
+gc_hplc_combined_SB_ENV_shared_cols_ntr_clean,
+gc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+hplc_icp_combined_SB_ENV_shared_cols_ntr_clean,
+gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean
+
+==> These new updated variables are ready for RF runs and they are stored in the *backup R environment_30Sept2025 (2).RData* file in *Microplastic-Fingerprinting-scripts and data* folder.
+
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS
 setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ATDGCMS")
@@ -1380,7 +1393,7 @@ gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean <- shared_feature_filtering(gc
 
 ```
 
-# Assessing for best Imputation and Normalization methods
+# Imputation and Normalization methods
 ### Define functions
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 #########################
@@ -4255,6 +4268,7 @@ for(i in seq_along(data_combinations)) {
 # }
 
 ```
+
 #### Confusion matrix
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 actual <- c("Balloons", "Bottle.Caps", "Food.Containers", "Plastic.Bottles", "Plastic.Cups", "Plastic.Drinking.Straws")
