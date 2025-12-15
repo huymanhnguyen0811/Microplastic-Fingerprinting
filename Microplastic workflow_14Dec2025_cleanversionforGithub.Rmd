@@ -1,0 +1,3304 @@
+---
+title: "Microplastic fingerprinting"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting")
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(out.width='750px', dpi=200)
+```
+
+## Documentation
+
+This repo is accompanying the publication: "Computational fingerprinting workflow for environmental source tracking of microplastic based on representative additives"
+
+Demo of each ML algorithms is shown below.
+
+## Loading Packages and Functions
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# #########################
+##   Load Libraries    ##
+#########################
+library(ggplot2)
+library(ranger)
+library(foreach)
+library(doParallel)
+library(parallel)
+library(vegan)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(data.table)
+library(writexl)
+library(tidyr)
+library(grid)
+library(gridExtra)
+library(stats)
+library(FactoMineR)
+library(factoextra)
+library(ggforce)
+library(cluster)
+library(MASS)  # For mvrnorm
+library(caret)
+library(randomForest)
+library(pheatmap)
+library(viridis)
+library(missForest)
+library(pROC)
+library(VIM)
+library(softImpute)
+library(purrr)
+library(ggpubr)
+library(missForest)
+library(pROC)
+library(VIM)
+library(softImpute)
+library(purrr)
+library(ggpubr)
+library(writexl)
+
+# Functions -------------------------------------------------------------------------------------------------------
+'%notin%' <- Negate('%in%')
+
+# Grouping compounds based on RT1, RT2, and Ion1 - Version 1
+grouping_comp <- function(data, split_time, rtthres1, rtthres2, mzthres, type) {
+  
+  # create empty list, each sub-list is a compound group with following criteria:
+  # rtthres: RT threshold window
+  # mzthres: mz threshold window
+  dat <- data[ , , drop = FALSE]  # Shallow copy to avoid modification of original data
+  
+  # Initialize the compound column filled with NA values
+  dat$Feature <- NA
+  i <- 1
+  j <- 1 # Counter for HPLC data only
+  
+  # Checkpoint for 'type' parameter
+  if (!(type %in% c("ATDGCMS", "HPLCTOFMS"))) {
+    stop("Invalid type specified. Must be either 'ATDGCMS' or 'HPLCTOFMS'")
+  }
+
+  # Loop through each row to group compounds
+  if (type %in% "HPLCTOFMS") {
+      # Split HPLC data into RT <= 6 min and RT > 6 min
+      dat1 <- dat %>% filter(RT <= split_time)
+      dat2 <- dat %>% filter(RT > split_time)
+      
+      for (row in 1:nrow(dat1)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        rt <- base::as.numeric(dat1[row, "RT"])
+        mz <- base::as.numeric(dat1[row, "m.z"])
+        
+        idx1 <- which(
+          dat1$RT <= (rt + rtthres1) & dat1$RT >= (rt - rtthres1) &
+            dat1$m.z <= (mz + mzthres) & dat1$m.z >= (mz - mzthres) &
+            is.na(dat1$Feature)
+        )
+        
+        if (length(idx1) > 0) {
+          dat1[idx1, "Feature"] <- paste0("Compound_RT1_", i, ".", type)
+          i <- i + 1
+        }  
+      }
+      
+      for (row in 1:nrow(dat2)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        rt <- base::as.numeric(dat2[row, "RT"])
+        mz <- base::as.numeric(dat2[row, "m.z"])
+        
+        idx2 <- which(
+          dat2$RT <= (rt + rtthres2) & dat2$RT >= (rt - rtthres2) &
+            dat2$m.z <= (mz + mzthres) & dat2$m.z >= (mz - mzthres) &
+            is.na(dat2$Feature)
+        )
+        
+        if (length(idx2) > 0) {
+          dat2[idx2, "Feature"] <- paste0("Compound_RT2_", j, ".", type)
+          j <- j + 1
+        }  
+      }
+      
+      dat <- rbind(dat1, dat2)
+      
+  } else {
+    for (row in 1:nrow(dat)) {
+      
+      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+      rt <- base::as.numeric(dat[row, "RT"])
+      mz <- base::as.numeric(dat[row, "m.z"])
+      
+      idx <- which(
+        dat$RT <= (rt + rtthres1) & dat$RT >= (rt - rtthres1) &
+          dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
+          is.na(dat$Feature)
+      )
+      
+      if (length(idx) > 0) {
+        dat[idx, "Feature"] <- paste0("Compound_", i, ".", type)
+        i <- i + 1
+      }  
+    }
+  }
+  
+  return(dat)
+}
+
+# Filtering similar and unique compound 
+# comp_filter <- function(data) {
+#   # Get all unique feature groups once
+#   unique_comp_groups <- unique(data$Feature)
+#   
+#   # Preallocate lists for indices
+#   all_other_compounds_idx <- vector("list", length(unique_comp_groups))
+#   all_unique_compounds_idx <- vector("list", length(unique_comp_groups))
+# 
+#   # Loop over unique compound groups, but avoid appending to vectors
+#   for (i in seq_along(unique_comp_groups)) {
+#     comp_grp <- unique_comp_groups[i]
+#     
+#     # Use vectorized comparison instead of grepl with fixed=TRUE
+#     idx <- which(data$Feature == comp_grp)
+#     if (length(unique(data[idx,]$File)) < 2) {
+#       all_unique_compounds_idx[[i]] <- idx
+#     } else {
+#       all_other_compounds_idx[[i]] <- idx
+#     }
+#   }
+#   
+#   # Unlist and remove empty elements (NULLs)
+#   all_other_compounds_idx <- unlist(all_other_compounds_idx, use.names = FALSE)
+#   all_unique_compounds_idx <- unlist(all_unique_compounds_idx, use.names = FALSE)
+#   
+#   return(list(all_other_compounds_idx, all_unique_compounds_idx))
+# }
+
+# comp_filter_opt <- function(data) {
+#   # Convert the data frame to a data.table
+#   dt <- as.data.table(data)
+#   
+#   # For each feature, compute the number of unique File values
+#   dt[, n_files := uniqueN(File), by = Feature]
+#   
+#   # Extract the indices based on the unique file count
+#   all_unique_compounds_idx <- which(dt$n_files < 2)
+#   all_other_compounds_idx  <- which(dt$n_files >= 2)
+#   
+#   return(list(all_other_compounds_idx = all_other_compounds_idx, 
+#               all_unique_compounds_idx  = all_unique_compounds_idx))
+# }
+```
+
+## STEP 1.1: Data import
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ATDGCMS")
+
+atdgcms_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
+  .[!str_detect(., "2022")] %>%
+  # remove USE samples with only 1 replication
+  .[!str_detect(., "USE_01")] %>%
+  .[!str_detect(., "USE_02")] %>%
+  .[!str_detect(., "USE_05")] %>%
+  .[!str_detect(., "USE_06")] %>%
+  .[!str_detect(., "USE_09")] %>%
+  .[!str_detect(., "USE_10")] %>%
+  .[!str_detect(., "USE_11")] %>%
+  .[!str_detect(., "USE_12")] %>%
+  .[!str_detect(., "USE_13")] %>%
+  .[!str_detect(., "USE_15")] %>%
+  .[!str_detect(., "USE_16")] %>%
+  .[!str_detect(., "USE_17")] %>%
+  .[!str_detect(., "USE_18")] %>%
+  .[!str_detect(., "USE_19")] %>%
+  .[!str_detect(., "USE_20")] %>%
+  .[!str_detect(., "USSB_01")] %>%
+  .[!str_detect(., "USSB_08")] # %>%
+  # .[!str_detect(., "USSB_09")] # %>%
+  # .[str_detect(., "_USSB")] #  environmental samples
+
+# Blank samples 
+blank_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
+  .[str_detect(., "2022-")]
+
+# Import samples to list
+# Function to read each file and add a "File" column
+read_and_add_filename <- function(file) {
+  df <- read.csv(file) %>%
+    mutate(File = basename(file))  # Add a "File" column with the file name
+  return(df)
+}
+
+# Apply the function to all files and combine them into a single dataframe
+atdgcms_step1.1 <- lapply(atdgcms_list, read_and_add_filename) %>%
+  bind_rows() %>%  # Combine all dataframes into one
+  # dplyr::bind_rows(purrr::map(atdgcms_list, read.csv)) %>%
+  dplyr::select(-c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions")) %>%
+  # # Change all ATDGCMS file name with underscore-separated to hyphen-separated
+  dplyr::mutate(File = gsub("_", "-", File)) %>%
+  dplyr::mutate(File = gsub(".csv", "", File)) %>%
+  mutate(type = "Sample")
+
+atdgcms_blank <- dplyr::bind_rows(purrr::map(blank_list, read.csv)) %>%
+  dplyr::select(c("Area", "File", "m.z", "RT")) %>%
+  mutate(type = "Blanks")
+
+atdgcms_step1.1 <- rbind(atdgcms_step1.1, atdgcms_blank) %>% 
+  arrange(RT) %>%
+  # mutate(Replicate = ifelse(str_detect(File, "R1"), "R1",
+  #                           ifelse(str_detect(File, "R2"), "R2", "R3"))) %>%
+  mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, pattern = "-")[c(4, 5)], collapse = "-")))
+
+# HPLCTOFMS
+
+###### Import Batch 0
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 0")
+
+hplc_batch0 <- list.files(pattern = '*.xls') %>%
+  .[!str_detect(., "Blank")]
+
+# Blank samples 
+blank_hplc_batch0 <- list.files(pattern = '*.xls') %>%
+  .[str_detect(., "Blank")]
+
+# Import samples to list
+hplc_batch0_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch0, read_xls, skip = 1), 
+                                        purrr::map(blank_hplc_batch0, read_xls, skip = 1)) %>%
+  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
+  mutate(File = gsub("_", "-", File),
+         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
+         Day = case_when(str_detect(File, "Day0") ~ "0",
+                         str_detect(File, "Day2") ~ "2",
+                         str_detect(File, "Day15") ~ "15",
+                         TRUE ~ "34"),
+         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
+         Batch_number = "0",
+         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[1:2], collapse = "-")))
+
+colnames(hplc_batch0_step1.1)[1] <- "m.z"
+
+###### Import Batch 1
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 1")
+
+# Import sample data
+hplc_batch1 <- list.files(pattern = '*.xls') %>%
+  .[!str_detect(., "Blank")]
+# # Import Blank data 
+blank_hplc_batch1 <- list.files(pattern = '*.xls') %>%
+  .[str_detect(., "Blank")]
+
+# Put sample and blank data together and create additional description columns
+hplc_batch1_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch1, read_xls, skip = 1), 
+                                        purrr::map(blank_hplc_batch1, read_xls, skip = 1)) %>%
+  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
+  mutate(File = gsub("_", "-", File),
+         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
+         Day = case_when(str_detect(File, "Day0") ~ "0",
+                         str_detect(File, "Day2") ~ "2",
+                         str_detect(File, "Day15") ~ "15",
+                         TRUE ~ "34"),
+         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
+         Batch_number = "1",
+         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
+
+# Change column name
+colnames(hplc_batch1_step1.1)[1] <- "m.z"
+
+###### Import Batch 2
+setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 2")
+
+hplc_batch2 <- list.files(pattern = '*.xls') %>%
+  .[!str_detect(., "Blank")]
+# Blank samples 
+blank_hplc_batch2 <- list.files(pattern = '*.xls') %>%
+  .[str_detect(., "Blank")]
+
+hplc_batch2_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch2, read_xls, skip = 1), 
+                                        purrr::map(blank_hplc_batch2, read_xls, skip = 1)) %>%
+  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
+  mutate(File = gsub("_", "-", File),
+         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
+         Day = case_when(str_detect(File, "Day0") ~ "0",
+                         str_detect(File, "Day2") ~ "2",
+                         str_detect(File, "Day15") ~ "15",
+                         TRUE ~ "34"),
+         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
+         Batch_number = "2",
+         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
+
+colnames(hplc_batch2_step1.1)[1] <- "m.z"
+
+all_hplc <- rbind(hplc_batch0_step1.1,
+                  hplc_batch1_step1.1,
+                  hplc_batch2_step1.1) %>% arrange(RT)
+
+## Stable Isotope data
+stable_isotope <- read_xlsx(path = paste0(getwd(), "/data/Isotope/Mikroplastik_Results_2ndRound_KCN-1.xlsx")) %>% 
+  tidyr::pivot_longer(cols = 4:5, names_to = "replicate", values_to = "Value") %>% 
+  dplyr::mutate(Value = abs(Value))
+```
+
+## STEP 1.2: Collapsing compounds based on RT1, RT2, Ion1 threshold --------------------------
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+atdgcms_grouped <- grouping_comp(atdgcms_step1.1,
+                                 rtthres1 = 0.005,
+                                 mzthres = 0.05,
+                                 type = "ATDGCMS")
+
+# HPLCTOFMS
+# Apply different alignment to 2 parts of chromatogram via rtthres1 (RT <= 6 min) and rtthres2 (RT > 6 min)
+hplc_batch_grouped <- grouping_comp(all_hplc,
+                                    split_time = 6,
+                                    rtthres1 = 0.4,
+                                    rtthres2 = 0.28,
+                                    mzthres = 0.0005,
+                                    type = "HPLCTOFMS")
+```
+
+## Step 1.3: Remove all the benchmark compounds for HPLC (4) and GC (1 - Toluene)
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+#ATDGCMS
+idx <- which(atdgcms_grouped$m.z >= 98 & 
+               atdgcms_grouped$m.z <= 98.5 & 
+               atdgcms_grouped$RT > 13.4 & 
+               atdgcms_grouped$RT < 13.5)
+atdgcms_grouped <- atdgcms_grouped[-idx,]
+
+# HPLC
+hplc_benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+# Search for compound in combined_df2_grouped that fall in the window of benchmark' molecular ions
+# Batch 0
+hplc_benchmark_idx <- c()
+for (mz in hplc_benchmark_mz) {
+  idx <- which(hplc_batch_grouped$m.z <= (mz + 0.0005) & hplc_batch_grouped$m.z >= (mz - 0.0005))
+  # collect all these indices of benchmark compounds
+  hplc_benchmark_idx <- c(hplc_benchmark_idx, idx)
+}
+hplc_batch_grouped <- hplc_batch_grouped[-hplc_benchmark_idx,]
+```
+
+
+## Step 2: Blank subtraction & Remove all detections with negative peak area
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS --------------
+# Create list to store temp dfs
+process_atdgcms <- function(atdgcms_grouped) {
+  result_list <- list()
+  idx <- 1
+  
+  # Iterate through each unique feature
+  for (feature in unique(atdgcms_grouped$Feature)) {
+    temp <- atdgcms_grouped[atdgcms_grouped$Feature == feature, ]
+    
+    # If no blanks exist for the current feature, add it as is
+    if (identical(which(temp$type == "Blanks"), integer(0))) {
+      result_list[[idx]] <- temp
+      idx <- idx + 1
+      next
+    } else {
+      # Calculate the mean and sd for blanks
+      blank_idx <- which(temp$type == "Blanks")
+      blank_mean <- base::mean(temp[blank_idx,]$Area, na.rm = TRUE)
+      blank_sd   <- stats::sd(temp[blank_idx,]$Area, na.rm = TRUE)
+      
+      # Exclude blanks from further processing
+      temp <- temp[temp$type != "Blanks", ]
+      
+      # Adjust the 'Area' for each sample within the feature
+      for (sample in unique(temp$File)) {
+        sample_idx <- which(temp$File == sample)
+        temp[sample_idx,]$Area <- temp[sample_idx,]$Area - blank_mean
+        
+        # Keep only those entries with adjusted Area > 0 and > 3 * blank_sd
+        positive_idx <- which(temp$Area > 0 & temp$Area > 3 * blank_sd)
+        temp <- temp[positive_idx, ]
+      }
+    }
+    
+    # Append processed data frame for this feature
+    result_list[[idx]] <- temp
+    idx <- idx + 1
+  }
+   
+  output <- dplyr::bind_rows(result_list)
+  return(output)
+}
+
+# For positive values => combine data again to 1 grand data frame
+atdgcms_adjusted_step3 <- process_atdgcms(atdgcms_grouped)
+
+# HPLCTOFMS  --------------
+hplc_result_list <- list()
+idx <- 1
+
+# Iterate through each batch
+for (batch in unique(hplc_batch_grouped$Batch_number)) {
+  # Iterate through each unique feature within each batch
+  for (feature in unique(hplc_batch_grouped$Feature)) {
+    temp <- hplc_batch_grouped[which(hplc_batch_grouped$Feature == feature & hplc_batch_grouped$Batch_number == batch), ]
+    
+    # If no blanks exist for the current feature, add it as is
+    if (identical(which(temp$type == "Blanks"), integer(0))) {
+      hplc_result_list[[idx]] <- temp
+      idx <- idx + 1
+      next
+    } else { # if blanks exist for the current feature in the current batch number
+      # Calculate the mean and sd for blanks
+      blank_idx <- which(temp$type == "Blanks")
+      blank_mean <- base::mean(temp[blank_idx,]$Height, na.rm = TRUE)
+      blank_sd   <- stats::sd(temp[blank_idx,]$Height, na.rm = TRUE)
+      
+      # Exclude blanks from further processing
+      temp <- temp[temp$type != "Blanks", ]
+      
+      # Adjust the 'Height' for each sample within the feature
+      for (sample in unique(temp$File)) {
+        sample_idx <- which(temp$File == sample)
+        temp[sample_idx,]$Height <- temp[sample_idx,]$Height - blank_mean
+        
+        # Keep only those entries with adjusted Height > 0 and > 3 * blank_sd
+        positive_idx <- which(temp$Height > 0 & temp$Height > (3 * blank_sd))
+        temp <- temp[positive_idx, ]
+      }
+    }
+    
+    # Append processed data frame for this feature
+    hplc_result_list[[idx]] <- temp
+    idx <- idx + 1
+  }
+}
+
+hplc_adjusted_step3 <- dplyr::bind_rows(hplc_result_list)
+```
+
+# Add info on Source and rename columns
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+# idx_list_filter1 <- comp_filter_opt(atdgcms_adjusted_step3)
+gc <- atdgcms_adjusted_step3 %>%
+  dplyr::filter(!is.na(Feature)) %>%
+  dplyr::select(File, Feature, m.z, RT, Area) %>%
+  mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+  dplyr::rename(Values = Area)
+
+gc$technique <- "GC"
+
+# HPLCTOFMS
+# idx_list_filter2 <- comp_filter_opt(hplc_adjusted_step3)
+hplc <- hplc_adjusted_step3 %>% # [idx_list_filter2[[1]],] %>%
+  # dplyr::filter(Day %notin% c("0", "2")) %>%
+  dplyr::filter(!is.na(Feature)) %>%
+  dplyr::select(File, Feature, 
+                # Day, 
+                m.z, RT, Height) %>%
+  dplyr::mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+  dplyr::rename(Values = Height)
+
+hplc$technique <- "HPLC"
+```
+
+## STEP 4: Trace metal data
+
+#### Data prepping
+- Problem with icpms_round1 versus. icpms_round2: round1 has Li [No gas] that round2 does not.
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Trace metal data
+icpms_round1 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx") %>% 
+  column_to_rownames(., var = "File")
+
+icpms_round2_batch1 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/icpms_round2_batch1_rawdata.xlsx") %>% 
+  column_to_rownames(., var = "File")
+
+icpms_round2_batch2 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx") %>% 
+  column_to_rownames(., var = "File")
+
+# 1) Select [H2] instead of [H2 HMI]----------------------
+library(stringr)
+
+remove_H2_HMI_modus <- function(icpms_df) {
+  strings <- colnames(icpms_df)
+  pattern <- "^(.*\\[ )([A-Za-z0-9 ]+)( \\])$"
+  metal_namedata <- data.frame(
+    original = strings,
+    prefix = str_extract(strings, "^.*\\["),
+    content = str_match(strings, pattern)[,3],
+    stringsAsFactors = FALSE
+  )
+  
+  metal_namedata <- metal_namedata %>% dplyr::filter(!str_detect(content, pattern = "H2 HMI"))
+  df <- icpms_df %>% dplyr::select(metal_namedata$original)
+  return(df)
+}
+
+icpms_round1 <- remove_H2_HMI_modus(icpms_round1)
+icpms_round2_batch1 <- remove_H2_HMI_modus(icpms_round2_batch1)
+icpms_round2_batch2 <- remove_H2_HMI_modus(icpms_round2_batch2)
+
+# 2) Between the ones that use [N2O] as analyzing modus -> figure out within the same metal element, which one has the highest "Recovery [%]" or if Recovery [%] is missing then lowest "U(k=2)" ---------------------------------------
+
+recovery_uncertainty_round1 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx") %>%
+  filter(`Element+Modus` %in% colnames(icpms_round1))
+
+recovery_uncertainty_round2_batch1 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx") %>%
+  filter(`Element+Modus` %in% colnames(icpms_round2_batch1))
+
+recovery_uncertainty_round2_batch2 <- readxl::read_excel("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx") %>%
+  filter(`Element+Modus` %in% colnames(icpms_round2_batch2))
+
+get_final_metal_names <- function(recovery_uncertainty) {
+  
+  # 1) Extract the first number
+  first_numbers <- sub(" .*", "", recovery_uncertainty$`Element+Modus`)
+  
+  # 2) Define a function to find duplicate indices
+  duplicate_indices <- function(vector) {
+    unique_elements <- unique(vector)
+    result <- list()
+    
+    for (element in unique_elements) {
+      indices <- which(vector == element)
+      if (length(indices) > 1) {
+        result[[element]] <- indices
+      }
+    }
+    
+    return(result)
+  }
+  
+  # Apply duplicate_indices to first_numbers
+  res <- duplicate_indices(first_numbers)
+  
+  # 3) For duplicates, pick either the row with the highest "Recovery [%]"
+  #    or if that is empty, the row with the lowest "U(k=2)"
+  recovery_uncertainty_checked <- c()
+  for (ele in seq_along(res)) {
+    temp <- recovery_uncertainty[res[[ele]], ]
+    idx1 <- temp[which.max(temp$`Recovery [%]`), ]
+    
+    # if no maximum Recovery row is found, pick the minimum U(k=2) row instead
+    if (identical(idx1, character(0))) {
+      chosen <- temp[which.min(temp$`U(k=2)`), ]$`Element+Modus`
+    } else {
+      chosen <- temp[which.max(temp$`Recovery [%]`), ]$`Element+Modus`
+    }
+    recovery_uncertainty_checked <- c(recovery_uncertainty_checked, chosen)
+  }
+  
+  # 4) Combine the unique rows (non-duplicates) plus the chosen duplicates
+  final_metal_names <- c(
+    recovery_uncertainty[-unlist(res, use.names = FALSE), ]$`Element+Modus`,
+    recovery_uncertainty_checked
+  )
+  
+  return(final_metal_names)
+}
+
+final_metal_names_round1 <- get_final_metal_names(recovery_uncertainty_round1)
+final_metal_names_round2_batch1 <- get_final_metal_names(recovery_uncertainty_round2_batch1)
+final_metal_names_round2_batch2 <- get_final_metal_names(recovery_uncertainty_round2_batch2)
+
+# subset dataframe for further analyses
+final_icpms_round1 <- icpms_round1 %>% 
+  dplyr::select(all_of(final_metal_names_round1))
+
+final_icpms_round2_batch1 <- icpms_round2_batch1 %>% 
+  dplyr::select(all_of(final_metal_names_round2_batch1))
+
+final_icpms_round2_batch2 <- icpms_round2_batch2 %>% 
+  dplyr::select(all_of(final_metal_names_round2_batch2))
+
+common_cols <- Reduce(intersect, list(names(final_icpms_round1), 
+                                      names(final_icpms_round2_batch1), 
+                                      names(final_icpms_round2_batch2)))
+combined_icpms_round1_round2 <- rbind(final_icpms_round1[common_cols], 
+                                      final_icpms_round2_batch1[common_cols],
+                                      final_icpms_round2_batch2[common_cols])
+View(combined_icpms_round1_round2)
+
+# 3) Final cleaning of name of metal elements (OPTIONAL) ----------------------------------
+# Function to process the strings
+process_string <- function(name_vector) {
+  # Remove everything after the square bracket
+  cleaned_vector <- str_extract(name_vector, "^[^\\[]+")
+  # Trim any trailing whitespace
+  cleaned_vector <- str_trim(cleaned_vector)
+  # Use a regular expression to remove the numerical parts
+  # Explanation of Regular Expression:
+  # 
+  # \\d+ matches one or more digits.
+  # *(-> *\\d+)? * optionally matches the pattern -> digits with any number of spaces around it.
+  # gsub function is used to find and replace the matching parts in the string with an empty string ("")
+  cleaned_vector <- gsub("\\d+ *(-> *\\d+)? *", "", cleaned_vector)
+  return(cleaned_vector)
+}
+
+# Apply the function to each element of the vector
+# colnames(combined_icpms_round1_round2) <- sapply(colnames(combined_icpms_round1_round2), process_string)
+
+# 4) Discard all metal that may appear in seawater - Sodium (Na), Magnesium (Mg), Potassium (K), Calcium (Ca), Sr (optional) --------------------------
+strings_to_remove <- c("Na", "Mg", "K", "Ca") #, "Sr")
+
+cols_to_remove <- unique(unlist(sapply(strings_to_remove, function(x) grep(x, colnames(combined_icpms_round1_round2)))))
+# remove the seawater metal from combined rounds ICP data
+combined_icpms_round1_round2 <- combined_icpms_round1_round2[, -cols_to_remove]
+
+icp <- combined_icpms_round1_round2 %>%
+  rownames_to_column(., var = "File")  %>% 
+  pivot_longer(., cols = 2:ncol(.), names_to = "Feature", values_to = "Values")
+
+icp$technique <- "ICP"
+icp <- icp %>%
+  mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+  mutate(Values = as.numeric(Values))
+```
+
+## Combine Label Info with raw data
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+p <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx"
+
+sampinfo <- readxl::read_excel(path = p)
+
+# joining data frame with sampinfo df
+icp <- left_join(x = icp ,
+                 y = sampinfo %>% dplyr::select(c(File, Plastic_type, Subcategory, Polymer)), 
+                 by = 'File') # %>% dplyr::filter(!is.na(Similar_type))
+
+gc <- left_join(x = gc ,
+                y = sampinfo %>% dplyr::select(c(File, Plastic_type, Subcategory, Polymer)), 
+                by = 'File') # %>% dplyr::filter(!is.na(Similar_type))
+
+hplc <- left_join(x = hplc ,
+                  y = sampinfo %>% dplyr::select(c(File, Plastic_type, Subcategory, Polymer)), 
+                  by = 'File') # %>% dplyr::filter(!is.na(Similar_type))
+
+## Aggregate Day 15 and 34 by mean
+# new_hplc <- hplc %>%
+#   group_by(Feature, Subcategory, Polymer, technique) %>%
+#   summarise(Mean_Values = mean(Values, na.rm = TRUE), .groups = "drop")
+
+gc_hplc <- bind_rows(gc, hplc)
+
+gc_icp <- bind_rows(icp, 
+                    gc %>% dplyr::select(-c("m.z", "RT"))) # %>% dplyr::filter(!is.na(Similar_type))
+
+hplc_icp <- bind_rows(icp, 
+                      hplc %>% dplyr::select(-c("m.z", "RT"))) # %>% dplyr::filter(!is.na(Similar_type))
+
+gc_hplc_icp <- bind_rows(icp, 
+                         gc_hplc %>% dplyr::select(-c("m.z", "RT"))) # %>% dplyr::filter(!is.na(Similar_type))
+
+```
+
+
+## Data cleaning
+### Summary of data before feature reduction
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+df_in <- gc_hplc_icp
+# 1. Process Data ONCE (Consolidated Pivot)
+# We calculate the mean for duplicates and pivot to wide format immediately
+df_wide <- df_in %>% 
+  dplyr::select(File, Plastic_type, Source, Polymer, Feature, technique, Values) %>%
+  dplyr::group_by(File, Source, Polymer, Plastic_type, technique, Feature) %>%
+  dplyr::summarise(Values = mean(Values, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = Feature, values_from = Values) %>%
+  tibble::column_to_rownames(var = "File") 
+
+# 2. Separate Numeric Data from Metadata
+# Identify metadata columns (non-numeric) to exclude them from calculations
+df_numeric <- df_wide %>% dplyr::select(where(is.numeric))
+
+# --- PART 1 & 2: Basic Statistics ---
+
+cat("Number of chemical features: ", ncol(df_numeric), "\n")
+
+# Note: Using df_numeric for dimensions to avoid diluting the % with metadata columns
+missing_pct <- sum(is.na(df_numeric)) / prod(dim(df_numeric)) * 100
+cat("Percentage of missing values (%):", round(missing_pct, 2), "\n")
+
+# --- PART 3: Correlations ---
+
+# Step 1: Calculate NA counts and Mean Response directly from the numeric matrix
+stats_df <- tibble::tibble(
+  Feature = colnames(df_numeric),
+  num_missing_values = colSums(is.na(df_numeric)),
+  mean_response = colMeans(df_numeric, na.rm = TRUE)
+)
+
+# Step 2: Check for Metadata Columns (The Fix)
+# We only calculate m/z and RT correlations if the columns actually exist
+if (all(c("m.z", "RT") %in% colnames(df_in))) {
+  
+  feature_meta <- df_in %>%
+    dplyr::group_by(Feature) %>%
+    dplyr::summarise(
+      m_z = mean(m.z, na.rm = TRUE),
+      retention_time = mean(RT, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Join and calculate all correlations
+  analysis_df <- stats_df %>% dplyr::left_join(feature_meta, by = "Feature")
+  
+  cat("Pearson (Mean Response vs Missing):", round(cor(analysis_df$mean_response, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (m/z vs Missing):          ", round(cor(analysis_df$m_z, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (RT vs Missing):           ", round(cor(analysis_df$retention_time, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  
+} else {
+  
+  # Fallback if m.z/RT are missing
+  cor_response <- cor(stats_df$mean_response, stats_df$num_missing_values, use = "pairwise.complete.obs")
+  
+  cat("Pearson (Mean Response vs Missing):", round(cor_response, 2), "\n")
+  message("\nNOTE: 'm.z' and 'RT' columns were not found in the input file. Those correlations were skipped.")
+}
+```
+
+### Helper function for feature reduction (regular; modified 80% rule and in-house option)
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ==============================================================================
+# MAIN FUNCTION: Process, Impute Zeros, and Filter (Regular / Class / In-House)
+# ==============================================================================
+process_and_filter <- function(df_input, 
+                               class_col = "Plastic_type", 
+                               threshold = 0.8, 
+                               filter_mode = "regular") { # "regular", "class", or "inhouse"
+  
+  # --- Step B: Pivot to Wide Format ---
+  df_wide <- df_input %>% 
+    dplyr::select(File, Source, Polymer, Feature, technique, Values, all_of(class_col)) %>%
+    dplyr::group_by(File, Source, Polymer, technique, Feature, across(all_of(class_col))) %>%
+    dplyr::summarise(Values = mean(Values, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::pivot_wider(names_from = Feature, values_from = Values) %>%
+    tibble::column_to_rownames(var = "File") %>%
+    dplyr::relocate(any_of(c(class_col, "technique", "Source", "Polymer")), .before = 1)
+  
+  # Metadata columns
+  meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+  
+  # --- Step D: Apply Feature Filtering Logic ---
+  
+  feature_data <- df_wide %>% dplyr::select(all_of(setdiff(names(df_wide), meta_cols)))
+  kept_features <- c()
+  
+  if (filter_mode == "regular") {
+    # Mode 1: Global 80% Rule
+    cat("Applying 'Regular' filtering (Global threshold)...\n")
+    presence_rate <- colMeans(!is.na(feature_data))
+    kept_features <- names(presence_rate[presence_rate >= threshold])
+    
+  } else if (filter_mode == "class") {
+    # Mode 2: Class-Based 80% Rule
+    cat(paste0("Applying 'Class' filtering (Threshold met in at least one '", class_col, "')...\n"))
+    
+    class_split <- split(df_wide, df_wide[[class_col]])
+    class_kept_list <- list()
+    
+    for (cls in names(class_split)) {
+      cls_idx <- which(df_wide[[class_col]] == cls)
+      cls_dat <- feature_data[cls_idx, ]
+      cls_rate <- colMeans(!is.na(cls_dat))
+      class_kept_list[[cls]] <- names(cls_rate[cls_rate >= threshold])
+    }
+    kept_features <- Reduce(union, class_kept_list)
+    
+  } else if (filter_mode == "inhouse") {
+    # Mode 3: In-House Filtering
+    cat("Applying 'In-House' filtering strategy...\n")
+    
+    # 1. Calculate Statistics per Feature
+    classes <- unique(df_wide[[class_col]])
+    n_feats <- ncol(feature_data)
+    
+    # Pre-allocate matrices for speed
+    class_presence_mat <- matrix(0, nrow = length(classes), ncol = n_feats)
+    class_counts_mat   <- matrix(0, nrow = length(classes), ncol = n_feats)
+    
+    for (i in seq_along(classes)) {
+      cls <- classes[i]
+      cls_rows <- which(df_wide[[class_col]] == cls)
+      cls_dat  <- feature_data[cls_rows, , drop=FALSE]
+      
+      # A. % Present in this class (for Rule 1)
+      class_presence_mat[i, ] <- colMeans(!is.na(cls_dat))
+      
+      # B. Exact Count of data points in this class (for Rule 4)
+      class_counts_mat[i, ]   <- colSums(!is.na(cls_dat))
+    }
+    
+    # Feature Stats
+    global_presence      <- colMeans(!is.na(feature_data))
+    max_class_presence   <- apply(class_presence_mat, 2, max)
+    
+    total_data_points    <- colSums(class_counts_mat)     # Sum of all counts
+    n_classes_with_data  <- colSums(class_counts_mat > 0) # How many classes have at least 1 point
+    
+    # Key Metric for Rule 4: How many classes have >= 3 data points?
+    n_classes_with_3plus <- colSums(class_counts_mat >= 3)
+    
+    # 2. Apply The 4 Rules Logic
+    
+    # Rule 1: Missingness (Keep if Global > 10% OR Max Class > 90%)
+    keep_r1 <- (global_presence > 0.10) | (max_class_presence >= 0.90)
+    
+    # Rule 2: Singleton Sample (Keep if > 1 data point total)
+    keep_r2 <- total_data_points > 1
+    
+    # Rule 3: Singleton Category (Keep if > 1 category... UNLESS diagnostic)
+    is_diagnostic <- max_class_presence >= 0.90
+    keep_r3 <- (n_classes_with_data > 1) | is_diagnostic
+    
+    # Rule 4: Sparse Distribution 
+    # Logic: If present in >= 2 categories, we REQUIRE at least 2 categories to have >= 3 points.
+    # If present in < 2 categories (i.e. 1), this rule is skipped (True).
+    keep_r4 <- (n_classes_with_data < 2) | (n_classes_with_3plus >= 2)
+    
+    # FINAL DECISION: Feature must pass ALL checks
+    final_mask <- keep_r1 & keep_r2 & keep_r3 & keep_r4
+    kept_features <- colnames(feature_data)[final_mask]
+    
+  } else {
+    stop("Invalid filter_mode. Choose 'regular', 'class', or 'inhouse'.")
+  }
+  
+  # --- Step E: Build Final Dataframe ---
+  final_cols <- unique(c(meta_cols, kept_features))
+  df_filtered <- df_wide %>% dplyr::select(any_of(final_cols))
+  
+  return(list(
+    original_data = df_wide,
+    filtered_data = df_filtered,
+    kept_features = kept_features
+  ))
+}
+```
+
+### Feature reduction 1: Regular 80% rule - Remove feature if there are more than 80% MVs
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Replace 'gc_hplc_icp' with your actual dataframe name
+results <- process_and_filter(hplc, 
+                              class_col = "Plastic_type", 
+                              threshold = 0.8, 
+                              filter_mode = "regular")
+
+# B. Extract Data for Calculation
+df_final <- results$filtered_data
+df_orig  <- results$original_data
+
+# Define metadata columns to exclude from stats
+meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+
+# Get list of feature names only
+feats_final <- setdiff(names(df_final), meta_cols)
+feats_orig  <- setdiff(names(df_orig), meta_cols)
+
+# --- 1. Percentage of chemical features retained (%) ---
+pct_features <- (length(feats_final) / length(feats_orig)) * 100
+cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 2), "%\n"))
+
+# --- 2. Percentage of missing values after feature reduction (%) ---
+# We calculate this ONLY on the feature columns of the filtered dataset
+if(length(results$kept_features) > 0) {
+  vals_final <- df_final[, feats_final]
+  pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
+  cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
+} else {
+  vals_final <- df_final[, feats_final]
+  cat(paste0("2. Percentage of missing values after feature reduction: ", 0, "%\n"))
+}
+
+
+# --- 3. Percentage of signal response after feature reduction (%) ---
+# Sum of intensities in filtered data / Sum of intensities in original (zero-filled) data
+signal_final <- sum(vals_final, na.rm = TRUE)
+signal_orig  <- sum(df_orig[, feats_orig], na.rm = TRUE)
+pct_signal   <- (signal_final / signal_orig) * 100
+
+cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
+```
+
+### Feature reduction 2: Modified 80% rule
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Replace 'gc_hplc_icp' with your actual dataframe name
+results <- process_and_filter(gc_hplc_icp, 
+                              class_col = "Plastic_type", 
+                              threshold = 0.8, 
+                              filter_mode = "class")
+
+# B. Extract Data for Calculation
+df_final <- results$filtered_data
+df_orig  <- results$original_data
+
+# Define metadata columns to exclude from stats
+meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+
+# Get list of feature names only
+feats_final <- setdiff(names(df_final), meta_cols)
+feats_orig  <- setdiff(names(df_orig), meta_cols)
+
+# --- 1. Percentage of chemical features retained (%) ---
+pct_features <- (length(feats_final) / length(feats_orig)) * 100
+cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 2), "%\n"))
+
+# --- 2. Percentage of missing values after feature reduction (%) ---
+# We calculate this ONLY on the feature columns of the filtered dataset
+if(length(results$kept_features) > 0) {
+  vals_final <- df_final[, feats_final]
+  pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
+  cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
+} else {
+  vals_final <- df_final[, feats_final]
+  cat(paste0("2. Percentage of missing values after feature reduction: ", 0, "%\n"))
+}
+
+# --- 3. Percentage of signal response after feature reduction (%) ---
+# Sum of intensities in filtered data / Sum of intensities in original (zero-filled) data
+signal_final <- sum(vals_final, na.rm = TRUE)
+signal_orig  <- sum(df_orig[, feats_orig], na.rm = TRUE)
+pct_signal   <- (signal_final / signal_orig) * 100
+
+cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
+```
+
+
+### Feature reduction 3: In-house Comprehensive feature filtering 
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+results <- process_and_filter(gc_hplc_icp, 
+                              class_col = "Plastic_type", 
+                              threshold = 0.8, 
+                              filter_mode = "inhouse")
+
+# B. Extract Data for Calculation
+df_final <- results$filtered_data
+df_orig  <- results$original_data
+
+# Define metadata columns to exclude from stats
+meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+
+# Get list of feature names only
+feats_final <- setdiff(names(df_final), meta_cols)
+feats_orig  <- setdiff(names(df_orig), meta_cols)
+
+# --- 1. Percentage of chemical features retained (%) ---
+pct_features <- (length(feats_final) / length(feats_orig)) * 100
+cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 2), "%\n"))
+
+# --- 2. Percentage of missing values after feature reduction (%) ---
+# We calculate this ONLY on the feature columns of the filtered dataset
+if(length(results$kept_features) > 0) {
+  vals_final <- df_final[, feats_final]
+  pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
+  cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
+} else {
+  vals_final <- df_final[, feats_final]
+  cat(paste0("2. Percentage of missing values after feature reduction: ", 0, "%\n"))
+}
+
+# --- 3. Percentage of signal response after feature reduction (%) ---
+# Sum of intensities in filtered data / Sum of intensities in original (zero-filled) data
+signal_final <- sum(vals_final, na.rm = TRUE)
+signal_orig  <- sum(df_orig[, feats_orig], na.rm = TRUE)
+pct_signal   <- (signal_final / signal_orig) * 100
+
+cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
+```
+
+### **Select shared features between store-bought and environmental**
+
+**UPDATE 13 Dec 2025: I edited the feature reduction to work more correct than before and i do feature reduction and then finding shared features between SB and ENV. **
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Find shared features between SB and ENV
+shared_feature_filtering <- function(dataset, feat_reduc_mode) {
+  SB <- dataset %>% dplyr::filter(Source == "Store-Bought")
+  ENV <- dataset %>% dplyr::filter(Source == "Environmental")
+  
+  shared_cols_SB_ENV <- Reduce(intersect, list(unique(SB$Feature), 
+                                               unique(ENV$Feature)))
+  
+  combined_SB_ENV_shared_cols_ntr <- rbind(SB %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV),
+                                           ENV %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV))
+  output <- process_and_filter(combined_SB_ENV_shared_cols_ntr, 
+                               class_col = "Plastic_type", 
+                               threshold = 0.8, 
+                               filter_mode = feat_reduc_mode)$filtered_data
+  return(output)
+}
+
+# Then do data cleaning - change variable name accordingly to data combinations
+gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(gc, 
+                                                                               feat_reduc_mode = "inhouse")
+hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(hplc, 
+                                                                                 feat_reduc_mode = "inhouse")
+icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(icp, 
+                                                                                feat_reduc_mode = "inhouse")
+```
+
+**Update 13 Dec 2025: For data fusion, if i run it like this: gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(gc_hplc, feat_reduc_mode = "inhouse") => The amount of feature is too large (18759 features) which is not feasible at all for RFA feature selection approach or pretty much for any feature selection approach in RF classification later on.**
+
+    **==> SOLUTION:  I create data fusion by combining the reduced feature , FOR EXAMPLE, to create gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 data, I first do Zero Replacement for all the features that only native to an analytical technique but not the other. Afterwards, I only select features from individual dataset that makeup the data fusion, for example to create gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025; hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 and icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 to create this data fusion combinations.**
+                                                                                    
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# --- Step A: Map Features to Techniques (Fast Lookup) ---
+data_fusion <- function(df_input, 
+                        source_feats,
+                        class_col = "Plastic_type") {
+  tech_map <- df_input %>% 
+    dplyr::distinct(Feature, technique)
+  
+  all_techs <- unique(tech_map$technique)
+  
+  # --- Step B: Pivot to Wide Format ---
+  df_wide <- df_input %>% 
+    dplyr::select(File, Source, Polymer, Feature, technique, Values, all_of(class_col)) %>%
+    dplyr::group_by(File, Source, Polymer, technique, Feature, across(all_of(class_col))) %>%
+    dplyr::summarise(Values = mean(Values, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::pivot_wider(names_from = Feature, values_from = Values) %>%
+    tibble::column_to_rownames(var = "File") %>%
+    dplyr::relocate(any_of(c(class_col, "technique", "Source", "Polymer")), .before = 1)
+  
+  # Metadata columns
+  meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+  
+  # --- Step C: Fast Zero Replacement (Matrix Method) ---
+  if (length(all_techs) > 1) {
+    cat("Detected multiple techniques (", paste(all_techs, collapse=", "), "). Applying Fast Zero Replacement...\n")
+    
+    feat_cols <- setdiff(names(df_wide), meta_cols)
+    mat <- as.matrix(df_wide[, feat_cols])
+    row_techs <- df_wide$technique
+    
+    for (tech in all_techs) {
+      tech_feats <- tech_map$Feature[tech_map$technique == tech]
+      target_cols <- intersect(colnames(mat), tech_feats)
+      
+      if (length(target_cols) > 0) {
+        target_rows <- which(row_techs != tech)
+        if (length(target_rows) > 0) {
+          sub_mat <- mat[target_rows, target_cols, drop = FALSE]
+          sub_mat[is.na(sub_mat)] <- 0
+          mat[target_rows, target_cols] <- sub_mat
+        }
+      }
+    }
+    df_wide[, feat_cols] <- mat
+  } else {
+    cat("Detected single technique. Skipping Zero Replacement.\n")
+  }
+  
+  final_feat_cols <- c()
+  for (source in source_feats) {
+    f <- setdiff(names(source), meta_cols)
+    final_feat_cols <- c(final_feat_cols, f)
+  }
+  output <- df_wide[, c(meta_cols, unique(final_feat_cols))]
+  return(output)
+}
+
+gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_hplc,
+                                                                       source_feats = list(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+                                                                                           hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
+gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_icp,
+                                                                      source_feats = list(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+                                                                                          icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
+hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(hplc_icp,
+                                                                        source_feats = list(hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+                                                                                            icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
+gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_hplc_icp,
+                                                                           source_feats = list(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+                                                                                               hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+                                                                                               icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
+
+save(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, 
+     hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+     icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+     gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+     gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+     hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+     gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, file = "my_exported_data_13Dec2025_new 7 data combo for testing imp x norm.RData")
+```
+
+# Imputation and Normalization methods
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+impute_train_apply <- function(X_train, X_test, imp_name, k = 5){
+  
+  if(imp_name == "mean_imputation"){
+    mu <- sapply(X_train, function(x) mean(x, na.rm = TRUE))
+    fill <- function(X){
+      X2 <- X
+      for(nm in names(X2)){
+        idx <- is.na(X2[[nm]])
+        if(any(idx)) X2[[nm]][idx] <- mu[[nm]]
+      }
+      X2
+    }
+    return(list(train = fill(X_train), test = fill(X_test)))
+  }
+  
+  if(imp_name == "median_imputation"){
+    md <- sapply(X_train, function(x) median(x, na.rm = TRUE))
+    fill <- function(X){
+      X2 <- X
+      for(nm in names(X2)){
+        idx <- is.na(X2[[nm]])
+        if(any(idx)) X2[[nm]][idx] <- md[[nm]]
+      }
+      X2
+    }
+    return(list(train = fill(X_train), test = fill(X_test)))
+  }
+  
+  if(imp_name == "zero_imputation"){
+    fill <- function(X){
+      X2 <- X
+      for(nm in names(X2)){
+        idx <- is.na(X2[[nm]])
+        if(any(idx)) X2[[nm]][idx] <- 0
+      }
+      X2
+    }
+    return(list(train = fill(X_train), test = fill(X_test)))
+  }
+  
+  if(imp_name == "half_min_imputation"){
+    halfmins <- sapply(X_train, function(x){
+      nz <- x[!is.na(x) & x > 0]
+      if(length(nz) > 0) min(nz) / 2 else 0
+    })
+    fill <- function(X){
+      X2 <- X
+      for(nm in names(X2)){
+        idx <- is.na(X2[[nm]])
+        if(any(idx)) X2[[nm]][idx] <- halfmins[[nm]]
+      }
+      X2
+    }
+    return(list(train = fill(X_train), test = fill(X_test)))
+  }
+  
+  # Practical trainable replacements for leakage-hard cases
+  # Update 8 Dec 2025 - from Discussion with Scott's:  avoid impute with multiple values because it will increase computational time and generate lots of uneven replacement values
+  if(imp_name == "random_forest_imputation"){
+    pp <- caret::preProcess(X_train, method = "bagImpute")
+    return(list(train = predict(pp, X_train),
+                test  = predict(pp, X_test)))
+  }
+  
+  if(imp_name == "knn_imputation"){
+    pp <- caret::preProcess(X_train, method = c("center","scale","knnImpute"), k = k)
+    return(list(train = predict(pp, X_train),
+                test  = predict(pp, X_test)))
+  }
+  
+  stop("Unsupported imputer in train-apply mode: ", imp_name)
+}
+
+no_normalization <- function(x) x
+
+normalize_train_apply <- function(X_train, X_test, norm_name){
+  
+  if(norm_name == "No_normalization"){
+    return(list(train = X_train, test = X_test))
+  }
+  
+  if(norm_name == "TSN_Normalization"){
+    tsn <- function(X){
+      rs <- rowSums(X, na.rm = TRUE)
+      rs[rs == 0] <- 1
+      as.data.frame(sweep(X, 1, rs, "/"))
+    }
+    return(list(train = tsn(X_train), test = tsn(X_test)))
+  }
+  
+  if(norm_name == "Min_Max_Scaler"){
+    mins <- apply(X_train, 2, min, na.rm = TRUE)
+    maxs <- apply(X_train, 2, max, na.rm = TRUE)
+    rng  <- maxs - mins
+    rng[rng == 0] <- 1
+    
+    scale_mm <- function(X){
+      Xmat <- as.matrix(X)
+      Xmat <- sweep(Xmat, 2, mins, "-")
+      Xmat <- sweep(Xmat, 2, rng, "/")
+      as.data.frame(Xmat)
+    }
+    return(list(train = scale_mm(X_train), test = scale_mm(X_test)))
+  }
+  
+  if(norm_name == "Z_Score_Normalization"){
+    mu  <- colMeans(X_train, na.rm = TRUE)
+    sdv <- apply(X_train, 2, sd, na.rm = TRUE)
+    sdv[sdv == 0] <- 1
+    
+    zfun <- function(X){
+      Xmat <- as.matrix(X)
+      Xmat <- sweep(Xmat, 2, mu, "-")
+      Xmat <- sweep(Xmat, 2, sdv, "/")
+      as.data.frame(Xmat)
+    }
+    return(list(train = zfun(X_train), test = zfun(X_test)))
+  }
+  
+  stop("Unsupported normalizer in train-apply mode: ", norm_name)
+}
+
+impute_norm_train_apply <- function(X_train, X_test, imp_name, norm_name){
+  imp <- impute_train_apply(X_train, X_test, imp_name)
+  normalize_train_apply(imp$train, imp$test, norm_name)
+}
+
+no_normalization <- function(x) x
+
+###############################
+##  4. Cluster resolution  ##
+###############################
+
+## Calculate cluster resolution using the first two PCA components
+calculate_cluster_resolution <- function(data1, data2) {
+  centroid1 <- colMeans(data1)
+  centroid2 <- colMeans(data2)
+  
+  # Computes the Euclidean distance With Dim.1 as x-axis and Dim.2 as y-axis
+  centroid_distance <-  sqrt((centroid1[1][[1]] - centroid2[1][[1]])^2 + (centroid1[2][[1]] - centroid2[2][[1]])^2)
+  
+  avg_distance1 <- mean(sqrt(rowSums((as.matrix(data1) - 
+                       matrix(centroid1, nrow = nrow(data1), ncol = ncol(data1), byrow = TRUE))^2)))
+  avg_distance2 <- mean(sqrt(rowSums((as.matrix(data2) - 
+                       matrix(centroid2, nrow = nrow(data2), ncol = ncol(data2), byrow = TRUE))^2)))
+  
+  resolution <- centroid_distance / (avg_distance1 + avg_distance2)
+  return(resolution)
+}
+
+## Compute average cluster resolution over all pairs of groups
+calculate_average_cluster_resolution <- function(X, group_vector) {
+  pca_model <- res.pca <- FactoMineR::PCA(
+    X,
+    scale.unit = FALSE,
+    graph = FALSE)
+  scores <- as.data.frame(pca_model$ind$coord[, 1:2])
+  
+  group <- as.factor(group_vector)
+  group_levels <- levels(group)
+  
+  pair_resolutions <- c()
+  
+  for (i in 1:(length(group_levels) - 1)) {
+    for (j in (i + 1):length(group_levels)) {
+      data1 <- scores[group == group_levels[i], , drop = FALSE]
+      data2 <- scores[group == group_levels[j], , drop = FALSE]
+      
+      if (nrow(data1) > 1 && nrow(data2) > 1) {
+        res <- calculate_cluster_resolution(data1, data2)
+        pair_resolutions <- c(pair_resolutions, res)
+      }
+    }
+  }
+  
+  avg_resolution <- mean(pair_resolutions, na.rm = TRUE)
+  return(avg_resolution)
+}
+
+mcc_multiclass <- function(true, pred) {
+  true <- factor(true)
+  pred <- factor(pred, levels = levels(true))
+  cm <- table(true, pred)
+  
+  # Gorodkin multi-class MCC
+  t_sum <- rowSums(cm)
+  p_sum <- colSums(cm)
+  n <- sum(cm)
+  c <- sum(diag(cm))
+  
+  sum_pk_tk <- sum(p_sum * t_sum)
+  sum_pk2   <- sum(p_sum^2)
+  sum_tk2   <- sum(t_sum^2)
+  
+  numerator <- (c * n) - sum_pk_tk
+  denom <- sqrt((n^2 - sum_pk2) * (n^2 - sum_tk2))
+  
+  if (denom == 0) return(NA_real_)
+  numerator / denom
+}
+
+evaluate_combo_oob <- function(df_train, type_col, remove_cols,
+                               imp_name, norm_name,
+                               ntree = 500, seed = 123,
+                               num_threads = 1) {
+  
+  X <- df_train %>% dplyr::select(-all_of(c(remove_cols, type_col))) %>% as.data.frame()
+  y <- df_train[[type_col]]
+  
+  keep_cols <- names(X)[!sapply(X, function(v) all(is.na(v)))]
+  X <- X[, keep_cols, drop = FALSE]
+  
+  if (ncol(X) < 1) return(list(OOB_MCC = NA_real_))
+  if (length(unique(y)) < 2) return(list(OOB_MCC = NA_real_))
+  
+  pp <- tryCatch(
+    impute_norm_train_apply(X, X, imp_name, norm_name),
+    error = function(e) NULL
+  )
+  if (is.null(pp)) return(list(OOB_MCC = NA_real_))
+  
+  Xp <- pp$train
+  if (any(is.na(Xp)) || any(!is.finite(as.matrix(Xp)))) {
+    return(list(OOB_MCC = NA_real_))
+  }
+  
+  y_fac <- factor(y)
+  p     <- ncol(Xp)
+  mtry  <- max(1, floor(sqrt(p)))
+  
+  train_df <- data.frame(.Class = y_fac, Xp, check.names = FALSE)
+  
+  set.seed(seed)
+  rf <- ranger::ranger(
+    dependent.variable.name = ".Class",
+    data        = train_df,
+    num.trees   = ntree,
+    mtry        = mtry,
+    splitrule   = "gini",
+    importance  = "impurity",
+    oob.error   = TRUE,
+    probability = FALSE,
+    num.threads = num_threads
+  )
+  
+  oob_pred <- rf$predictions
+  if (is.null(oob_pred)) {
+    oob_pred <- predict(rf, data = train_df)$predictions
+  }
+  
+  oob_pred <- factor(oob_pred, levels = levels(y_fac))
+  mcc <- mcc_multiclass(y_fac, oob_pred)
+  
+  list(OOB_MCC = mcc)
+}
+
+##################################################################################
+##   6. Final Workflow: Iterate Over Datasets, Imputation, and Normalization    ##
+##################################################################################
+imputation_methods <- c(
+  "mean_imputation",
+  "median_imputation",
+  "zero_imputation",
+  "half_min_imputation"
+)
+
+normalization_methods <- c(
+  "No_normalization",
+  "TSN_Normalization",
+  "Min_Max_Scaler",
+  "Z_Score_Normalization"
+)
+
+find_best_impute_normalize <- function(df_train,
+                                       type_col,
+                                       remove_cols,
+                                       ntree_screen = 500) {
+  
+  X <- df_train %>% dplyr::select(-all_of(c(remove_cols, type_col))) %>% as.data.frame()
+  y <- df_train[[type_col]]
+  
+  results_list <- list()
+  
+  for(imp_name in imputation_methods){
+    for(norm_name in normalization_methods){
+      
+      oob_res <- evaluate_combo_oob(
+        df_train, type_col, remove_cols,
+        imp_name, norm_name,
+        ntree = ntree_screen
+      )
+      
+      # Unsupervised metrics on train only
+      pp_self <- tryCatch(
+        impute_norm_train_apply(X, X, imp_name, norm_name),
+        error = function(e) NULL
+      )
+      if(is.null(pp_self)) next
+      
+      X_norm <- pp_self$train
+      if(any(is.na(X_norm)) || any(!is.finite(as.matrix(X_norm)))) next
+      
+      cluster_res <- calculate_average_cluster_resolution(X_norm, y)
+      
+      orig_corr <- tryCatch(cor(X, use = "pairwise.complete.obs"), error = function(e) NULL)
+      imp_corr  <- tryCatch(cor(X_norm, use = "pairwise.complete.obs"), error = function(e) NULL)
+      
+      corr_score <- NA_real_
+      if (!is.null(orig_corr) && !is.null(imp_corr) &&
+          all(dim(orig_corr) == dim(imp_corr)) && ncol(orig_corr) > 1) {
+        corr_score <- suppressWarnings(
+          cor(orig_corr[upper.tri(orig_corr)],
+              imp_corr [upper.tri(imp_corr)],
+              use = "complete.obs")
+        )
+      }
+      
+      # KS on train only
+      observed_all <- c(); imputed_all <- c()
+      for(col in names(X)) {
+        if(any(is.na(X[[col]])) && any(!is.na(X[[col]]))){
+          observed_all <- c(observed_all, X[[col]][!is.na(X[[col]])])
+          imputed_all  <- c(imputed_all, X_norm[[col]])
+        }
+      }
+      ks_p <- if(length(observed_all) < 2 || length(imputed_all) < 2) NA else
+        tryCatch(stats::ks.test(observed_all, imputed_all)$p.value, error = function(e) NA)
+      
+      results_list[[length(results_list)+1]] <- data.frame(
+        Imputation     = imp_name,
+        Normalization  = norm_name,
+        OOB_MCC        = oob_res$OOB_MCC,
+        ClusterRes     = cluster_res,
+        CorrScore      = corr_score,
+        KS_p           = ks_p,
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+  
+  if (length(results_list) == 0) {
+    return(list(results_table = data.frame(), best_combo = data.frame()))
+  }
+  
+  df_results <- do.call(rbind, results_list)
+  
+  ord <- order(
+    -df_results$OOB_MCC,
+    -df_results$ClusterRes,
+    -df_results$CorrScore,
+    -df_results$KS_p
+  )
+  df_results$combined_rank <- NA_integer_
+  df_results$combined_rank[ord] <- seq_along(ord)
+  
+  best_row <- df_results[which.min(df_results$combined_rank), ]
+  list(results_table = df_results, best_combo = best_row)
+}
+```
+
+
+## Figure 2: PCA
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# select_feats <- c(run_rf_analysis_list_SB_and_ENV_train[[1]]$top_importance_results$top_100$selected_features, 
+#                   colnames(run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat)[1:5])
+
+# df <- run_rf_analysis_list_SB_and_ENV_train[[1]]$final_imp_norm_dat %>% 
+#        dplyr::select(all_of(select_feats)) %>%
+#        dplyr::relocate(Subcategory, Source, Polymer, technique, Plastic_type, .before = 1)
+
+df <- df_0.001_TSN %>% # run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
+  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, " ", Source))
+
+# Must have more than 3 samples per plastic type
+# df  <- df [!(df $Plastic_type %in% names(table(df $Plastic_type)[table(df $Plastic_type) < 3])),]
+
+res.pca <- FactoMineR::PCA(ncp =10,
+                           df %>% 
+                             dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique",  "Plastic_type_Source")), # %>% # ,  "Plastic_type_Source")),
+                             # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$rfa_selected_feats),
+                           scale.unit = FALSE,
+                           graph = FALSE)
+
+# Scree plot
+# fviz_screeplot(res.pca)
+
+# 1) Define a bold, color-blind–safe 9-color palette (Okabe–Ito + gray)
+# Biplot
+pca_plot <- factoextra::fviz_pca_biplot(res.pca,
+                                        axes = c(1,2), # PC1 and PC2
+                                        geom = c("point", "text"),
+                                        label = "none",
+                                        invisible = "var",
+                                        repel = TRUE,
+                                        pointsize = 5,
+                                        habillage = factor(df$Plastic_type),
+                                        # addEllipses = TRUE,
+                                        # ellipse.level=0.95,
+                                        ggtheme = ggplot2::theme_minimal(base_size = 25),
+                                        # title = "gc_SB_and_ENV_train - RFA features",
+                                        # xlab = "PC 1 (52.6%)",
+                                        # ylab = "PC 2 (36.2%)",
+                                        # xlim = c(-0.5, 0.8),
+                                        # ylim = c(-0.6, 0.45)
+                                        ) +
+  # if has error "Too few points to calculate an ellipse"
+  # ggforce::geom_mark_ellipse(aes(fill = Groups,
+                                 # color = Groups),
+                             # label.buffer = unit(40, 'mm')) +
+  theme(legend.position = 'bottom',
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()
+        )
+pca_plot
+
+ggsave(filename = paste0("Figure SI_GC_SB and ENV_0.0001-TSN_Plastic_type_", format(Sys.time(), "%d-%m-%Y"), ".tiff"), 
+       plot = pca_plot, 
+       device = "tiff",
+       compression = "lzw",
+       dpi = 600,        # Set DPI to 600
+       width = 28,       # Width in inches (adjust as needed)
+       height = 12,       # Height in inches (adjust as needed)
+       units = "in")
+```
+
+## Figure 2: HCA
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Data prep for HCA ---------------------
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
+  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
+
+hc_df <- df %>% 
+  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% #, "Plastic_type_Source")) %>%
+  dplyr::select(where(is.numeric)) %>%
+  as.data.frame()
+
+# --- Clean: remove bad rows & handle non-finite values ---
+# 1) Replace non-finite with 0 (or choose a more domain-specific imputation if appropriate)
+hc_df[!is.finite(as.matrix(hc_df))] <- 0
+
+# 2) Drop rows that are all zero (Bray–Curtis can yield NaN for empty rows)
+keep <- rowSums(hc_df, na.rm = TRUE) > 0
+hc_df_clean <- hc_df[keep, , drop = FALSE] #%>% 
+  # Select the features from best performance feature selection method
+  # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$rfa_selected_feats)
+labels_clean <- df$Plastic_type_Source[keep] # df$Plastic_type_Source[keep] 
+
+# 3) If any negatives remain, Bray–Curtis is invalid -> fall back to a metric that permits negatives
+use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
+
+if (use_bray) {
+  d <- vegan::vegdist(hc_df_clean, method = "manhattan")
+  link <- "average"
+} else {
+  # If your features were centered/scaled, Euclidean or Manhattan are appropriate.
+  # (Alternatively, if these are compositions, consider Aitchison with a small pseudocount.)
+  d <- dist(hc_df_clean, method = "robust.aitchison")
+  link <- "average"
+  message("Detected negative values; using Euclidean instead of Bray–Curtis.")
+}
+
+# --- Guard: ensure distance has no NA/NaN/Inf ---
+if (any(!is.finite(d))) {
+  stop("Distance matrix still has non-finite entries after cleaning. Re-check inputs.")
+}
+
+# --- Cluster & plot ---
+hca_samp <- hclust(d, method = link)
+
+cat("cophenetic correlation coefficient (CCC) from a hierarchical clustering (HCA) is:", cor(d, stats::cophenetic(hca_samp)), "\n")
+
+# tiff(filename = paste0("Figure SI_HCA_HPLC_SB_and_ENV_train_", format(Sys.time(), "%d-%m-%Y"),".tif"), width = 42*600, height = 15*600, res = 600, compression = "lzw")
+
+par(cex = 1)
+plot(hca_samp,
+     labels = labels_clean,
+     hang   = -1,
+     main   = "")
+# dev.off()
+```
+
+
+A smaller Aitchison distance between two samples would indicate that their compositional structures are similar in terms of the ratios between components.
+
+For selecting Dissimilarity Indices Calculated by vegan::vegdist(), since our data is continous, not normally distributed, and the data is sparse (meaning our data has lots of NA or NULL before data imputation, This basically because there are compounds that occur in some samples and not in the others). Manhattan dissimilarity index separating ATDGCMS and HPLCTOFMS into 2 big clusters, while Canberra//Aitchison//Robust.aitchison grouped ATDGCMS as a subgroup of a part of HPLCTOFMS data.
+
+Since for each observations of each sample, the sum of values of collapsed compounds is sum up to 100%, Aitchison or Robust.Aitchison are currently the best option for dissimilarity index.
+
+***Why Aitchison or Robust.Aitchison for OUR DATA, AKA. Compositional Data?***
+
+Compositional data have particular characteristics and constraints that standard distance metrics like Euclidean don't handle well. Here are some reasons why Aitchison distance is more suitable:
+
+**Closure Constraint:** Because the components in compositional data sum to a constant value (like 1 or 100%), the data is subject to a closure constraint. This constraint violates the assumption of independence between variables that many standard statistical techniques rely on. Aitchison distance accounts for this constraint.
+
+*Implications of Closure Constraint* *Loss of Degrees of Freedom:* Because of the closure constraint, one variable is effectively 'dependent' on the others. For instance, in our example, knowing the proportions of Additive A and Additive B is enough to determine the proportion of Additive C.
+
+*Spurious Correlations:* The closure constraint can lead to spurious or misleading correlations between variables. For example, an increase in the proportion of Additive A will necessarily result in a decrease in the sum of the proportions of Additives B and C, even if there's no biological or chemical reason for them to be inversely related.
+
+*Non-Independence of Components:* In compositional data, the components are not independent of each other, violating the assumptions of independence that many statistical tests and measures (like the Euclidean distance) rely on.
+
+*Comparisons are Relative:* In compositional data, what matters is the relative sizes of the components, not their absolute sizes. Any analysis should, therefore, focus on these relative proportions rather than absolute values.
+
+For these reasons, specialized statistical methods like Aitchison distance are often used for compositional data. These methods take the closure constraint into account and focus on the relative proportions of the different components, providing a more accurate and interpretable analysis.
+
+In this workflow on tracking microplastic additives in aquatic environments, understanding the closure constraint can be pivotal. If you're looking at the relative abundances of different types of plastic additives in water samples, those abundances are compositional data subject to the closure constraint. Using standard statistical techniques without accounting for this constraint could lead to misleading conclusions.
+
+**Relative Importance:** In compositional data, what's generally important is the relative proportion between components, rather than their absolute values. The Aitchison distance is designed to capture the relationships between these relative values effectively.
+
+**Log-Ratio Transformation:** The Aitchison distance is based on log-ratio transformations, which have been proven to be an effective way to analyze compositional data. The log-ratio removes the closure constraint, making the data easier to analyze statistically.
+
+**Handling Zeros:** The robust variant of Aitchison distance often includes techniques for handling zeros in compositional data, which are common and challenging to deal with.
+
+**Scale-Invariance:** Aitchison distance is scale-invariant, meaning that multiplying a component by a constant will not change the distance. This is crucial for compositional data, where only the relative relationships between components matter.
+
+**Interpretable:** The distance measure reflects compositional difference in a way that's meaningful within the context of the data, making it easier to understand and interpret the results.
+
+
+
+So with the dimensional reduction of compounds from n = 13046 to 33, we still achieve a somewhat good clustering result in which sample of the same category tends to cluster together.
+
+## Table S6: Correlation and covariance magnitude of features across 7 data combinations
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+## Before imp_norm   ===============================================
+numeric_df <- gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean %>% 
+  dplyr::select(where(is.numeric))
+cor_mat <- cor(numeric_df,
+               use    = "pairwise.complete.obs",
+               method = "pearson")
+cov_mat <- cov(numeric_df,
+               use    = "pairwise.complete.obs")
+# extract off‐diagonals
+cor_off <- cor_mat[upper.tri(cor_mat)]
+cov_off <- cov_mat[upper.tri(cov_mat)]
+
+# drop NAs before computing
+cor_off <- cor_off[!is.na(cor_off)]
+cov_off <- cov_off[!is.na(cov_off)]
+
+# now summary statistics
+avg_abs_cor  <- mean(abs(cor_off))
+fro_cov_off  <- sqrt( sum(cov_off^2) )
+
+round(avg_abs_cor,3)
+round(fro_cov_off,3)
+
+## After imp_norm  ===============================================
+numeric_df <- run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$final_imp_norm_dat %>% 
+  dplyr::select(where(is.numeric))
+
+# Average absolute pairwise correlation
+# 0 means no linear association anywhere.
+# 1 means every pair is perfectly (positively or negatively) correlated.
+# Pearson correlation matrix (pairwise complete observations)
+cor_mat <- cor(numeric_df,
+               use    = "pairwise.complete.obs",
+               method = "pearson")
+off_diag <- cor_mat[upper.tri(cor_mat)]
+avg_abs_cor <- mean(abs(off_diag))
+
+# Average absolute covariance
+# 0 means every pair is (on average) uncorrelated—though note you could have positive and negative covariances that cancel each other out if you didn’t take the absolute value.
+# Larger values mean more joint variability.
+# Covariance matrix (pairwise complete observations)
+cov_mat <- cov(numeric_df,
+               use    = "pairwise.complete.obs")
+# mean_abs_cor <- mean(abs(cor_mat[upper.tri(cor_mat)]))
+# mean_abs_cor
+
+cov_off <- cov_mat[upper.tri(cov_mat)]
+fro_cov_off <- sqrt( sum(cov_off^2) )
+
+round(avg_abs_cor,3)
+round(fro_cov_off,3)
+```
+
+## Table S8. Significant compounds identified via pair-wise tests between plastic categories across seven data combinations
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+list_pairwise_df <- list()
+for (i in 1:length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)) {
+  pw <- pairwise_significance_tests(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[i]]$final_imp_norm_dat, 
+                                    group_col = "Plastic_type", start_col_index = 6)
+  list_pairwise_df[[i]] <- pw$uncorrected %>%
+    mutate(adjusted_p = p.adjust(pval, method = "bonferroni")) %>%
+    filter(adjusted_p < 0.05) %>%
+    arrange(adjusted_p) %>%
+    dplyr::mutate(Datasets = names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i])
+}
+
+pw_df <- bind_rows(list_pairwise_df)
+write_xlsx(pw_df, path = "Table S8_Significant compounds identified via pair-wise tests between plastic categories.xlsx")
+```
+
+## Figure 3: Bar plot Comparing Feature selection - MCC score - 7 data combinations
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+df_list <- list()
+dataset_names <- c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")
+for (i in 1:length(names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025))) {
+  names <- names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i]
+  df_list[[i]] <- data.frame(time = round(c(dim(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$final_imp_norm_dat)[2],
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$sig_selected_feats),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$rfa_selected_feats),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_100$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_50$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_25$selected_features),
+                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_10$selected_features)), 3)) %>% dplyr::mutate(Dataset = dataset_names[i]) %>% dplyr::mutate(Selection = c("All features", "Pairwise", "RFA", "Top 100", "Top 50", "Top 25", "Top 10"))
+}
+View(bind_rows(df_list))
+write_xlsx(bind_rows(df_list), path = paste0("Computational fingerprinting paper_feature selection comparison_train SB+ENV_04Aug2025_number selected features_", format(Sys.time(), "%d-%m-%Y"), ".xlsx"))
+
+# PLot =============================
+feature_selection <- read_xlsx(path = "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/Computational fingerprinting paper_feature selection comparison_train SB+ENV_MCC score_time_feature number_04Aug2025.xlsx") %>%  
+  dplyr::mutate(Dataset = factor(Dataset, levels = c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")))
+
+feature_selection_plot <- ggplot(data = feature_selection, aes(x = Dataset, y = MCC, fill = `Feature selection`)) + 
+  geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
+  scale_fill_manual(values =  c('#8dd3c7','#ffffb3','#bebada','#fb8072','#80b1d3','#fdb462','#b3de69','#fccde5')) +  
+  scale_y_continuous(breaks = seq(from = 0, to = 1, by =.1), expand = c(0,0), limits = c(0, 1)) +
+  theme_bw(base_size = 20) +
+  theme(axis.text.x = element_text(size =20), axis.text.y = element_text(size =20))
+feature_selection_plot
+
+ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combinations_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+       plot = feature_selection_plot, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 18,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+```
+
+## Figure 4: Confusion matrices of training and testing on environmental plastics versus. training on store-bought plastics and testing on environmental plastics - 7 data combinations
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sb_train_only <- run_rf_analysis_list_SB_train$gc_USSB_train$conf_mat_sig
+sb_and_env_train <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$conf_mat_rfa
+
+ggsave(filename = paste0("Figure 4_confusion matrix_SB train only_", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+       plot = sb_train_only, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+
+ggsave(filename = paste0("Figure 4_confusion matrix_SB and ENV train", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+       plot = sb_and_env_train, 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+```
+
+## Figure SI (For Roxana's paper): Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
+
+(UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(circlize)
+
+# Data frame , 1column is the Analytical dataset, 1 column is the Plastic type, 1 column is the number of correctly classified plastic product 
+prob_mat_list <- list(run_rf_analysis_list_SB_and_ENV_train$gc_SB_and_ENV_train$prob_matrix_sig,
+                      run_rf_analysis_list_SB_and_ENV_train$hplc_SB_and_ENV_train$prob_matrix_rfa,
+                      run_rf_analysis_list_SB_and_ENV_train$icp_SB_and_ENV_train$prob_matrix_rfa,
+                      run_rf_analysis_list_SB_and_ENV_train$gc_icp_SB_and_ENV_train$top_importance_results$top_10$prob_matrix_top,
+                      run_rf_analysis_list_SB_and_ENV_train$gc_hplc_SB_and_ENV_train$prob_matrix_rfa,
+                      run_rf_analysis_list_SB_and_ENV_train$hplc_icp_SB_and_ENV_train$prob_matrix_sig,
+                      run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$prob_matrix,
+                      run_rf_analysis_list_SB_only$hplc_SB$prob_matrix_rfa,
+                      run_rf_analysis_list_SB_only$icp_SB$prob_matrix_rfa,
+                      run_rf_analysis_list_SB_only$hplc_icp_SB$top_importance_results$top_50$prob_matrix_top)
+
+name <- c("GC",
+          "HPLC",
+          "ICP",
+          "GC-HPLC",
+          "GC-ICP",
+          "HPLC-ICP",
+          "GC-HPLC-ICP", 
+          "HPLC",
+          "ICP",
+          "HPLC-ICP")
+
+for (i in 1:length(prob_mat_list)) {
+  # 2. Compute, for each row, which column has the max value
+  #    `max.col()` is a fast way to get the index of the max in each row
+  idx_max <- max.col(prob_mat_list[[i]], ties.method = "first")
+  
+  # 3. Map those indices back to class names
+  predicted_class <- colnames(prob_mat_list[[i]])[idx_max]
+  
+  # 4. Extract the max probability values
+  #    Method A: via matrix indexing
+  row_indices     <- seq_len(nrow(prob_mat_list[[i]]))
+  predicted_prob  <- prob_mat_list[[i]][cbind(row_indices, idx_max)]
+  
+  # 4. If you’d like it all in a data.frame:
+  df <- as.data.frame(prob_mat_list[[i]])
+  df <- df %>% 
+    dplyr::mutate(Actual_Class = sub("_.*", "", rownames(prob_mat_list[[i]]))) %>% # bring actual labels in as a column
+    dplyr::mutate(Predicted_Class = predicted_class) %>%
+    dplyr::mutate(Predicted_Prob = predicted_prob) %>%
+    dplyr::mutate(Dataset = name[i]) %>%
+    dplyr::relocate(Actual_Class, Predicted_Class, Dataset, Predicted_Prob, .before = 1) %>%
+    dplyr::filter(Actual_Class == Predicted_Class)
+  
+  prob_mat_list[[i]] <- df
+}
+
+chorddiagram_df <- bind_rows(prob_mat_list) %>% 
+  dplyr::filter(Predicted_Prob > 0.5) %>%
+  dplyr::select(c(Dataset, Predicted_Class, Predicted_Prob)) %>%
+  dplyr::mutate(Dataset = gsub(pattern = "-", replacement = "_", Dataset))
+
+png(
+  filename = paste0("chord_diagram_", format(Sys.time(), "%d-%m-%Y"), ".png"),
+  width    = 18,      # in inches
+  height   = 18,      # in inches
+  units    = "in",
+  res      = 600     # 300 dpi for publication‑quality
+)
+
+# 1) Label mapping for bottom dataset sectors
+label_map <- c(
+  GC            = "GC",
+  HPLC          = "HPLC",
+  ICP           = "ICP",
+  GC_HPLC       = "GC-HPLC",
+  GC_ICP        = "GC-ICP",
+  HPLC_ICP      = "HPLC-ICP",
+  GC_HPLC_ICP   = "GC-HPLC-ICP"
+)
+# Have gaps between sectors
+circos.par(gap.after = c(rep(2, length(unique(chorddiagram_df[[1]]))-1), 15, 
+                         rep(2, length(unique(chorddiagram_df[[2]]))-1), 15))
+
+# Manually assign color to bottom sectors (Datasets)
+grid.col <- c(GC='#8dd3c7',HPLC='#ffffb3',ICP='#bebada',GC_ICP = '#fb8072',HPLC_ICP = '#80b1d3', GC_HPLC = '#fdb462',GC_HPLC_ICP = '#b3de69',
+              Balloons="grey", Plastic.Bottles="grey", Plastic.Drinking.Straws="grey", Bottle.Caps="grey", Construction.Material="grey", Mixed.Microplastics="grey", Plastic.Cups="grey", Shotgun.shells="grey", Fishing.Bait.Trays="grey", Food.Containers="grey", Food.Packaging="grey", Food.Wrappers="grey", Textile.Fabric.Face.Masks="grey", Toy.Balls="grey", Cigarillo.Tips="grey", Various.Plastic.Waste="grey", Plastic.Cutlery="grey", Cigarettes="grey", Cigarette.Lighters="grey", Plastic.Cord="grey", Plastic.Cable.Ties="grey", Plastic.Plates="grey")
+
+circlize::chordDiagram(chorddiagram_df,
+                       grid.col = grid.col,
+                       small.gap = 2, 
+                       annotationTrack   = c("grid"),
+                       preAllocateTracks = 1)
+
+circos.trackPlotRegion(
+  track.index = 1, 
+  bg.border = NA,
+  panel.fun = function(x, y) {
+    sector <- get.cell.meta.data("sector.index")
+    xlim   <- get.cell.meta.data("xlim")
+    
+    # Use mapped label if available, otherwise keep original
+    label <- ifelse(sector %in% names(label_map), label_map[[sector]], sector)
+    
+    circos.text(
+      x       = mean(xlim), y = 0,
+      labels  = label,
+      facing  = "clockwise",     # or "reverse.clockwise"
+      niceFacing = TRUE,        # turns off auto-flip
+      adj     = c(0, 0.5),
+      cex     = 1.5
+    )
+  }
+)
+grid.text(
+  "Individual and combined datasets",
+  x    = unit(0.5, "npc"),        # centered horizontally
+  y    = unit(0.075, "npc"),           # 2 mm up from bottom
+  just = "center",
+  gp   = gpar(fontsize = 20, fontface = "bold")
+)
+
+# 2) And the top label for "Dataset"
+grid.text(
+  "Plastic categories",
+  x    = unit(0.5, "npc"),        
+  y    = unit(0.98, "npc"),  # 5 mm down from top
+  just = "center",
+  gp   = gpar(fontsize = 20, fontface = "bold")
+)
+circos.clear()
+dev.off()
+```
+
+## Post-hoc Pearson GC-HPLC-ICP data
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+X_RFA <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$rfa_selected_feats)
+
+X_pairwise <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$sig_selected_feats)
+
+# y <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat$Plastic_type
+# 
+# library(FSelectorRcpp)
+# df1 <- data.frame(y = y, X_pairwise)
+# df2 <- data.frame(y = y, X_rfa)
+# 
+# ig1 <- information_gain(y ~ ., df1); ig2 <- information_gain(y ~ ., df2)
+# 
+# S1 <- cor(df1[-1], use="pairwise.complete.obs"); S2 <- cor(df2[-1], use="pairwise.complete.obs")
+# red1 <- rowMeans(abs(S1), na.rm=TRUE); red2 <- rowMeans(abs(S2), na.rm=TRUE)
+# 
+# mrmr1 <- ig1$importance - red1[ig1$attributes]
+# mrmr2 <- ig2$importance - red2[ig2$attributes]
+# summary(mrmr1); summary(mrmr2)
+# 
+# 
+# one_vs_rest_mi <- function(y, X){
+#   levs <- levels(y)
+#   res <- sapply(levs, function(cls){
+#     ybin <- factor(ifelse(y==cls, cls, "other"))
+#     information_gain(ybin ~ ., data.frame(ybin, X))$importance
+#   })
+#   rowMeans(res, na.rm=TRUE)           # avg MI across classes per feature
+# }
+# pc_pairwise <- one_vs_rest_mi(y, X_pairwise)
+# pc_rfa      <- one_vs_rest_mi(y, X_rfa)
+# summary(pc_pairwise); summary(pc_rfa)
+
+
+# ============================
+# Redundancy Diagnostics (R)
+# ============================
+
+# Packages
+suppressPackageStartupMessages({
+  require(igraph)   # graph metrics
+  require(Matrix)   # nearPD (for stabilizing correlation matrices)
+})
+
+# -- helpers -------------------------------------------------------------
+
+# Keep only numeric columns, drop zero-variance columns, and return as matrix
+.prepare_numeric_matrix <- function(X) {
+  Xnum <- X[, vapply(X, is.numeric, logical(1L)), drop = FALSE]
+  if (ncol(Xnum) == 0L) stop("No numeric columns in 'X'.")
+  # drop zero-variance columns (computed with pairwise NAs removed)
+  nzv <- vapply(Xnum, function(col) {
+    v <- var(col, na.rm = TRUE)
+    is.finite(v) && v > 0
+  }, logical(1L))
+  Xnum <- Xnum[, nzv, drop = FALSE]
+  if (ncol(Xnum) == 0L) stop("All numeric columns have zero variance.")
+  as.matrix(Xnum)
+}
+
+# Safe correlation matrix (pairwise) with optional method
+.safe_cor <- function(Xmat, method = c("pearson","spearman")) {
+  method <- match.arg(method)
+  S <- suppressWarnings(cor(Xmat, use = "pairwise.complete.obs", method = method))
+  # ensure symmetry and unit diagonal (occasionally numeric drift)
+  S <- (S + t(S)) / 2
+  diag(S) <- 1
+  S
+}
+
+# Extract absolute upper-triangle values
+.upper_abs <- function(S) {
+  abs(S[upper.tri(S, diag = FALSE)])
+}
+
+# Effective dimensionality from eigenvalues of correlation matrix
+.effective_dim <- function(S) {
+  e <- eigen(S, symmetric = TRUE, only.values = TRUE)$values
+  # Guard against tiny negative eigenvalues from numeric issues
+  e <- pmax(e, 0)
+  # probabilities
+  pe <- e / sum(e)
+  # add small epsilon in log to avoid log(0)
+  eps <- 1e-12
+  erank <- exp(-sum(pe * log(pe + eps)))
+  ENF   <- (sum(e)^2) / sum(e^2)  # for a correlation matrix sum(e)=p
+  list(erank = as.numeric(erank),
+       ENF   = as.numeric(ENF),
+       eigenvalues = e)
+}
+
+# Make a correlation matrix "near" SPD if solve() fails
+.make_spd_corr <- function(S) {
+  # nearPD with corr=TRUE projects to nearest correlation matrix (unit diag)
+  as.matrix(nearPD(S, corr = TRUE)$mat)
+}
+
+# VIF from correlation matrix: VIF_j = (R^{-1})_{jj}
+.vif_from_corr <- function(S) {
+  S <- (S + t(S)) / 2
+  diag(S) <- 1
+  inv_ok <- try(solve(S), silent = TRUE)
+  if (inherits(inv_ok, "try-error")) {
+    # Stabilize via nearest SPD correlation
+    S_spd <- .make_spd_corr(S)
+    inv_ok <- try(solve(S_spd), silent = TRUE)
+    if (inherits(inv_ok, "try-error")) {
+      # last-ditch ridge, then renormalize to correlation
+      p <- ncol(S)
+      S_ridge <- cov2cor(S + diag(1e-4, p))
+      inv_ok  <- solve(S_ridge)
+    }
+  }
+  diag(inv_ok)
+}
+
+# Graph metrics at one threshold tau (|r| >= tau)
+.graph_metrics_once <- function(S, tau) {
+  p <- ncol(S)
+  A <- (abs(S) >= tau) * 1
+  diag(A) <- 0L
+  g <- graph_from_adjacency_matrix(A, mode = "undirected", diag = FALSE)
+  dens  <- edge_density(g, loops = FALSE)
+  deg   <- degree(g)
+  avg_d <- if (length(deg)) mean(deg) else 0
+  nE    <- gsize(g)
+  nC    <- components(g)$no
+  # Number of maximal cliques and largest clique size
+  n_max_cliques <- count_max_cliques(g)
+  max_clique_sz <- clique_num(g)
+  trans         <- transitivity(g, type = "global") # clustering coefficient
+  data.frame(
+    tau = tau,
+    p = p,
+    edges = nE,
+    density = as.numeric(dens),
+    avg_degree = as.numeric(avg_d),
+    n_components = as.integer(nC),
+    n_max_cliques = as.integer(n_max_cliques),
+    largest_clique = as.integer(max_clique_sz),
+    transitivity = as.numeric(ifelse(is.na(trans), 0, trans))
+  )
+}
+
+# -- main function -------------------------------------------------------
+
+#' Redundancy diagnostics for a numeric matrix/data frame
+#'
+#' @param X data.frame or matrix of features (numeric columns will be used)
+#' @param method "pearson" (default) or "spearman" for correlation
+#' @param tau_grid vector of thresholds for |r| to build graphs (default c(.6,.7,.8,.9))
+#' @return a list with: cor_summary, graph_metrics, effective_dim, VIF
+redundancy_diagnostics <- function(X, method = c("pearson","spearman"),
+                                   tau_grid = c(0.6, 0.7, 0.8, 0.9)) {
+  method <- match.arg(method)
+  Xmat   <- .prepare_numeric_matrix(X)
+  S      <- .safe_cor(Xmat, method = method)
+  p      <- ncol(S)
+
+  up_abs <- .upper_abs(S)
+  MAC    <- mean(up_abs, na.rm = TRUE)
+  q90    <- as.numeric(quantile(up_abs, 0.90, na.rm = TRUE))
+  q95    <- as.numeric(quantile(up_abs, 0.95, na.rm = TRUE))
+  maxabs <- max(up_abs, na.rm = TRUE)
+
+  cor_summary <- list(
+    p = p,
+    MAC = MAC,
+    q90_abs_r = q90,
+    q95_abs_r = q95,
+    max_abs_r = maxabs
+  )
+
+  # Graph metrics over thresholds
+  graph_metrics <- do.call(rbind, lapply(tau_grid, function(tau) .graph_metrics_once(S, tau)))
+
+  # Effective dimensionality
+  eff <- .effective_dim(S)
+
+  # VIFs
+  vif_vals <- .vif_from_corr(S)
+  names(vif_vals) <- colnames(S)
+  vif_summary <- list(
+    mean  = mean(vif_vals, na.rm = TRUE),
+    median= median(vif_vals, na.rm = TRUE),
+    p90   = as.numeric(quantile(vif_vals, 0.90, na.rm = TRUE)),
+    max   = max(vif_vals, na.rm = TRUE),
+    VIF   = vif_vals
+  )
+
+  list(
+    cor_summary   = cor_summary,
+    graph_metrics = graph_metrics,
+    effective_dim = eff,
+    VIF_summary   = vif_summary,
+    corr_matrix   = S # included for optional downstream inspection
+  )
+}
+
+# -- convenience: compare two feature sets side-by-side ------------------
+
+#' Compare two feature matrices using the diagnostics above
+#' @param X1, X2 numeric data frames/matrices (possibly different columns)
+#' @param names character vector of length 2 for labeling
+compare_redundancy <- function(X1, X2, names = c("Set1","Set2"),
+                               method = "pearson",
+                               tau_grid = c(0.6,0.7,0.8,0.9)) {
+  if (length(names) != 2L) stop("'names' must be length 2.")
+  
+  d1 <- redundancy_diagnostics(X1, method = method, tau_grid = tau_grid)
+  d2 <- redundancy_diagnostics(X2, method = method, tau_grid = tau_grid)
+
+  sum_tbl <- data.frame(
+    set = names,
+    p   = c(d1$cor_summary$p, d2$cor_summary$p),
+    MAC = c(d1$cor_summary$MAC, d2$cor_summary$MAC),
+    q90 = c(d1$cor_summary$q90_abs_r, d2$cor_summary$q90_abs_r),
+    q95 = c(d1$cor_summary$q95_abs_r, d2$cor_summary$q95_abs_r),
+    max_abs_r = c(d1$cor_summary$max_abs_r, d2$cor_summary$max_abs_r),
+    ERANK = c(d1$effective_dim$erank, d2$effective_dim$erank),
+    ENF   = c(d1$effective_dim$ENF,   d2$effective_dim$ENF),
+    VIF_mean   = c(d1$VIF_summary$mean,  d2$VIF_summary$mean),
+    VIF_median = c(d1$VIF_summary$median,d2$VIF_summary$median),
+    VIF_p90    = c(d1$VIF_summary$p90,   d2$VIF_summary$p90),
+    VIF_max    = c(d1$VIF_summary$max,   d2$VIF_summary$max),
+    row.names = NULL
+  )
+
+  gm1 <- transform(d1$graph_metrics, set = names[1])
+  gm2 <- transform(d2$graph_metrics, set = names[2])
+  gm  <- rbind(gm1, gm2)
+
+  details <- setNames(list(d1, d2), names)
+
+  list(
+    summary_table = sum_tbl,
+    graph_metrics = gm,
+    details       = details
+  )
+}
+
+
+# ============================
+# Example usage
+# ============================
+# Suppose:
+#  - X_pairwise: data.frame/matrix of the features selected by your pairwise test
+#  - X_RFA     : data.frame/matrix of the features selected by RFA
+#
+# Run diagnostics for one set:
+diag_pairwise <- redundancy_diagnostics(X_pairwise, method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
+diag_RFA      <- redundancy_diagnostics(X_RFA,      method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
+#
+# Compare sets side-by-side:
+cmp <- compare_redundancy(X_pairwise, X_RFA, names = c("Pairwise","RFA"))
+cmp$summary_table          # quick numeric comparison
+cmp$graph_metrics          # per-threshold graph stats (density, avg_degree, cliques, etc.)
+#
+# Inspect VIFs (features with high multicollinearity):
+sort(diag_pairwise$VIF_summary$VIF, decreasing = TRUE)[1:15]
+sort(diag_RFA$VIF_summary$VIF,      decreasing = TRUE)[1:15]
+#
+# Effective dimensionality:
+diag_pairwise$effective_dim$erank
+diag_pairwise$effective_dim$ENF
+
+```
+
+# Random Forest
+### Helper functions for RF
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+pairwise_significance_tests <- function(input_df, 
+                                        group_col,
+                                        start_col_index){
+  # For each feature from start_col_index onward,
+  #   for each pair of group categories,
+  #     check if both groups have >=3 data points
+  #     do Shapiro test for normality
+  #     if not normal => Mann-Whitney (wilcox.test)
+  #     else => t.test
+  # Collect p-values and do multiple corrections
+  
+  df_results <- data.frame(Feature=character(), comparison_pair=character(), pval=numeric())
+  
+  # get unique group combos
+  group_pairs <- utils::combn(unique(as.character(input_df[[group_col]])), 2)
+
+  for(feature_col in start_col_index:ncol(input_df)){
+    for (col in 1:ncol(group_pairs)){
+      p_1 <- group_pairs[1,col]
+      p_2 <- group_pairs[2,col]
+
+      vec1 <- as.numeric(unlist(input_df[which(input_df[[group_col]] == p_1), feature_col]))
+      vec2 <- as.numeric(unlist(input_df[which(input_df[[group_col]] == p_2), feature_col]))
+      
+      # ensure at least 3 non-NA data points
+      if(sum(!is.na(vec1)) >= 3 && sum(!is.na(vec2)) >= 3){
+        # skip if all values are the same
+        # if(all(vec1 == vec1[1]) || all(vec2 == vec2[1])){
+        #   next
+        # }
+        
+        # normality tests
+        p_shapiro1 <- tryCatch(shapiro.test(vec1)$p.value, error = function(e) NA)
+        p_shapiro2 <- tryCatch(shapiro.test(vec2)$p.value, error = function(e) NA)
+        
+        # decide parametric vs non-parametric
+        if(is.na(p_shapiro1) || is.na(p_shapiro2)){
+          # if for some reason test failed, skip
+          next
+        }
+        
+        if(p_shapiro1 < 0.05 || p_shapiro2 < 0.05){
+          # mann-whitney
+          pval_test <- tryCatch(wilcox.test(vec1, vec2)$p.value, error = function(e) NA)
+        } else {
+          # t-test
+          pval_test <- tryCatch(t.test(vec1, vec2, var.equal = FALSE)$p.value, error = function(e) NA)
+        }
+        
+        if(!is.na(pval_test)){
+          # append to df
+          df_results <- rbind(df_results, data.frame(
+            Feature = colnames(input_df)[feature_col],
+            Category_1 = p_1,
+            Category_2 = p_2,
+            pval = as.numeric(pval_test),
+            stringsAsFactors = FALSE
+          ))
+        }
+      }
+    }
+  }
+  
+  # multiple corrections
+  pvalue_correction_methods <- "bonferroni" #, c("holm", "hochberg", "hommel", "BH", "BY")
+  
+  # For convenience, store all results in a list
+  # results_list <- list()
+  # j <- 1
+  # for(method in pvalue_correction_methods){
+    temp <- df_results
+    temp$adjusted_pvalue <- p.adjust(temp$pval, method = pvalue_correction_methods)
+    significant <- temp %>% dplyr::filter(adjusted_pvalue < 0.05) %>% arrange(adjusted_pvalue)
+    # results_list[[j]] <- significant
+    
+    if(nrow(significant) == 0){
+      cat(paste0(pvalue_correction_methods, " did not result in any significant compound\n"))
+    } else {
+      # cat(paste0("Significant results for method: ", method, "\n"))
+      # print(significant)
+      cat(paste0(pvalue_correction_methods, " has ", length(unique(significant$Feature)), " significant features\n"))
+      # j <- j + 1
+    }
+  # }
+  
+  return(list(
+    uncorrected = df_results,
+    corrected   = unique(significant$Feature)  # results_list
+  ))
+}
+
+#─────────────────────────────────────────────────────────────────────────────
+# Helper: retune mtry (based on subset size) + ntree for any train/test split
+#─────────────────────────────────────────────────────────────────────────────
+# Helper: retune mtry (based on subset size) + ntree for any train/test split
+tune_rf_subset <- function(X_train, y_train, X_test, y_test,
+                           ntree_candidates, metric = "Accuracy",
+                           parallel = TRUE, n_cores = NULL,
+                           num_threads = 1) {
+  
+  y_train <- as.factor(y_train)
+  y_test  <- as.factor(y_test)
+  
+  k_inner <- min(table(y_train))
+  
+  p         <- ncol(X_train)
+  mtry_vals <- unique(pmax(1, c(floor(sqrt(p)), floor(log2(p)))))
+  
+  ranger_predict_probs <- function(rf, newdata) {
+    pr <- predict(rf, data = newdata)$predictions
+    if (is.matrix(pr)) {
+      prob_mat <- pr
+      pred_chr <- colnames(prob_mat)[max.col(prob_mat, ties.method = "first")]
+      pred_fac <- factor(pred_chr, levels = colnames(prob_mat))
+      return(list(preds = pred_fac, probs = prob_mat))
+    }
+    pred_fac <- factor(pr, levels = levels(y_train))
+    return(list(preds = pred_fac, probs = NULL))
+  }
+  
+  # Choose cores
+  if (is.null(n_cores)) {
+    n_cores <- max(1, parallel::detectCores() - 1)
+  }
+  
+  # ---- Branch A: enough data for CV ----
+  if (k_inner > 1) {
+    
+    ctrl <- caret::trainControl(
+      method          = "cv",
+      number          = k_inner,
+      classProbs      = TRUE,
+      summaryFunction = defaultSummary,
+      savePredictions = "final",
+      allowParallel   = parallel
+    )
+    
+    rf_grid <- expand.grid(
+      mtry          = mtry_vals,
+      splitrule     = "gini",
+      min.node.size = 1
+    )
+    
+    best_mod   <- NULL
+    best_val   <- -Inf
+    best_trees <- NA
+    
+    # If you parallelize caret resamples, keep ranger internal threads modest
+    ranger_threads_for_caret <- if (parallel) 1 else num_threads
+    
+    for (nt in ntree_candidates) {
+      set.seed(123)
+      
+      # ERROR FIX: 'probability = TRUE' removed below because caret handles it automatically
+      tmp <- caret::train(
+        x           = X_train,
+        y           = y_train,
+        method      = "ranger",
+        trControl   = ctrl,
+        tuneGrid    = rf_grid,
+        metric      = metric,
+        num.trees   = nt,
+        importance  = "impurity",
+        # probability = TRUE,  <-- REMOVED THIS LINE
+        num.threads = ranger_threads_for_caret
+      )
+      
+      this_val <- suppressWarnings(max(tmp$results[[metric]], na.rm = TRUE))
+      if (is.finite(this_val) && this_val > best_val) {
+        best_val   <- this_val
+        best_mod   <- tmp
+        best_trees <- nt
+      }
+    }
+    
+    caret_model <- best_mod
+    final_rf    <- caret_model$finalModel
+    
+  } else {
+    # ---- Branch B: too few per class -> OOB tuning grid ----
+    
+    train_df <- data.frame(.Class = y_train, X_train, check.names = FALSE)
+    grid <- expand.grid(ntree = ntree_candidates, mtry = mtry_vals)
+    
+    # Parallel backend
+    created_cluster <- FALSE
+    if (parallel) {
+      if (!foreach::getDoParRegistered() || foreach::getDoParWorkers() < 2) {
+        cl <- parallel::makeCluster(n_cores)
+        doParallel::registerDoParallel(cl)
+        created_cluster <- TRUE
+      }
+    }
+    
+    on.exit({
+      if (parallel && created_cluster) {
+        try(parallel::stopCluster(cl), silent = TRUE)
+        foreach::registerDoSEQ()
+      }
+    }, add = TRUE)
+    
+    eval_one <- function(nt, m) {
+      set.seed(123)
+      rf_mod <- ranger::ranger(
+        dependent.variable.name = ".Class",
+        data         = train_df,
+        num.trees    = nt,
+        mtry         = m,
+        splitrule    = "gini",
+        importance   = "impurity",
+        probability  = FALSE,
+        oob.error    = TRUE,
+        num.threads  = 1  # important to avoid nested parallel
+      )
+      data.frame(
+        ntree = nt,
+        mtry  = m,
+        oob_err = rf_mod$prediction.error
+      )
+    }
+    
+    if (parallel) {
+      res_grid <- foreach::foreach(i = seq_len(nrow(grid)),
+                                   .combine = rbind,
+                                   .packages = "ranger") %dopar% {
+                                     eval_one(grid$ntree[i], grid$mtry[i])
+                                   }
+    } else {
+      res_grid <- do.call(rbind, lapply(seq_len(nrow(grid)), function(i) {
+        eval_one(grid$ntree[i], grid$mtry[i])
+      }))
+    }
+    
+    res_grid <- res_grid[is.finite(res_grid$oob_err), , drop = FALSE]
+    if (nrow(res_grid) == 0) {
+      return(list(
+        model = NULL, ntree = NA, preds = factor(NA),
+        p_m = matrix(NA, nrow = 0, ncol = 0),
+        eval_metrics = list(), Accuracy = NA, Kappa = NA,
+        AUC = NA, F1_Macro = NA, F1_Weighted = NA, MCC = NA
+      ))
+    }
+    
+    best_row <- res_grid[which.min(res_grid$oob_err), ]
+    best_trees <- best_row$ntree
+    best_mtry  <- best_row$mtry
+    
+    set.seed(123)
+    best_rf <- ranger::ranger(
+      dependent.variable.name = ".Class",
+      data         = train_df,
+      num.trees    = best_trees,
+      mtry         = best_mtry,
+      splitrule    = "gini",
+      importance   = "impurity",
+      probability  = TRUE,
+      oob.error    = TRUE,
+      num.threads  = num_threads
+    )
+    
+    caret_model <- list(
+      finalModel = best_rf,
+      bestTune   = data.frame(mtry = best_mtry, splitrule = "gini", min.node.size = 1)
+    )
+    final_rf <- best_rf
+  }
+  
+  # ---- Predict & score ----
+  pred_out <- ranger_predict_probs(final_rf, X_test)
+  preds    <- pred_out$preds
+  prob_mat <- pred_out$probs
+  
+  if (is.null(prob_mat)) {
+    cls <- levels(y_train)
+    prob_mat <- matrix(0, nrow = length(preds), ncol = length(cls))
+    colnames(prob_mat) <- cls
+    rownames(prob_mat) <- rownames(X_test)
+    prob_mat[cbind(seq_along(preds), match(as.character(preds), cls))] <- 1
+  }
+  
+  ev <- eval_metrics(true_labels = y_test,
+                     prob_matrix = prob_mat,
+                     pred_labels = preds)
+  
+  list(
+    model        = caret_model,
+    ntree        = best_trees,
+    preds        = preds,
+    p_m          = prob_mat,
+    eval_metrics = ev,
+    Accuracy     = ev$Accuracy,
+    Kappa        = ev$Kappa,
+    AUC          = ev$AUC,
+    F1_Macro     = ev$F1_Macro,
+    F1_Weighted  = ev$F1_Weighted,
+    MCC          = ev$MCC_Multiclass
+  )
+}
+
+# Recursive Feature Addition -------------
+recursive_feature_addition <- function(X_train, y_train,
+                                       X_test,  y_test,
+                                       ntree_candidates,
+                                       metric = "Accuracy",
+                                       parallel = TRUE, n_cores = NULL,
+                                       num_threads_model = 1) {
+  
+  if (is.null(n_cores)) {
+    n_cores <- max(1, parallel::detectCores() - 1)
+  }
+  
+  # 1) Fit full model to get initial importance
+  full_res <- tune_rf_subset(
+    X_train, y_train,
+    X_test,  y_test,
+    ntree_candidates, metric,
+    parallel = parallel,
+    n_cores  = n_cores,
+    num_threads = num_threads_model
+  )
+  
+  imp_vec <- full_res$model$finalModel$variable.importance
+  init_feat <- names(imp_vec)[which.max(imp_vec)]
+  
+  best_feats <- init_feat
+  remaining  <- setdiff(colnames(X_train), best_feats)
+  
+  # 2) Baseline performance
+  base_res <- tune_rf_subset(
+    X_train[, best_feats, drop = FALSE], y_train,
+    X_test [, best_feats, drop = FALSE], y_test,
+    ntree_candidates, metric,
+    parallel = FALSE,          # avoid nested parallel
+    num_threads = num_threads_model
+  )
+  best_mcc <- base_res$MCC
+  
+  # Parallel backend for feature-try loop
+  created_cluster <- FALSE
+  if (parallel) {
+    if (!foreach::getDoParRegistered() || foreach::getDoParWorkers() < 2) {
+      cl <- parallel::makeCluster(n_cores)
+      doParallel::registerDoParallel(cl)
+      created_cluster <- TRUE
+    }
+  }
+  
+  on.exit({
+    if (parallel && created_cluster) {
+      try(parallel::stopCluster(cl), silent = TRUE)
+      foreach::registerDoSEQ()
+    }
+  }, add = TRUE)
+  
+  # 3) Iterative greedy addition
+  while (length(remaining) > 0) {
+    
+    # Evaluate all candidates in parallel processing to optimize computational time
+    if (parallel) {
+      cand_res <- foreach::foreach(feat = remaining,
+                                   .combine = rbind,
+                                   # FIX IS HERE: Added .export
+                                   .export = c("tune_rf_subset", "eval_metrics"), 
+                                   .packages = c("ranger", "caret", "pROC", "dplyr")) %dopar% {
+                                     
+                                     trial_feats <- c(best_feats, feat)
+                                     
+                                     # Now the worker node can find this function:
+                                     res <- tune_rf_subset(
+                                       X_train[, trial_feats, drop = FALSE], y_train,
+                                       X_test [, trial_feats, drop = FALSE], y_test,
+                                       ntree_candidates, metric,
+                                       parallel = FALSE,      # critical
+                                       num_threads = 1        # critical inside workers
+                                     )
+                                     data.frame(feat = feat, MCC = res$MCC, stringsAsFactors = FALSE)
+                                   }
+    } else {
+      cand_res <- do.call(rbind, lapply(remaining, function(feat) {
+        trial_feats <- c(best_feats, feat)
+        res <- tune_rf_subset(
+          X_train[, trial_feats, drop = FALSE], y_train,
+          X_test [, trial_feats, drop = FALSE], y_test,
+          ntree_candidates, metric,
+          parallel = FALSE,
+          num_threads = num_threads_model
+        )
+        data.frame(feat = feat, MCC = res$MCC, stringsAsFactors = FALSE)
+      }))
+    }
+    
+    cand_res <- cand_res[is.finite(cand_res$MCC), , drop = FALSE]
+    if (nrow(cand_res) == 0) break
+    
+    # Pick best improvement
+    best_cand <- cand_res[which.max(cand_res$MCC), , drop = FALSE]
+    
+    if (best_cand$MCC > best_mcc) {
+      best_mcc  <- best_cand$MCC
+      best_feats <- c(best_feats, best_cand$feat)
+      remaining  <- setdiff(remaining, best_cand$feat)
+    } else {
+      break
+    }
+  }
+  
+  # 4) Final model
+  final_res <- tune_rf_subset(
+    X_train[, best_feats, drop = FALSE], y_train,
+    X_test [, best_feats, drop = FALSE], y_test,
+    ntree_candidates, metric,
+    parallel = FALSE,
+    num_threads = num_threads_model
+  )
+  
+  list(
+    best_mcc         = final_res$MCC,
+    best_acc         = final_res$Accuracy,
+    best_features_rf = best_feats,
+    final_model      = final_res$model,
+    prob_matrix      = final_res$p_m,
+    predictions      = final_res$preds,
+    eval_metrics     = final_res$eval_metrics
+  )
+}
+
+#─────────────────────────────────────────────────────────────────────────────
+library(caret)
+library(pROC)
+
+eval_metrics <- function(true_labels, prob_matrix, pred_labels){
+  # 0) Ensure factor levels align
+  classes <- union(levels(true_labels), levels(pred_labels))
+  y_true <- factor(true_labels, levels = classes)
+  y_pred <- factor(pred_labels,  levels = classes)
+  
+  # 1) Build the confusion‐matrix table
+  cm <- table(Actual = y_true, Predicted = y_pred)
+  N  <- sum(cm)                       # total samples
+  diag_cm <- diag(cm)
+  
+  # 2) Accuracy
+  accuracy <- sum(diag_cm) / N
+  
+  # 3) Cohen’s Kappa (via caret)
+  kappa <- tryCatch({
+    cm_obj <- confusionMatrix(y_pred, y_true)
+    as.numeric(cm_obj$overall["Kappa"])
+  }, error = function(e) NA)
+  
+  # 4) One‐vs‐all multiclass AUC
+  auc <- tryCatch({
+    roc_obj <- pROC::multiclass.roc(response  = true_labels,
+                                    predictor = prob_matrix)
+    as.numeric(roc_obj$auc)
+  }, error = function(e) NA)
+  
+  # 5) Per‐class precision & recall
+  col_sums <- colSums(cm)   # predicted totals for each class
+  row_sums <- rowSums(cm)   # actual   totals for each class
+  
+  precision_per_class <- ifelse(col_sums > 0,
+                                diag_cm / col_sums,
+                                0)        # no preds → p=0
+  recall_per_class    <- ifelse(row_sums > 0,
+                                diag_cm / row_sums,
+                                0)        # no actual → r=0
+  
+  # 6) Per‐class F1 & weighted F1
+  f1_per_class <- ifelse(
+    (precision_per_class + recall_per_class) > 0,
+    2 * precision_per_class * recall_per_class /
+      (precision_per_class + recall_per_class),
+    0
+  )
+  support <- row_sums   # how many true examples of each class
+  f1_weighted <- sum(f1_per_class * support) / sum(support)
+  
+  # 7) Multiclass MCC (Gorodkin’s formula)
+  t_i <- row_sums
+  p_j <- col_sums
+  c_val <- sum(diag_cm)         # sum of true positives
+  num   <- N * c_val - sum(t_i * p_j)
+  den   <- sqrt((N^2 - sum(t_i^2)) * (N^2 - sum(p_j^2)))
+  mcc   <- ifelse(den > 0, num / den, 0)
+  
+  return(list(
+    Accuracy         = accuracy,
+    Kappa            = kappa,
+    AUC              = auc,
+    F1_Weighted      = f1_weighted,
+    MCC_Multiclass   = mcc
+  ))
+}
+
+
+####################################################
+##########        CONFUSION MATRIX       ###########
+####################################################
+conf_mat_plot <- function(y_test, preds, conf_mat_title, accuracy) {
+  # 1) Compute raw counts table: rows = treated labels, cols = predicted pristine labels
+  all_classes <- unique(c(levels(preds), levels(y_test)))
+  y_f <- factor(y_test,  levels = all_classes)
+  p_f <- factor(preds,  levels = all_classes)
+  
+  cm_tab <- table(Actual = y_f, Predicted = p_f)
+  
+  # 2) Turn it into a data.frame for ggplot
+  cm_df <- as.data.frame(cm_tab, stringsAsFactors = FALSE) %>%
+    dplyr::rename(Freq = Freq)
+  
+  # 3) Add total-per-row and percent-per-cell
+  cm_df$Total <- NA
+  cm_df$Percent <- NA
+  for (label in unique(cm_df$Actual)){
+    cm_df[which(cm_df$Actual == label),]$Total <- sum(cm_df[which(cm_df$Actual == label),]$Freq)
+  }
+  
+  cm_df <- cm_df %>%
+    dplyr::mutate(
+      Percent = round(Freq / Total * 100, 2)
+    ) %>% 
+    dplyr::mutate(Percent = ifelse(is.nan(Percent), 0, Percent))
+  
+  
+  cm_df <- cm_df %>%
+    dplyr::mutate(
+      Label = ifelse(Predicted == Actual,
+                     paste0(round(Percent,1),"%"),
+                     ""
+      )
+    )
+  
+  # 5) Plot
+  conf_mat <- ggplot(cm_df, aes(x = Predicted, y = Actual, fill = Percent)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = "white", high = "steelblue") + #, limits = c(0,1)) +
+    geom_text(aes(label = Percent), size = 6, show.legend = FALSE) +
+    # explicitly drop any size guide, keep only the fill (Recall) legend
+    guides(size = "none") +
+    labs(
+      title = paste0("Confusion Matrix of ENV → SB Mapping | ", conf_mat_title),
+      subtitle = paste0(sprintf("Overall linking accuracy: %.2f%%\n", accuracy)),
+      x = "Predicted Class (Store-Bought)",
+      y = "Actual Class (Environmental)",
+      fill = "Percentage of\nClassification (%)" # "Recall %"
+    ) +
+    theme_minimal(base_size = 22) +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1),
+      plot.title   = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle= element_text(hjust = 0.5)
+    )
+  return(list(conf_mat = conf_mat, cm_df = cm_df))
+}
+```
+
+### RF classifier
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+run_rf_analysis_manuscript1 <- function(data,
+                                        type_col,
+                                        remove_cols,
+                                        train_proportion,
+                                        use_source_split = FALSE,
+                                        use_store_vs_environmental_split = FALSE,
+                                        use_polymer = FALSE,
+                                        do_pairwise_test = FALSE,
+                                        do_top_importance_selection = FALSE,
+                                        top_importance_counts = c(100, 50, 25, 10),
+                                        data_name,
+                                        seed = 123,
+                                        ntree_candidates = c(100, 500, 1000, 2500),
+                                        metric = "Accuracy",
+                                        do_rfe = FALSE,
+                                        do_rfa = FALSE,
+                                        min_sample_number,
+                                        do_impute_norm_screen = TRUE,
+                                        group_for_significance,
+                                        K_outer_max = 5,
+                                        ntree_screen = 500) {
+  
+  set.seed(seed)
+  
+  # ---- 1) Clean classes ----
+  data[[type_col]] <- as.factor(data[[type_col]])
+  levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
+  
+  class_counts <- table(data[[type_col]])
+  keep_classes <- names(class_counts[class_counts >= min_sample_number])
+  data <- data[data[[type_col]] %in% keep_classes, ]
+  data[[type_col]] <- droplevels(data[[type_col]])
+  
+  rownames(data) <- NULL
+  
+  data <- data %>% 
+    mutate(sample_id = paste0(Plastic_type, "_", technique)) %>% 
+    mutate(sample_id = ave(sample_id, sample_id, FUN = function(x) {
+      if (length(x) > 1) paste0(x, "_rep", seq_along(x)) else x
+    })) %>% 
+    tibble::column_to_rownames(var = "sample_id")
+  
+  # ---- 2) Build OUTER folds first ----
+  outer_folds <- list()
+  
+  if(use_store_vs_environmental_split){
+    store_bought_set  <- data[data$Source == "Store-Bought", ]
+    environmental_set <- data[data$Source == "Environmental", ]
+    
+    # Outer folds on STORE-Bought only (training stability)
+    sb_y <- store_bought_set[[type_col]]
+    min_sb <- min(table(as.character(sb_y)))
+    K <- max(2, min(K_outer_max, min_sb))
+    
+    sb_test_folds <- caret::createFolds(sb_y, k = K, returnTrain = FALSE)
+    
+    for(f in seq_len(K)){
+      test_idx_sb  <- sb_test_folds[[f]]
+      train_idx_sb <- setdiff(seq_len(nrow(store_bought_set)), test_idx_sb)
+      
+      outer_folds[[f]] <- list(
+        train_data = store_bought_set[train_idx_sb, , drop = FALSE],
+        test_data  = environmental_set  # fixed test
+      )
+    }
+    
+  } else if(use_source_split){
+    store_bought_set  <- data[data$Source == "Store-Bought", ]
+    environmental_set <- data[data$Source == "Environmental", ]
+    
+    env_y <- environmental_set[[type_col]]
+    min_env <- min(table(as.character(env_y)))
+    K <- max(2, min(K_outer_max, min_env))
+    
+    env_test_folds <- caret::createFolds(env_y, k = K, returnTrain = FALSE)
+    
+    for(f in seq_len(K)){
+      test_idx_env  <- env_test_folds[[f]]
+      train_idx_env <- setdiff(seq_len(nrow(environmental_set)), test_idx_env)
+      
+      outer_folds[[f]] <- list(
+        train_data = rbind(store_bought_set,
+                           environmental_set[train_idx_env, , drop = FALSE]),
+        test_data  = environmental_set[test_idx_env, , drop = FALSE]
+      )
+    }
+    
+  } else {
+    y <- data[[type_col]]
+    min_all <- min(table(y))
+    K <- max(2, min(K_outer_max, min_all))
+    cat(paste0("min_all is: ", min_all, "_Number of fold: ", K))
+    
+    test_folds <- caret::createFolds(y, k = K, returnTrain = FALSE)
+    
+    for(f in seq_len(K)){
+      test_idx  <- test_folds[[f]]
+      train_idx <- setdiff(seq_len(nrow(data)), test_idx)
+      
+      outer_folds[[f]] <- list(
+        train_data = data[train_idx, , drop = FALSE],
+        test_data  = data[test_idx,  , drop = FALSE]
+      )
+    }
+  }
+  
+  # ---- 3) Fit/evaluate per OUTER fold ----
+  final_final_res_list <- vector("list", length = length(outer_folds))
+
+  for(f in seq_along(outer_folds)){
+    
+    train_data <- outer_folds[[f]]$train_data
+    test_data  <- outer_folds[[f]]$test_data
+    
+    train_data[[type_col]] <- droplevels(train_data[[type_col]])
+    test_data[[type_col]]  <- droplevels(test_data[[type_col]])
+    
+    # --- 3a) Impute+Norm screening on TRAIN only (OOB MCC) ---
+    if(do_impute_norm_screen){
+      t0 <- Sys.time()
+      
+      best_res_imp_norm <- find_best_impute_normalize(
+        df_train     = train_data,
+        type_col     = type_col,
+        remove_cols  = remove_cols,
+        ntree_screen = ntree_screen
+      )
+      
+      best_imp  <- best_res_imp_norm$best_combo$Imputation
+      best_norm <- best_res_imp_norm$best_combo$Normalization
+      
+      numeric_cols <- names(which(sapply(train_data, is.numeric)))
+      numeric_cols <- setdiff(numeric_cols, c(remove_cols, type_col))
+      
+      X_train_orig <- train_data[, numeric_cols, drop = FALSE]
+      X_test_orig  <- test_data[,  numeric_cols, drop = FALSE]
+      
+      pp_final <- impute_norm_train_apply(X_train_orig, X_test_orig, best_imp, best_norm)
+      
+      train_data[, numeric_cols] <- pp_final$train
+      test_data[,  numeric_cols] <- pp_final$test
+      
+      t1 <- Sys.time()
+      time_imp_norm <- as.numeric(difftime(t1, t0, units = "secs"))
+      
+    } else {
+      best_res_imp_norm <- NULL
+      best_imp <- NA_character_
+      best_norm <- NA_character_
+      time_imp_norm <- NA_real_
+    }
+    
+    # --- 3c) Build X/y ---
+    X_train <- train_data %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
+    y_train <- train_data[[type_col]]
+    X_test  <- test_data  %>% dplyr::select(-c(all_of(remove_cols), all_of(type_col)))
+    y_test  <- test_data[[type_col]]
+    
+    # --- 3d) Full features ---
+    cat("\n### Train/test with Full original features ###\n")
+    start_time_full_features <- Sys.time()
+    
+    all_feats <- tune_rf_subset(X_train, y_train, X_test, y_test,
+                                ntree_candidates, metric)
+    
+    best_model_all_feats <- all_feats$model
+    mcc_full <- all_feats$MCC
+    eval_metrics_all_feats <- all_feats$eval_metrics
+    # --- Generate Heatmap (Full Features) ---
+    prob_matrix_all_feats <- all_feats$p_m
+    conf_mat <- conf_mat_plot(y_test, all_feats$preds,
+                              conf_mat_title = paste0("All Features - ", data_name),
+                              accuracy = mcc_full)
+    conf_mat_all_feats <- conf_mat$conf_mat
+    cm_df_all_feats <- conf_mat$cm_df
+    end_time_full_features   <- Sys.time()
+    time_all_feats       <- as.numeric(difftime(end_time_full_features,
+                                                start_time_full_features,
+                                                units="secs"))
+
+    # --- 3e) Pairwise features (if any) ---
+    if(do_pairwise_test){
+      cat("\n### Train/test with Pair-wise features ###\n")
+      start_time_sig <- Sys.time()
+      pairwise_res <- pairwise_significance_tests(
+        input_df = train_data,
+        group_col = group_for_significance,
+        start_col_index = 6
+      )
+      sig_feats <- pairwise_res$corrected
+      
+      if(length(sig_feats) > 0){
+        # Case A: Features found - Run RF
+        tmp_sig <- tune_rf_subset(
+          X_train[, sig_feats, drop = FALSE], y_train,
+          X_test[,  sig_feats, drop = FALSE], y_test,
+          ntree_candidates, metric
+        )
+        mcc_sig <- tmp_sig$MCC
+        eval_metrics_sig <- tmp_sig$eval_metrics
+        
+        prob_matrix_sig <- tmp_sig$p_m
+        conf_mat <- conf_mat_plot(y_test, tmp_sig$preds,
+                                  conf_mat_title = paste0("Pair-wise Significance-Based Features - ", data_name),
+                                  accuracy = mcc_sig)
+        conf_mat_sig <- conf_mat$conf_mat
+        cm_df_sig <- conf_mat$cm_df
+        
+        # Save predictions to a common variable
+        preds_sig <- tmp_sig$preds
+        
+      } else {
+        # Case B: No features found - Initialize empty placeholders
+        mcc_sig <- NA_real_
+        eval_metrics_sig <- NULL
+        prob_matrix_sig <- NULL
+        conf_mat_sig <- NULL
+        cm_df_sig <- NULL
+        preds_sig <- NULL # Crucial: prevents "object 'tmp_sig' not found" later
+      }
+      end_time_sig   <- Sys.time()
+      time_sig       <- as.numeric(difftime(end_time_sig, start_time_sig, units="secs"))
+    }
+    else {
+      # If do_pairwise_test is FALSE entirely
+      pairwise_sig_features <- character(0)
+      sig_feats <- intersect(pairwise_sig_features, colnames(X_train))
+    }
+    
+    # --- 3f) RFA / Top-N, etc. (your existing blocks can follow) ---
+    # Recursive Feature Addition
+    if(do_rfa){
+      cat("\n### Train/test with RFA features ###\n")
+      start_time_rfa <- Sys.time()
+      
+      rfa_res   <- recursive_feature_addition(
+        X_train, y_train,
+        X_test,  y_test,
+        ntree_candidates = ntree_candidates,
+        metric           = metric
+      )
+      
+      rfa_selected_feats <- rfa_res$best_features_rf
+      mcc_rfa                 <- rfa_res$best_mcc
+      final_rf_rfa            <- rfa_res$final_model$finalModel
+      
+      prob_matrix_rfa <- rfa_res$prob_matrix
+      
+      conf_mat <- conf_mat_plot(y_test, rfa_res$predictions,
+                                conf_mat_title = paste0("RFA Features - ", type_col),
+                                accuracy = mcc_rfa)
+      conf_mat_rfa <- conf_mat$conf_mat
+      cm_df_rfa <- conf_mat$cm_df
+      
+      eval_metrics_rfa <- rfa_res$eval_metrics
+      
+      end_time_rfa   <- Sys.time()
+      time_rfa       <- as.numeric(difftime(end_time_rfa, start_time_rfa, units="secs"))
+    }
+    
+    # 10) Classification with Top-N Features by Importance (if requested)
+    if(do_top_importance_selection){
+      cat("\n### Running Classification on Top-N Features by Importance ###\n")
+      
+      imp_vec <- best_model_all_feats$finalModel$variable.importance
+      
+      rf_importances <- data.frame(
+        Feature    = names(imp_vec),
+        Importance = as.numeric(imp_vec),
+        stringsAsFactors = FALSE
+      )
+      
+      rf_importances <- rf_importances[order(rf_importances$Importance, decreasing = TRUE), ]
+      
+      top_importance_results <- list()
+      total_features <- nrow(rf_importances)
+      
+      for(top_n in top_importance_counts){
+        start_time_top_100_50_25_10 <- base::Sys.time()
+        
+        if(total_features < top_n){
+          selected_features <- rf_importances$Feature
+          cat(sprintf("Only %d features available; using all.\n", total_features))
+        } else {
+          selected_features <- head(rf_importances$Feature, top_n)
+        }
+        
+        tmp_top <- tune_rf_subset(
+          X_train[, selected_features, drop = FALSE], y_train,
+          X_test[, selected_features, drop = FALSE], y_test,
+          ntree_candidates, metric
+        )
+        
+        mcc_top         <- tmp_top$MCC
+        final_rf_top <- tmp_top$model$finalModel
+        
+        prob_matrix_top <- tmp_top$p_m
+        conf_mat <- conf_mat_plot(y_test, tmp_top$preds,
+                                  conf_mat_title = paste0("Top ", length(selected_features), " Features - ", data_name),
+                                  accuracy = mcc_top)
+        conf_mat_top <- conf_mat$conf_mat
+        cm_df_top <- conf_mat$cm_df
+        
+        eval_metrics_top <- tmp_top$eval_metrics
+        
+        end_time_top_100_50_25_10   <- Sys.time()
+        time_top_100_50_25_10   <- as.numeric(difftime(end_time_top_100_50_25_10,
+                                                       start_time_top_100_50_25_10,
+                                                       units="secs"))
+        
+        top_importance_results[[paste0("top_", top_n)]] <- list(
+          best_model = final_rf_top,
+          selected_features = selected_features,
+          preds_for_buidling_confmat_top = tmp_top$preds,
+          prob_matrix_top = prob_matrix_top,
+          conf_mat_top=conf_mat_top,
+          eval_metrics_top = eval_metrics_top,
+          cm_df_top = cm_df_top,
+          time_top_100_50_25_10 = time_top_100_50_25_10
+        )
+      }
+    }
+    
+    
+    # --- 3g) Package fold output ---
+    result_list <- list(
+      fold_id = f,
+      final_imp_norm_train = train_data,
+      final_imp_norm_test  = test_data,
+      best_model_all_feats = best_model_all_feats,
+      final_rf_all_feats   = best_model_all_feats$finalModel,
+      all_features_mcc     = mcc_full,
+      eval_metrics_all_feats = eval_metrics_all_feats,
+      prob_matrix = prob_matrix_all_feats, 
+      time_all_features = time_all_feats, 
+      conf_mat_all_feats = conf_mat_all_feats, 
+      cm_df_all_feats = cm_df_all_feats, 
+      preds_for_buidling_confmat_all = all_feats$preds
+    )
+    
+    if(do_impute_norm_screen) {
+      result_list$imp_norm_res_table <- best_res_imp_norm$results_table
+      result_list$time_imp_norm <- time_imp_norm
+      result_list$best_imputation     <- best_imp
+      result_list$best_normalization    <- best_norm
+    }
+    
+    if(do_pairwise_test){
+      result_list$mcc_sig <- mcc_sig
+      result_list$time_sig          <- time_sig
+      result_list$prob_matrix_sig <- prob_matrix_sig
+      result_list$eval_metrics_sig <- eval_metrics_sig
+      result_list$sig_selected_feats <- sig_feats
+      result_list$conf_mat_sig <- conf_mat_sig
+      result_list$cm_df_sig <- cm_df_sig
+      # CHANGED: Use the common variable 'preds_sig' defined above
+      result_list$preds_for_buidling_confmat_sig <- preds_sig
+    }
+    
+    if(do_rfa) {
+      result_list$rfa_selected_feats <- rfa_selected_feats
+      result_list$prob_matrix_rfa    <- prob_matrix_rfa
+      result_list$mcc_rfa  <- mcc_rfa
+      result_list$time_rfa                <- time_rfa
+      result_list$eval_metrics_rfa <- eval_metrics_rfa
+      result_list$conf_mat_rfa <- conf_mat_rfa
+      result_list$cm_df_rfa <- cm_df_rfa
+      result_list$preds_for_buidling_confmat_rfa <- rfa_res$predictions
+    }
+    
+    if(do_top_importance_selection) {
+      result_list$top_importance_results <- top_importance_results
+    }
+    
+    # Save the result for this fold into the master list
+    final_final_res_list[[f]] <- result_list
+  }
+  
+  # -----------------------------------------------------------
+  # NEW: Name the list elements as fold1, fold2, etc.
+  # -----------------------------------------------------------
+  names(final_final_res_list) <- paste0("fold", seq_along(final_final_res_list))
+  
+  return(final_final_res_list)
+}
+```
+
+
+**UPDATE 12 DEC 2025: testing unsupervised imputation (RF impute and kNN imputation) to see if there is any difference in best imp norm between SB only train and SB_and_ENV train across 7 data combinations**
+
+**UPDATE 13 Dec 2025: I edited the feature reduction to work more correct than before and i do feature reduction and then finding shared features between SB and ENV. => Then I investigate the imp x norm again to see if there is any crazy changes (for ex, does the small value imputation and TSN stills the best or not.)**
+
+### Option 1: Use SB to predict ENV - Only select shared features between SB and ENV 
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+###################################################################################
+## Explanation of the parameter of run_rf_analysis()
+# split environmental into 50:50 and combine with store_bought -> use_source_split = FALSE
+# use store-bought as training and environmental as testing -> use_store_vs_environmental_split = TRUE
+###################################################################################
+# 1. Detect available cores
+# Use detectCores() - 1 to leave one core free for your OS so your computer doesn't freeze.
+num_cores <- parallel::detectCores(logical = FALSE) - 1  
+
+# 2. SAFETY CHECK (Crucial for your specific error)
+# Your previous error was likely due to running out of RAM. 
+# Start with a SMALL number (e.g., 2 or 4) to test stability.
+# If you have 32GB+ RAM, you can try higher, but for now, limit it:
+# if(num_cores > 4) num_cores <- 4 
+
+# 3. Create the cluster
+cl <- parallel::makePSOCKcluster(num_cores)
+
+# 4. Register the cluster
+doParallel::registerDoParallel(cl)
+cat("Parallel processing registered with", num_cores, "cores.\n")
+
+t0 <- Sys.time()
+data_combinations <- list(
+  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+)
+
+# Predefine the result list with names from data_combinations
+run_rf_analysis_list_SB_train_13Dec25 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_train_13Dec25) <- c(
+  "gc_USSB_train",
+  "hplc_USSB_train",
+  "icp_USSB_train",
+  "gc_hplc_USSB_train",
+  "gc_icp_USSB_train",
+  "hplc_icp_USSB_train",
+  "gc_hplc_icp_USSB_train"
+  )
+
+# Iterate through each data combination by index
+for(i in seq_along(data_combinations)) {
+  cat("Processing dataset:", names(data_combinations)[i], "\n")
+  
+  # Run the analysis using the corresponding data and pass the custom name for figure titles
+  run_rf_analysis_list_SB_train_13Dec25[[names(run_rf_analysis_list_SB_train_13Dec25)[i]]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[i]],
+    type_col                = "Plastic_type", 
+    remove_cols             = c("Source", "Polymer", "technique"),
+    train_proportion = 0.8,
+    use_store_vs_environmental_split = TRUE,
+    data_name = names(data_combinations)[i], 
+    group_for_significance = "Plastic_type", 
+    do_pairwise_test = FALSE,             # Adjust parameters as needed
+    do_top_importance_selection = FALSE,
+    do_rfa = FALSE,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 1)
+  
+  # saveRDS(
+  #   object = run_rf_analysis_list_SB_train_12Dec25[[names(run_rf_analysis_list_SB_train_12Dec25)[i]]], 
+  #   file = paste0(getwd(), "RData_", names(run_rf_analysis_list_SB_train_12Dec25)[[i]], ".rds")
+  # )
+  
+  # Force memory cleanup
+  gc()
+}
+
+t1 <- Sys.time()
+print(paste0("Total run time for all data combos are: ", round(as.numeric(difftime(t1, t0, units = "secs")),2), " seconds"))
+stopCluster(cl)
+registerDoSEQ() # Good practice to reset to sequential after you are done
+```
+
+### Option 2: Use Both SB and ENV to predict ENV
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# 1. Detect available cores
+# Use detectCores() - 1 to leave one core free for your OS so your computer doesn't freeze.
+num_cores <- parallel::detectCores(logical = FALSE) - 1  
+
+# 2. SAFETY CHECK (Crucial for your specific error)
+# Your previous error was likely due to running out of RAM. 
+# Start with a SMALL number (e.g., 2 or 4) to test stability.
+# If you have 32GB+ RAM, you can try higher, but for now, limit it:
+# if(num_cores > 4) num_cores <- 4 
+
+# 3. Create the cluster
+cl <- parallel::makePSOCKcluster(num_cores)
+
+# 4. Register the cluster
+doParallel::registerDoParallel(cl)
+
+cat("Parallel processing registered with", num_cores, "cores.\n")
+
+t0 <- Sys.time()
+data_combinations <- list(
+  gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+)
+
+# Predefine the result list with names from data_combinations
+run_rf_analysis_list_SB_and_ENV_train_13Dec25 <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_and_ENV_train_13Dec25) <- c(
+  "gc_SB_and_ENV_train",
+  "hplc_SB_and_ENV_train",
+  "icp_SB_and_ENV_train",
+  "gc_hplc_SB_and_ENV_train",
+  "gc_icp_SB_and_ENV_train",
+  "hplc_icp_SB_and_ENV_train",
+  "gc_hplc_icp_SB_and_ENV_tra"
+  )
+
+# Iterate through each data combination by index
+for(i in seq_along(data_combinations)) {
+  cat("Processing dataset:", names(data_combinations)[i], "\n")
+  
+  # Run the analysis using the corresponding data and pass the custom name for figure titles
+  run_rf_analysis_list_SB_and_ENV_train_13Dec25[[names(run_rf_analysis_list_SB_and_ENV_train_13Dec25)[i]]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[i]],
+    data_name = names(data_combinations)[i], 
+    use_source_split = TRUE,
+    type_col                = "Plastic_type", 
+    remove_cols             = c("Source", "Polymer", "technique"),
+    group_for_significance = "Plastic_type",
+    do_pairwise_test = FALSE,             # Adjust parameters as needed
+    do_top_importance_selection = FALSE,
+    do_rfa = FALSE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 1)
+  
+  # saveRDS(
+  #   object = run_rf_analysis_list_SB_and_ENV_train_12Dec25[[names(run_rf_analysis_list_SB_and_ENV_train_12Dec25)[i]]], 
+  #   file = paste0(getwd(), "RData_", names(run_rf_analysis_list_SB_and_ENV_train_12Dec25)[[i]], ".rds")
+  # )
+  
+  # Force memory cleanup
+  gc()
+}
+t1 <- Sys.time()
+print(paste0("Total run time for all data combos are: ", round(as.numeric(difftime(t1, t0, units = "secs")),2), " seconds"))
+stopCluster(cl)
+registerDoSEQ() 
+```
