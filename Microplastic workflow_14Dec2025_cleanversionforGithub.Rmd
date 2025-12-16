@@ -13,9 +13,12 @@ knitr::opts_chunk$set(out.width='750px', dpi=200)
 
 ## Documentation
 
-This repo is accompanying the publication: "Computational fingerprinting workflow for environmental source tracking of microplastic based on representative additives"
+This repo is accompanying the publication: "Chemical Fingerprints of New vs. Weathered Microplastics: A Machine Learning Approach"
 
-Demo of each ML algorithms is shown below.
+### Suggestions from Scott:
+1. The specs that the author used for running this workflow is: .
+
+2. Print name + version of R package to be stored as .txt on Github page.
 
 ## Loading Packages and Functions
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
@@ -767,7 +770,7 @@ if (all(c("m.z", "RT") %in% colnames(df_in))) {
 process_and_filter <- function(df_input, 
                                class_col = "Plastic_type", 
                                threshold = 0.8, 
-                               filter_mode = "regular") { # "regular", "class", or "inhouse"
+                               filter_mode = "regular80") { # "regular", "class", or "inhouse"
   
   # --- Step B: Pivot to Wide Format ---
   df_wide <- df_input %>% 
@@ -786,13 +789,13 @@ process_and_filter <- function(df_input,
   feature_data <- df_wide %>% dplyr::select(all_of(setdiff(names(df_wide), meta_cols)))
   kept_features <- c()
   
-  if (filter_mode == "regular") {
+  if (filter_mode == "regular80") {
     # Mode 1: Global 80% Rule
     cat("Applying 'Regular' filtering (Global threshold)...\n")
     presence_rate <- colMeans(!is.na(feature_data))
     kept_features <- names(presence_rate[presence_rate >= threshold])
     
-  } else if (filter_mode == "class") {
+  } else if (filter_mode == "modified80") {
     # Mode 2: Class-Based 80% Rule
     cat(paste0("Applying 'Class' filtering (Threshold met in at least one '", class_col, "')...\n"))
     
@@ -863,7 +866,7 @@ process_and_filter <- function(df_input,
     kept_features <- colnames(feature_data)[final_mask]
     
   } else {
-    stop("Invalid filter_mode. Choose 'regular', 'class', or 'inhouse'.")
+    stop("Invalid filter_mode. Choose 'regular80', 'modified80', or 'inhouse'.")
   }
   
   # --- Step E: Build Final Dataframe ---
@@ -878,14 +881,37 @@ process_and_filter <- function(df_input,
 }
 ```
 
+### **Select shared features between store-bought and environmental**
+
+**UPDATE 13 Dec 2025: I edited the feature reduction to work more correct than before and i do feature reduction and then finding shared features between SB and ENV. **
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Find shared features between SB and ENV
+shared_feature_filtering <- function(dataset, feat_reduc_mode) {
+  SB <- dataset %>% dplyr::filter(Source == "Store-Bought")
+  ENV <- dataset %>% dplyr::filter(Source == "Environmental")
+  
+  shared_cols_SB_ENV <- Reduce(intersect, list(unique(SB$Feature), 
+                                               unique(ENV$Feature)))
+  
+  combined_SB_ENV_shared_cols_ntr <- rbind(SB %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV),
+                                           ENV %>% 
+                                             dplyr::filter(Feature %in% shared_cols_SB_ENV))
+  output <- process_and_filter(combined_SB_ENV_shared_cols_ntr, 
+                               class_col = "Plastic_type", 
+                               threshold = 0.8, 
+                               filter_mode = feat_reduc_mode)
+  return(output)
+}
+```
+
 ### Feature reduction 1: Regular 80% rule - Remove feature if there are more than 80% MVs
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # Replace 'gc_hplc_icp' with your actual dataframe name
-results <- process_and_filter(hplc, 
-                              class_col = "Plastic_type", 
-                              threshold = 0.8, 
-                              filter_mode = "regular")
+results <- shared_feature_filtering(gc, 
+                                    feat_reduc_mode = "regular80")
 
 # B. Extract Data for Calculation
 df_final <- results$filtered_data
@@ -925,11 +951,8 @@ cat(paste0("3. Percentage of signal response after feature reduction: ", round(p
 
 ### Feature reduction 2: Modified 80% rule
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# Replace 'gc_hplc_icp' with your actual dataframe name
-results <- process_and_filter(gc_hplc_icp, 
-                              class_col = "Plastic_type", 
-                              threshold = 0.8, 
-                              filter_mode = "class")
+results <- shared_feature_filtering(gc, 
+                                    feat_reduc_mode = "modified80")
 
 # B. Extract Data for Calculation
 df_final <- results$filtered_data
@@ -969,10 +992,8 @@ cat(paste0("3. Percentage of signal response after feature reduction: ", round(p
 
 ### Feature reduction 3: In-house Comprehensive feature filtering 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
-results <- process_and_filter(gc_hplc_icp, 
-                              class_col = "Plastic_type", 
-                              threshold = 0.8, 
-                              filter_mode = "inhouse")
+results <- shared_feature_filtering(hplc, 
+                                    feat_reduc_mode = "inhouse")
 
 # B. Extract Data for Calculation
 df_final <- results$filtered_data
@@ -1009,38 +1030,6 @@ pct_signal   <- (signal_final / signal_orig) * 100
 cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
 ```
 
-### **Select shared features between store-bought and environmental**
-
-**UPDATE 13 Dec 2025: I edited the feature reduction to work more correct than before and i do feature reduction and then finding shared features between SB and ENV. **
-
-```{r, echo = FALSE, message = FALSE, warning = FALSE}
-# Find shared features between SB and ENV
-shared_feature_filtering <- function(dataset, feat_reduc_mode) {
-  SB <- dataset %>% dplyr::filter(Source == "Store-Bought")
-  ENV <- dataset %>% dplyr::filter(Source == "Environmental")
-  
-  shared_cols_SB_ENV <- Reduce(intersect, list(unique(SB$Feature), 
-                                               unique(ENV$Feature)))
-  
-  combined_SB_ENV_shared_cols_ntr <- rbind(SB %>% 
-                                             dplyr::filter(Feature %in% shared_cols_SB_ENV),
-                                           ENV %>% 
-                                             dplyr::filter(Feature %in% shared_cols_SB_ENV))
-  output <- process_and_filter(combined_SB_ENV_shared_cols_ntr, 
-                               class_col = "Plastic_type", 
-                               threshold = 0.8, 
-                               filter_mode = feat_reduc_mode)$filtered_data
-  return(output)
-}
-
-# Then do data cleaning - change variable name accordingly to data combinations
-gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(gc, 
-                                                                               feat_reduc_mode = "inhouse")
-hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(hplc, 
-                                                                                 feat_reduc_mode = "inhouse")
-icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(icp, 
-                                                                                feat_reduc_mode = "inhouse")
-```
 
 **Update 13 Dec 2025: For data fusion, if i run it like this: gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(gc_hplc, feat_reduc_mode = "inhouse") => The amount of feature is too large (18759 features) which is not feasible at all for RFA feature selection approach or pretty much for any feature selection approach in RF classification later on.**
 
@@ -1104,9 +1093,21 @@ data_fusion <- function(df_input,
   return(output)
 }
 
+
+# Then do data cleaning - change variable name accordingly to data combinations
+gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(gc, 
+                                                                               feat_reduc_mode = "modified80")$filtered_data
+# hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(hplc, 
+#                                                                                  feat_reduc_mode = "inhouse")$filtered_data
+icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- shared_feature_filtering(icp, 
+                                                                                feat_reduc_mode = "modified80")$filtered_data
+
+# Create data fusion combos
 gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_hplc,
                                                                        source_feats = list(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
                                                                                            hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
+
+
 gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_icp,
                                                                       source_feats = list(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
                                                                                           icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
@@ -1118,13 +1119,53 @@ gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_hp
                                                                                                hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
                                                                                                icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
 
-save(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, 
-     hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-     icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-     gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-     gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-     hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-     gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, file = "my_exported_data_13Dec2025_new 7 data combo for testing imp x norm.RData")
+# Take original data from process_and_filter for quality assurance report ---------
+results <- process_and_filter(gc_hplc_icp, 
+                              class_col = "Plastic_type", 
+                              threshold = 0.8, 
+                              filter_mode = "inhouse")
+
+# B. Extract Data for Calculation
+df_final <- gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+df_orig  <- results$original_data
+
+# Define metadata columns to exclude from stats
+meta_cols <- c("Plastic_type", "technique", "Source", "Polymer")
+
+# Get list of feature names only
+feats_final <- setdiff(names(df_final), meta_cols)
+feats_orig  <- setdiff(names(df_orig), meta_cols)
+
+# --- 1. Percentage of chemical features retained (%) ---
+pct_features <- (length(feats_final) / length(feats_orig)) * 100
+cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 2), "%\n"))
+
+# --- 2. Percentage of missing values after feature reduction (%) ---
+# We calculate this ONLY on the feature columns of the filtered dataset
+if(!identical(setdiff(names(gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025), meta_cols), character(0))) {
+  vals_final <- df_final[, feats_final]
+  pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
+  cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
+} else {
+  vals_final <- df_final[, feats_final]
+  cat(paste0("2. Percentage of missing values after feature reduction: ", 0, "%\n"))
+}
+
+# --- 3. Percentage of signal response after feature reduction (%) ---
+# Sum of intensities in filtered data / Sum of intensities in original (zero-filled) data
+signal_final <- sum(vals_final, na.rm = TRUE)
+signal_orig  <- sum(df_orig[, feats_orig], na.rm = TRUE)
+pct_signal   <- (signal_final / signal_orig) * 100
+
+cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
+
+# save(gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, 
+#      hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+#      icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+#      gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+#      gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+#      hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+#      gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025, file = "my_exported_data_13Dec2025_new 7 data combo for testing imp x norm.RData")
 ```
 
 # Imputation and Normalization methods
@@ -1917,275 +1958,6 @@ grid.text(
 )
 circos.clear()
 dev.off()
-```
-
-## Post-hoc Pearson GC-HPLC-ICP data
-```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
-X_RFA <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$rfa_selected_feats)
-
-X_pairwise <-  run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat %>% dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$sig_selected_feats)
-
-# y <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_hplc_SB_and_ENV_train$final_imp_norm_dat$Plastic_type
-# 
-# library(FSelectorRcpp)
-# df1 <- data.frame(y = y, X_pairwise)
-# df2 <- data.frame(y = y, X_rfa)
-# 
-# ig1 <- information_gain(y ~ ., df1); ig2 <- information_gain(y ~ ., df2)
-# 
-# S1 <- cor(df1[-1], use="pairwise.complete.obs"); S2 <- cor(df2[-1], use="pairwise.complete.obs")
-# red1 <- rowMeans(abs(S1), na.rm=TRUE); red2 <- rowMeans(abs(S2), na.rm=TRUE)
-# 
-# mrmr1 <- ig1$importance - red1[ig1$attributes]
-# mrmr2 <- ig2$importance - red2[ig2$attributes]
-# summary(mrmr1); summary(mrmr2)
-# 
-# 
-# one_vs_rest_mi <- function(y, X){
-#   levs <- levels(y)
-#   res <- sapply(levs, function(cls){
-#     ybin <- factor(ifelse(y==cls, cls, "other"))
-#     information_gain(ybin ~ ., data.frame(ybin, X))$importance
-#   })
-#   rowMeans(res, na.rm=TRUE)           # avg MI across classes per feature
-# }
-# pc_pairwise <- one_vs_rest_mi(y, X_pairwise)
-# pc_rfa      <- one_vs_rest_mi(y, X_rfa)
-# summary(pc_pairwise); summary(pc_rfa)
-
-
-# ============================
-# Redundancy Diagnostics (R)
-# ============================
-
-# Packages
-suppressPackageStartupMessages({
-  require(igraph)   # graph metrics
-  require(Matrix)   # nearPD (for stabilizing correlation matrices)
-})
-
-# -- helpers -------------------------------------------------------------
-
-# Keep only numeric columns, drop zero-variance columns, and return as matrix
-.prepare_numeric_matrix <- function(X) {
-  Xnum <- X[, vapply(X, is.numeric, logical(1L)), drop = FALSE]
-  if (ncol(Xnum) == 0L) stop("No numeric columns in 'X'.")
-  # drop zero-variance columns (computed with pairwise NAs removed)
-  nzv <- vapply(Xnum, function(col) {
-    v <- var(col, na.rm = TRUE)
-    is.finite(v) && v > 0
-  }, logical(1L))
-  Xnum <- Xnum[, nzv, drop = FALSE]
-  if (ncol(Xnum) == 0L) stop("All numeric columns have zero variance.")
-  as.matrix(Xnum)
-}
-
-# Safe correlation matrix (pairwise) with optional method
-.safe_cor <- function(Xmat, method = c("pearson","spearman")) {
-  method <- match.arg(method)
-  S <- suppressWarnings(cor(Xmat, use = "pairwise.complete.obs", method = method))
-  # ensure symmetry and unit diagonal (occasionally numeric drift)
-  S <- (S + t(S)) / 2
-  diag(S) <- 1
-  S
-}
-
-# Extract absolute upper-triangle values
-.upper_abs <- function(S) {
-  abs(S[upper.tri(S, diag = FALSE)])
-}
-
-# Effective dimensionality from eigenvalues of correlation matrix
-.effective_dim <- function(S) {
-  e <- eigen(S, symmetric = TRUE, only.values = TRUE)$values
-  # Guard against tiny negative eigenvalues from numeric issues
-  e <- pmax(e, 0)
-  # probabilities
-  pe <- e / sum(e)
-  # add small epsilon in log to avoid log(0)
-  eps <- 1e-12
-  erank <- exp(-sum(pe * log(pe + eps)))
-  ENF   <- (sum(e)^2) / sum(e^2)  # for a correlation matrix sum(e)=p
-  list(erank = as.numeric(erank),
-       ENF   = as.numeric(ENF),
-       eigenvalues = e)
-}
-
-# Make a correlation matrix "near" SPD if solve() fails
-.make_spd_corr <- function(S) {
-  # nearPD with corr=TRUE projects to nearest correlation matrix (unit diag)
-  as.matrix(nearPD(S, corr = TRUE)$mat)
-}
-
-# VIF from correlation matrix: VIF_j = (R^{-1})_{jj}
-.vif_from_corr <- function(S) {
-  S <- (S + t(S)) / 2
-  diag(S) <- 1
-  inv_ok <- try(solve(S), silent = TRUE)
-  if (inherits(inv_ok, "try-error")) {
-    # Stabilize via nearest SPD correlation
-    S_spd <- .make_spd_corr(S)
-    inv_ok <- try(solve(S_spd), silent = TRUE)
-    if (inherits(inv_ok, "try-error")) {
-      # last-ditch ridge, then renormalize to correlation
-      p <- ncol(S)
-      S_ridge <- cov2cor(S + diag(1e-4, p))
-      inv_ok  <- solve(S_ridge)
-    }
-  }
-  diag(inv_ok)
-}
-
-# Graph metrics at one threshold tau (|r| >= tau)
-.graph_metrics_once <- function(S, tau) {
-  p <- ncol(S)
-  A <- (abs(S) >= tau) * 1
-  diag(A) <- 0L
-  g <- graph_from_adjacency_matrix(A, mode = "undirected", diag = FALSE)
-  dens  <- edge_density(g, loops = FALSE)
-  deg   <- degree(g)
-  avg_d <- if (length(deg)) mean(deg) else 0
-  nE    <- gsize(g)
-  nC    <- components(g)$no
-  # Number of maximal cliques and largest clique size
-  n_max_cliques <- count_max_cliques(g)
-  max_clique_sz <- clique_num(g)
-  trans         <- transitivity(g, type = "global") # clustering coefficient
-  data.frame(
-    tau = tau,
-    p = p,
-    edges = nE,
-    density = as.numeric(dens),
-    avg_degree = as.numeric(avg_d),
-    n_components = as.integer(nC),
-    n_max_cliques = as.integer(n_max_cliques),
-    largest_clique = as.integer(max_clique_sz),
-    transitivity = as.numeric(ifelse(is.na(trans), 0, trans))
-  )
-}
-
-# -- main function -------------------------------------------------------
-
-#' Redundancy diagnostics for a numeric matrix/data frame
-#'
-#' @param X data.frame or matrix of features (numeric columns will be used)
-#' @param method "pearson" (default) or "spearman" for correlation
-#' @param tau_grid vector of thresholds for |r| to build graphs (default c(.6,.7,.8,.9))
-#' @return a list with: cor_summary, graph_metrics, effective_dim, VIF
-redundancy_diagnostics <- function(X, method = c("pearson","spearman"),
-                                   tau_grid = c(0.6, 0.7, 0.8, 0.9)) {
-  method <- match.arg(method)
-  Xmat   <- .prepare_numeric_matrix(X)
-  S      <- .safe_cor(Xmat, method = method)
-  p      <- ncol(S)
-
-  up_abs <- .upper_abs(S)
-  MAC    <- mean(up_abs, na.rm = TRUE)
-  q90    <- as.numeric(quantile(up_abs, 0.90, na.rm = TRUE))
-  q95    <- as.numeric(quantile(up_abs, 0.95, na.rm = TRUE))
-  maxabs <- max(up_abs, na.rm = TRUE)
-
-  cor_summary <- list(
-    p = p,
-    MAC = MAC,
-    q90_abs_r = q90,
-    q95_abs_r = q95,
-    max_abs_r = maxabs
-  )
-
-  # Graph metrics over thresholds
-  graph_metrics <- do.call(rbind, lapply(tau_grid, function(tau) .graph_metrics_once(S, tau)))
-
-  # Effective dimensionality
-  eff <- .effective_dim(S)
-
-  # VIFs
-  vif_vals <- .vif_from_corr(S)
-  names(vif_vals) <- colnames(S)
-  vif_summary <- list(
-    mean  = mean(vif_vals, na.rm = TRUE),
-    median= median(vif_vals, na.rm = TRUE),
-    p90   = as.numeric(quantile(vif_vals, 0.90, na.rm = TRUE)),
-    max   = max(vif_vals, na.rm = TRUE),
-    VIF   = vif_vals
-  )
-
-  list(
-    cor_summary   = cor_summary,
-    graph_metrics = graph_metrics,
-    effective_dim = eff,
-    VIF_summary   = vif_summary,
-    corr_matrix   = S # included for optional downstream inspection
-  )
-}
-
-# -- convenience: compare two feature sets side-by-side ------------------
-
-#' Compare two feature matrices using the diagnostics above
-#' @param X1, X2 numeric data frames/matrices (possibly different columns)
-#' @param names character vector of length 2 for labeling
-compare_redundancy <- function(X1, X2, names = c("Set1","Set2"),
-                               method = "pearson",
-                               tau_grid = c(0.6,0.7,0.8,0.9)) {
-  if (length(names) != 2L) stop("'names' must be length 2.")
-  
-  d1 <- redundancy_diagnostics(X1, method = method, tau_grid = tau_grid)
-  d2 <- redundancy_diagnostics(X2, method = method, tau_grid = tau_grid)
-
-  sum_tbl <- data.frame(
-    set = names,
-    p   = c(d1$cor_summary$p, d2$cor_summary$p),
-    MAC = c(d1$cor_summary$MAC, d2$cor_summary$MAC),
-    q90 = c(d1$cor_summary$q90_abs_r, d2$cor_summary$q90_abs_r),
-    q95 = c(d1$cor_summary$q95_abs_r, d2$cor_summary$q95_abs_r),
-    max_abs_r = c(d1$cor_summary$max_abs_r, d2$cor_summary$max_abs_r),
-    ERANK = c(d1$effective_dim$erank, d2$effective_dim$erank),
-    ENF   = c(d1$effective_dim$ENF,   d2$effective_dim$ENF),
-    VIF_mean   = c(d1$VIF_summary$mean,  d2$VIF_summary$mean),
-    VIF_median = c(d1$VIF_summary$median,d2$VIF_summary$median),
-    VIF_p90    = c(d1$VIF_summary$p90,   d2$VIF_summary$p90),
-    VIF_max    = c(d1$VIF_summary$max,   d2$VIF_summary$max),
-    row.names = NULL
-  )
-
-  gm1 <- transform(d1$graph_metrics, set = names[1])
-  gm2 <- transform(d2$graph_metrics, set = names[2])
-  gm  <- rbind(gm1, gm2)
-
-  details <- setNames(list(d1, d2), names)
-
-  list(
-    summary_table = sum_tbl,
-    graph_metrics = gm,
-    details       = details
-  )
-}
-
-
-# ============================
-# Example usage
-# ============================
-# Suppose:
-#  - X_pairwise: data.frame/matrix of the features selected by your pairwise test
-#  - X_RFA     : data.frame/matrix of the features selected by RFA
-#
-# Run diagnostics for one set:
-diag_pairwise <- redundancy_diagnostics(X_pairwise, method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
-diag_RFA      <- redundancy_diagnostics(X_RFA,      method = "pearson", tau_grid = c(0.6,0.7,0.8,0.9))
-#
-# Compare sets side-by-side:
-cmp <- compare_redundancy(X_pairwise, X_RFA, names = c("Pairwise","RFA"))
-cmp$summary_table          # quick numeric comparison
-cmp$graph_metrics          # per-threshold graph stats (density, avg_degree, cliques, etc.)
-#
-# Inspect VIFs (features with high multicollinearity):
-sort(diag_pairwise$VIF_summary$VIF, decreasing = TRUE)[1:15]
-sort(diag_RFA$VIF_summary$VIF,      decreasing = TRUE)[1:15]
-#
-# Effective dimensionality:
-diag_pairwise$effective_dim$erank
-diag_pairwise$effective_dim$ENF
-
 ```
 
 # Random Forest
