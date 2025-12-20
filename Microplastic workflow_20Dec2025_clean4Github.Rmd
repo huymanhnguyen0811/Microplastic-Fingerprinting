@@ -1035,7 +1035,7 @@ cat(paste0("3. Percentage of signal response after feature reduction: ", round(p
 
     **==> SOLUTION:  I create data fusion by combining the reduced feature , FOR EXAMPLE, to create gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 data, I first do Zero Replacement for all the features that only native to an analytical technique but not the other. Afterwards, I only select features from individual dataset that makeup the data fusion, for example to create gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025; hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 and icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 to create this data fusion combinations.**
                                                                                     
-
+### Data fusion
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
 # --- Step A: Map Features to Techniques (Fast Lookup) ---
 data_fusion <- function(df_input, 
@@ -1120,13 +1120,13 @@ gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025 <- data_fusion(gc_hp
                                                                                                icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025))
 
 # Take original data from process_and_filter for quality assurance report ---------
-results <- process_and_filter(gc_hplc_icp, 
+results <- process_and_filter(gc_icp, 
                               class_col = "Plastic_type", 
                               threshold = 0.8, 
                               filter_mode = "inhouse")
 
 # B. Extract Data for Calculation
-df_final <- gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+df_final <- gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
 df_orig  <- results$original_data
 
 # Define metadata columns to exclude from stats
@@ -1142,7 +1142,7 @@ cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 
 
 # --- 2. Percentage of missing values after feature reduction (%) ---
 # We calculate this ONLY on the feature columns of the filtered dataset
-if(!identical(setdiff(names(gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025), meta_cols), character(0))) {
+if(!identical(setdiff(names(gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025), meta_cols), character(0))) {
   vals_final <- df_final[, feats_final]
   pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
   cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
@@ -1825,139 +1825,6 @@ ggsave(filename = paste0("Figure 4_confusion matrix_SB and ENV train", "GC", "_"
        width = 15,       # Width in inches (adjust as needed)
        height = 8,       # Height in inches (adjust as needed)
        units = "in")
-```
-
-## Figure SI (For Roxana's paper): Chord diagram of classification - individual & combined data combinations - platic categories with correct prediction probablity > 0.5
-
-(UPDATE 24 July 2025:) Change color to 7 color corresponding to 7 data combinations, the plastic categories will "flow" with 7 colors into 7 data combinations
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-library(circlize)
-
-# Data frame , 1column is the Analytical dataset, 1 column is the Plastic type, 1 column is the number of correctly classified plastic product 
-prob_mat_list <- list(run_rf_analysis_list_SB_and_ENV_train$gc_SB_and_ENV_train$prob_matrix_sig,
-                      run_rf_analysis_list_SB_and_ENV_train$hplc_SB_and_ENV_train$prob_matrix_rfa,
-                      run_rf_analysis_list_SB_and_ENV_train$icp_SB_and_ENV_train$prob_matrix_rfa,
-                      run_rf_analysis_list_SB_and_ENV_train$gc_icp_SB_and_ENV_train$top_importance_results$top_10$prob_matrix_top,
-                      run_rf_analysis_list_SB_and_ENV_train$gc_hplc_SB_and_ENV_train$prob_matrix_rfa,
-                      run_rf_analysis_list_SB_and_ENV_train$hplc_icp_SB_and_ENV_train$prob_matrix_sig,
-                      run_rf_analysis_list_SB_and_ENV_train$gc_hplc_icp_SB_and_ENV_train$prob_matrix,
-                      run_rf_analysis_list_SB_only$hplc_SB$prob_matrix_rfa,
-                      run_rf_analysis_list_SB_only$icp_SB$prob_matrix_rfa,
-                      run_rf_analysis_list_SB_only$hplc_icp_SB$top_importance_results$top_50$prob_matrix_top)
-
-name <- c("GC",
-          "HPLC",
-          "ICP",
-          "GC-HPLC",
-          "GC-ICP",
-          "HPLC-ICP",
-          "GC-HPLC-ICP", 
-          "HPLC",
-          "ICP",
-          "HPLC-ICP")
-
-for (i in 1:length(prob_mat_list)) {
-  # 2. Compute, for each row, which column has the max value
-  #    `max.col()` is a fast way to get the index of the max in each row
-  idx_max <- max.col(prob_mat_list[[i]], ties.method = "first")
-  
-  # 3. Map those indices back to class names
-  predicted_class <- colnames(prob_mat_list[[i]])[idx_max]
-  
-  # 4. Extract the max probability values
-  #    Method A: via matrix indexing
-  row_indices     <- seq_len(nrow(prob_mat_list[[i]]))
-  predicted_prob  <- prob_mat_list[[i]][cbind(row_indices, idx_max)]
-  
-  # 4. If you’d like it all in a data.frame:
-  df <- as.data.frame(prob_mat_list[[i]])
-  df <- df %>% 
-    dplyr::mutate(Actual_Class = sub("_.*", "", rownames(prob_mat_list[[i]]))) %>% # bring actual labels in as a column
-    dplyr::mutate(Predicted_Class = predicted_class) %>%
-    dplyr::mutate(Predicted_Prob = predicted_prob) %>%
-    dplyr::mutate(Dataset = name[i]) %>%
-    dplyr::relocate(Actual_Class, Predicted_Class, Dataset, Predicted_Prob, .before = 1) %>%
-    dplyr::filter(Actual_Class == Predicted_Class)
-  
-  prob_mat_list[[i]] <- df
-}
-
-chorddiagram_df <- bind_rows(prob_mat_list) %>% 
-  dplyr::filter(Predicted_Prob > 0.5) %>%
-  dplyr::select(c(Dataset, Predicted_Class, Predicted_Prob)) %>%
-  dplyr::mutate(Dataset = gsub(pattern = "-", replacement = "_", Dataset))
-
-png(
-  filename = paste0("chord_diagram_", format(Sys.time(), "%d-%m-%Y"), ".png"),
-  width    = 18,      # in inches
-  height   = 18,      # in inches
-  units    = "in",
-  res      = 600     # 300 dpi for publication‑quality
-)
-
-# 1) Label mapping for bottom dataset sectors
-label_map <- c(
-  GC            = "GC",
-  HPLC          = "HPLC",
-  ICP           = "ICP",
-  GC_HPLC       = "GC-HPLC",
-  GC_ICP        = "GC-ICP",
-  HPLC_ICP      = "HPLC-ICP",
-  GC_HPLC_ICP   = "GC-HPLC-ICP"
-)
-# Have gaps between sectors
-circos.par(gap.after = c(rep(2, length(unique(chorddiagram_df[[1]]))-1), 15, 
-                         rep(2, length(unique(chorddiagram_df[[2]]))-1), 15))
-
-# Manually assign color to bottom sectors (Datasets)
-grid.col <- c(GC='#8dd3c7',HPLC='#ffffb3',ICP='#bebada',GC_ICP = '#fb8072',HPLC_ICP = '#80b1d3', GC_HPLC = '#fdb462',GC_HPLC_ICP = '#b3de69',
-              Balloons="grey", Plastic.Bottles="grey", Plastic.Drinking.Straws="grey", Bottle.Caps="grey", Construction.Material="grey", Mixed.Microplastics="grey", Plastic.Cups="grey", Shotgun.shells="grey", Fishing.Bait.Trays="grey", Food.Containers="grey", Food.Packaging="grey", Food.Wrappers="grey", Textile.Fabric.Face.Masks="grey", Toy.Balls="grey", Cigarillo.Tips="grey", Various.Plastic.Waste="grey", Plastic.Cutlery="grey", Cigarettes="grey", Cigarette.Lighters="grey", Plastic.Cord="grey", Plastic.Cable.Ties="grey", Plastic.Plates="grey")
-
-circlize::chordDiagram(chorddiagram_df,
-                       grid.col = grid.col,
-                       small.gap = 2, 
-                       annotationTrack   = c("grid"),
-                       preAllocateTracks = 1)
-
-circos.trackPlotRegion(
-  track.index = 1, 
-  bg.border = NA,
-  panel.fun = function(x, y) {
-    sector <- get.cell.meta.data("sector.index")
-    xlim   <- get.cell.meta.data("xlim")
-    
-    # Use mapped label if available, otherwise keep original
-    label <- ifelse(sector %in% names(label_map), label_map[[sector]], sector)
-    
-    circos.text(
-      x       = mean(xlim), y = 0,
-      labels  = label,
-      facing  = "clockwise",     # or "reverse.clockwise"
-      niceFacing = TRUE,        # turns off auto-flip
-      adj     = c(0, 0.5),
-      cex     = 1.5
-    )
-  }
-)
-grid.text(
-  "Individual and combined datasets",
-  x    = unit(0.5, "npc"),        # centered horizontally
-  y    = unit(0.075, "npc"),           # 2 mm up from bottom
-  just = "center",
-  gp   = gpar(fontsize = 20, fontface = "bold")
-)
-
-# 2) And the top label for "Dataset"
-grid.text(
-  "Plastic categories",
-  x    = unit(0.5, "npc"),        
-  y    = unit(0.98, "npc"),  # 5 mm down from top
-  just = "center",
-  gp   = gpar(fontsize = 20, fontface = "bold")
-)
-circos.clear()
-dev.off()
 ```
 
 # Random Forest
@@ -2942,24 +2809,24 @@ cat("Parallel processing registered with", num_cores, "cores.\n")
 t0 <- Sys.time()
 data_combinations <- list(
   gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+  # hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+  # hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_train_13Dec25 <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_train_13Dec25) <- c(
+run_rf_analysis_list_SB_train_test_modified80_gcandgcicp <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_train_test_modified80_gcandgcicp) <- c(
   "gc_USSB_train",
-  "hplc_USSB_train",
-  "icp_USSB_train",
-  "gc_hplc_USSB_train",
-  "gc_icp_USSB_train",
-  "hplc_icp_USSB_train",
-  "gc_hplc_icp_USSB_train"
+  # "hplc_USSB_train",
+  # "icp_USSB_train",
+  # "gc_hplc_USSB_train",
+  "gc_icp_USSB_train"
+  # "hplc_icp_USSB_train",
+  # "gc_hplc_icp_USSB_train"
   )
 
 # Iterate through each data combination by index
@@ -2967,7 +2834,7 @@ for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_train_13Dec25[[names(run_rf_analysis_list_SB_train_13Dec25)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_train_test_modified80_gcandgcicp[[names(run_rf_analysis_list_SB_train_test_modified80_gcandgcicp)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     type_col                = "Plastic_type", 
     remove_cols             = c("Source", "Polymer", "technique"),
@@ -2975,9 +2842,9 @@ for(i in seq_along(data_combinations)) {
     use_store_vs_environmental_split = TRUE,
     data_name = names(data_combinations)[i], 
     group_for_significance = "Plastic_type", 
-    do_pairwise_test = FALSE,             # Adjust parameters as needed
-    do_top_importance_selection = FALSE,
-    do_rfa = FALSE,
+    do_pairwise_test = TRUE,             # Adjust parameters as needed
+    do_top_importance_selection = TRUE,
+    do_rfa = TRUE,
     do_impute_norm_screen = TRUE,
     seed = 123,
     min_sample_number = 1)
@@ -3021,24 +2888,24 @@ cat("Parallel processing registered with", num_cores, "cores.\n")
 t0 <- Sys.time()
 data_combinations <- list(
   gc                 = gc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
-  gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+  # hplc               = hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # icp                = icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # gc_hplc            = gc_hplc_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  gc_icp             = gc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
+  # hplc_icp           = hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025,
+  # gc_hplc_icp        = gc_hplc_icp_combined_SB_ENV_shared_cols_ntr_clean_13Dec2025
 )
 
 # Predefine the result list with names from data_combinations
-run_rf_analysis_list_SB_and_ENV_train_13Dec25 <- vector("list", length(data_combinations))
-names(run_rf_analysis_list_SB_and_ENV_train_13Dec25) <- c(
+run_rf_analysis_list_SB_and_ENV_train_test_modified80_gcandgcicp <- vector("list", length(data_combinations))
+names(run_rf_analysis_list_SB_and_ENV_train_test_modified80_gcandgcicp) <- c(
   "gc_SB_and_ENV_train",
-  "hplc_SB_and_ENV_train",
-  "icp_SB_and_ENV_train",
-  "gc_hplc_SB_and_ENV_train",
-  "gc_icp_SB_and_ENV_train",
-  "hplc_icp_SB_and_ENV_train",
-  "gc_hplc_icp_SB_and_ENV_tra"
+  # "hplc_SB_and_ENV_train",
+  # "icp_SB_and_ENV_train",
+  # "gc_hplc_SB_and_ENV_train",
+  "gc_icp_SB_and_ENV_train"
+  # "hplc_icp_SB_and_ENV_train",
+  # "gc_hplc_icp_SB_and_ENV_tra"
   )
 
 # Iterate through each data combination by index
@@ -3046,16 +2913,16 @@ for(i in seq_along(data_combinations)) {
   cat("Processing dataset:", names(data_combinations)[i], "\n")
   
   # Run the analysis using the corresponding data and pass the custom name for figure titles
-  run_rf_analysis_list_SB_and_ENV_train_13Dec25[[names(run_rf_analysis_list_SB_and_ENV_train_13Dec25)[i]]] <- run_rf_analysis_manuscript1(
+  run_rf_analysis_list_SB_and_ENV_train_test_modified80_gcandgcicp[[names(run_rf_analysis_list_SB_and_ENV_train_test_modified80_gcandgcicp)[i]]] <- run_rf_analysis_manuscript1(
     data = data_combinations[[i]],
     data_name = names(data_combinations)[i], 
     use_source_split = TRUE,
     type_col                = "Plastic_type", 
     remove_cols             = c("Source", "Polymer", "technique"),
     group_for_significance = "Plastic_type",
-    do_pairwise_test = FALSE,             # Adjust parameters as needed
-    do_top_importance_selection = FALSE,
-    do_rfa = FALSE,
+    do_pairwise_test = TRUE,             # Adjust parameters as needed
+    do_top_importance_selection = TRUE,
+    do_rfa = TRUE,
     train_proportion = 0.8,
     do_impute_norm_screen = TRUE,
     seed = 123,
