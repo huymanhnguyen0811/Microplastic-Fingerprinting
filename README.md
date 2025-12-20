@@ -8,7 +8,7 @@ It contains the computational workflow and datasets used to analyze chemical fin
 
 * **`Microplastic workflow_20Dec2025_clean4Github.Rmd`**: The main R Markdown workflow file. It handles data import, processing, feature selection, and model training.
 * **`Helper Functions for Computational Workflow.R`**: A collection of custom functions used by the main workflow for tasks like compound grouping, imputation, and feature filtering.
-* **`data/`**: Directory containing the raw data files (ATDGCMS and HPLCTOFMS).
+* **`Raw data/`**: Directory containing the raw data files (ATDGCMS and HPLCTOFMS).
 
 ## 💻 System Specifications
 The workflow was developed and tested on the following system configuration:
@@ -27,11 +27,11 @@ To ensure compatibility and reproducibility, a list of used package versions is 
 * **Visualization**: `ggplot2`, `pheatmap`, `ggpubr`, `gridExtra`
 
 ### Version Tracking
-To avoid compatibility issues, please refer to the `package_versions.txt` file (if available) to see the exact package versions used. You can generate this file by running the following command in R:
+To avoid compatibility issues, please refer to the `R package versions.txt` file (if available) to see the exact package versions used. You can generate this file by running the following command in R:
 
 ```r
 writeLines(capture.output(sessionInfo()), "session_info.txt")
 # OR for a cleaner list of attached packages:
 write.table(installed.packages()[,c("Package", "Version")], 
-            file = "package_versions.txt", 
+            file = "R package versions.txt", 
             row.names = FALSE, quote = FALSE)
