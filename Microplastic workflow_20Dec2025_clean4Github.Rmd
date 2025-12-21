@@ -231,8 +231,6 @@ if(length(hplc_benchmark_idx) > 0) hplc_batch_grouped <- hplc_batch_grouped[-hpl
 ## Step 2: Blank subtraction & Remove all detections with negative peak area
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# --- OPTIMIZED: Vectorized Blank Subtraction ---
-
 # ATDGCMS Optimization
 atdgcms_adjusted_step3 <- atdgcms_grouped %>%
   dplyr::group_by(Feature) %>%
@@ -293,7 +291,7 @@ hplc <- hplc_adjusted_step3 %>%
   mutate(technique = "HPLC")
 ```
 
-## STEP 4: Importing Trace metal data
+## Step 4: Importing Trace metal data
 
 #### Data prepping
 
