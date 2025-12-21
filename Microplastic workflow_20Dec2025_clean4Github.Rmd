@@ -6,7 +6,9 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting")
+# Set root directory to the project root (Project folder)
+# This assumes the .Rmd is in the root of the project.
+knitr::opts_knit$set(root.dir = getwd())
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(out.width='750px', dpi=200)
 ```
@@ -27,11 +29,9 @@ library(doParallel)
 library(parallel)
 library(vegan)
 library(readxl)
-library(tidyverse)
-library(dplyr)
+library(tidyverse) # Loads dplyr, tidyr, purrr, etc.
 library(data.table)
 library(writexl)
-library(tidyr)
 library(grid)
 library(gridExtra)
 library(stats)
@@ -39,7 +39,7 @@ library(FactoMineR)
 library(factoextra)
 library(ggforce)
 library(cluster)
-library(MASS)  # For mvrnorm
+library(MASS)
 library(caret)
 library(randomForest)
 library(pheatmap)
@@ -48,25 +48,21 @@ library(missForest)
 library(pROC)
 library(VIM)
 library(softImpute)
-library(purrr)
 library(ggpubr)
-library(missForest)
-library(pROC)
-library(VIM)
-library(softImpute)
-library(purrr)
-library(ggpubr)
-library(writexl)
-library(RANN)   # specific for fast KNN
+library(RANN)
+
+# Load Helper Functions
+# Ensure the helper script is in the same folder as this Rmd
+source("Helper Functions for Computational Workflow.R")
 ```
 
 ## STEP 1.1: Data import
-
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-# ATDGCMS
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/ATDGCMS")
+# ATDGCMS -----------------------------------------------------------------
+# Using relative path
+path_atdgcms <- "./Raw Data/ATDGCMS"
 
-atdgcms_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
+atdgcms_list <- list.files(path = path_atdgcms, pattern = '*.csv', full.names = TRUE) %>%
   .[!str_detect(., "2022")] %>%
   # remove USE samples with only 1 replication
   .[!str_detect(., "USE_01")] %>%
@@ -85,28 +81,22 @@ atdgcms_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
   .[!str_detect(., "USE_19")] %>%
   .[!str_detect(., "USE_20")] %>%
   .[!str_detect(., "USSB_01")] %>%
-  .[!str_detect(., "USSB_08")] # %>%
-  # .[!str_detect(., "USSB_09")] # %>%
-  # .[str_detect(., "_USSB")] #  environmental samples
+  .[!str_detect(., "USSB_08")] 
 
 # Blank samples 
-blank_list <- list.files(pattern = '*.csv', full.names = TRUE) %>%
+blank_list <- list.files(path = path_atdgcms, pattern = '*.csv', full.names = TRUE) %>%
   .[str_detect(., "2022-")]
 
 # Import samples to list
-# Function to read each file and add a "File" column
 read_and_add_filename <- function(file) {
   df <- read.csv(file) %>%
-    mutate(File = basename(file))  # Add a "File" column with the file name
+    mutate(File = basename(file))
   return(df)
 }
 
-# Apply the function to all files and combine them into a single dataframe
 atdgcms_step1.1 <- lapply(atdgcms_list, read_and_add_filename) %>%
-  bind_rows() %>%  # Combine all dataframes into one
-  # dplyr::bind_rows(purrr::map(atdgcms_list, read.csv)) %>%
+  bind_rows() %>%
   dplyr::select(-c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions")) %>%
-  # # Change all ATDGCMS file name with underscore-separated to hyphen-separated
   dplyr::mutate(File = gsub("_", "-", File)) %>%
   dplyr::mutate(File = gsub(".csv", "", File)) %>%
   mutate(type = "Sample")
@@ -117,25 +107,31 @@ atdgcms_blank <- dplyr::bind_rows(purrr::map(blank_list, read.csv)) %>%
 
 atdgcms_step1.1 <- rbind(atdgcms_step1.1, atdgcms_blank) %>% 
   arrange(RT) %>%
-  # mutate(Replicate = ifelse(str_detect(File, "R1"), "R1",
-  #                           ifelse(str_detect(File, "R2"), "R2", "R3"))) %>%
   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, pattern = "-")[c(4, 5)], collapse = "-")))
 
-# HPLCTOFMS
+# HPLCTOFMS ---------------------------------------------------------------
 
-###### Import Batch 0
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 0")
+# Define relative paths for batches
+path_batch0 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 0"
+path_batch1 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 1"
+path_batch2 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 2"
 
-hplc_batch0 <- list.files(pattern = '*.xls') %>%
-  .[!str_detect(., "Blank")]
-
-# Blank samples 
-blank_hplc_batch0 <- list.files(pattern = '*.xls') %>%
-  .[str_detect(., "Blank")]
-
-# Import samples to list
-hplc_batch0_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch0, read_xls, skip = 1), 
-                                        purrr::map(blank_hplc_batch0, read_xls, skip = 1)) %>%
+# Function to safely list files and read them
+read_hplc_batch <- function(dir_path, batch_num) {
+  
+  # Get Sample Files (full path needed for read_xls)
+  files_sample <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE) %>%
+    .[!str_detect(., "Blank")]
+  
+  # Get Blank Files
+  files_blank <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE) %>%
+    .[str_detect(., "Blank")]
+  
+  # Read and combine
+  combined <- dplyr::bind_rows(
+    purrr::map(files_sample, read_xls, skip = 1), 
+    purrr::map(files_blank, read_xls, skip = 1)
+  ) %>%
   dplyr::select(m.z = `m/z`, RT, Height, File) %>%
   mutate(File = gsub("_", "-", File),
          type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
@@ -144,70 +140,25 @@ hplc_batch0_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch0, read_xls, skip =
                          str_detect(File, "Day15") ~ "15",
                          TRUE ~ "34"),
          Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
-         Batch_number = "0",
-         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[1:2], collapse = "-")))
+         Batch_number = as.character(batch_num))
+  
+  return(combined)
+}
 
-colnames(hplc_batch0_step1.1)[1] <- "m.z"
+# Import Batches
+hplc_batch0_step1.1 <- read_hplc_batch(path_batch0, 0) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[1:2], collapse = "-")))
 
-###### Import Batch 1
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 1")
+hplc_batch1_step1.1 <- read_hplc_batch(path_batch1, 1) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
 
-# Import sample data
-hplc_batch1 <- list.files(pattern = '*.xls') %>%
-  .[!str_detect(., "Blank")]
-# # Import Blank data 
-blank_hplc_batch1 <- list.files(pattern = '*.xls') %>%
-  .[str_detect(., "Blank")]
+hplc_batch2_step1.1 <- read_hplc_batch(path_batch2, 2) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
 
-# Put sample and blank data together and create additional description columns
-hplc_batch1_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch1, read_xls, skip = 1), 
-                                        purrr::map(blank_hplc_batch1, read_xls, skip = 1)) %>%
-  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
-  mutate(File = gsub("_", "-", File),
-         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
-         Day = case_when(str_detect(File, "Day0") ~ "0",
-                         str_detect(File, "Day2") ~ "2",
-                         str_detect(File, "Day15") ~ "15",
-                         TRUE ~ "34"),
-         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
-         Batch_number = "1",
-         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
-
-# Change column name
-colnames(hplc_batch1_step1.1)[1] <- "m.z"
-
-###### Import Batch 2
-setwd("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/data/HPLCTOFMS/EF_Non-target data_Batch 2")
-
-hplc_batch2 <- list.files(pattern = '*.xls') %>%
-  .[!str_detect(., "Blank")]
-# Blank samples 
-blank_hplc_batch2 <- list.files(pattern = '*.xls') %>%
-  .[str_detect(., "Blank")]
-
-hplc_batch2_step1.1 <- dplyr::bind_rows(purrr::map(hplc_batch2, read_xls, skip = 1), 
-                                        purrr::map(blank_hplc_batch2, read_xls, skip = 1)) %>%
-  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
-  mutate(File = gsub("_", "-", File),
-         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
-         Day = case_when(str_detect(File, "Day0") ~ "0",
-                         str_detect(File, "Day2") ~ "2",
-                         str_detect(File, "Day15") ~ "15",
-                         TRUE ~ "34"),
-         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
-         Batch_number = "2",
-         simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
-
-colnames(hplc_batch2_step1.1)[1] <- "m.z"
-
+# Combine All
 all_hplc <- rbind(hplc_batch0_step1.1,
                   hplc_batch1_step1.1,
                   hplc_batch2_step1.1) %>% arrange(RT)
-
-## Stable Isotope data
-stable_isotope <- read_xlsx(path = paste0(getwd(), "/data/Isotope/Mikroplastik_Results_2ndRound_KCN-1.xlsx")) %>% 
-  tidyr::pivot_longer(cols = 4:5, names_to = "replicate", values_to = "Value") %>% 
-  dplyr::mutate(Value = abs(Value))
 ```
 
 ## STEP 1.2: Collapsing compounds based on RT1, RT2, Ion1 threshold --------------------------
@@ -565,7 +516,7 @@ gc_hplc_icp <- bind_rows(icp,
 ```
 
 
-## Data cleaning
+## Step 5: Data cleaning
 ### Summary of data before feature reduction
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 df_in <- gc_hplc_icp
@@ -820,65 +771,9 @@ pct_signal   <- (signal_final / signal_orig) * 100
 cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
 ```
 
-## Figure 2: HCA
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-# Data prep for HCA ---------------------
-df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
-  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
-  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
-  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
 
-hc_df <- df %>% 
-  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% #, "Plastic_type_Source")) %>%
-  dplyr::select(where(is.numeric)) %>%
-  as.data.frame()
 
-# --- Clean: remove bad rows & handle non-finite values ---
-# 1) Replace non-finite with 0 (or choose a more domain-specific imputation if appropriate)
-hc_df[!is.finite(as.matrix(hc_df))] <- 0
-
-# 2) Drop rows that are all zero (Bray–Curtis can yield NaN for empty rows)
-keep <- rowSums(hc_df, na.rm = TRUE) > 0
-hc_df_clean <- hc_df[keep, , drop = FALSE] #%>% 
-  # Select the features from best performance feature selection method
-  # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$rfa_selected_feats)
-labels_clean <- df$Plastic_type_Source[keep] # df$Plastic_type_Source[keep] 
-
-# 3) If any negatives remain, Bray–Curtis is invalid -> fall back to a metric that permits negatives
-use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
-
-if (use_bray) {
-  d <- vegan::vegdist(hc_df_clean, method = "manhattan")
-  link <- "average"
-} else {
-  # If your features were centered/scaled, Euclidean or Manhattan are appropriate.
-  # (Alternatively, if these are compositions, consider Aitchison with a small pseudocount.)
-  d <- dist(hc_df_clean, method = "robust.aitchison")
-  link <- "average"
-  message("Detected negative values; using Euclidean instead of Bray–Curtis.")
-}
-
-# --- Guard: ensure distance has no NA/NaN/Inf ---
-if (any(!is.finite(d))) {
-  stop("Distance matrix still has non-finite entries after cleaning. Re-check inputs.")
-}
-
-# --- Cluster & plot ---
-hca_samp <- hclust(d, method = link)
-
-cat("cophenetic correlation coefficient (CCC) from a hierarchical clustering (HCA) is:", cor(d, stats::cophenetic(hca_samp)), "\n")
-
-# tiff(filename = paste0("Figure SI_HCA_HPLC_SB_and_ENV_train_", format(Sys.time(), "%d-%m-%Y"),".tif"), width = 42*600, height = 15*600, res = 600, compression = "lzw")
-
-par(cex = 1)
-plot(hca_samp,
-     labels = labels_clean,
-     hang   = -1,
-     main   = "")
-# dev.off()
-```
-
-# Random Forest
+# Step 6: Random Forest
 ### Option 1: Use SB to predict ENV - Only select shared features between SB and ENV 
 ```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
 ###################################################################################
@@ -1037,4 +932,62 @@ t1 <- Sys.time()
 print(paste0("Total run time for all data combos are: ", round(as.numeric(difftime(t1, t0, units = "secs")),2), " seconds"))
 stopCluster(cl)
 registerDoSEQ() 
+```
+
+## Step 7: HCA
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Data prep for HCA ---------------------
+df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
+  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
+
+hc_df <- df %>% 
+  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% #, "Plastic_type_Source")) %>%
+  dplyr::select(where(is.numeric)) %>%
+  as.data.frame()
+
+# --- Clean: remove bad rows & handle non-finite values ---
+# 1) Replace non-finite with 0 (or choose a more domain-specific imputation if appropriate)
+hc_df[!is.finite(as.matrix(hc_df))] <- 0
+
+# 2) Drop rows that are all zero (Bray–Curtis can yield NaN for empty rows)
+keep <- rowSums(hc_df, na.rm = TRUE) > 0
+hc_df_clean <- hc_df[keep, , drop = FALSE] #%>% 
+  # Select the features from best performance feature selection method
+  # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$rfa_selected_feats)
+labels_clean <- df$Plastic_type_Source[keep] # df$Plastic_type_Source[keep] 
+
+# 3) If any negatives remain, Bray–Curtis is invalid -> fall back to a metric that permits negatives
+use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
+
+if (use_bray) {
+  d <- vegan::vegdist(hc_df_clean, method = "manhattan")
+  link <- "average"
+} else {
+  # If your features were centered/scaled, Euclidean or Manhattan are appropriate.
+  # (Alternatively, if these are compositions, consider Aitchison with a small pseudocount.)
+  d <- dist(hc_df_clean, method = "robust.aitchison")
+  link <- "average"
+  message("Detected negative values; using Euclidean instead of Bray–Curtis.")
+}
+
+# --- Guard: ensure distance has no NA/NaN/Inf ---
+if (any(!is.finite(d))) {
+  stop("Distance matrix still has non-finite entries after cleaning. Re-check inputs.")
+}
+
+# --- Cluster & plot ---
+hca_samp <- hclust(d, method = link)
+
+cat("cophenetic correlation coefficient (CCC) from a hierarchical clustering (HCA) is:", cor(d, stats::cophenetic(hca_samp)), "\n")
+
+# tiff(filename = paste0("Figure SI_HCA_HPLC_SB_and_ENV_train_", format(Sys.time(), "%d-%m-%Y"),".tif"), width = 42*600, height = 15*600, res = 600, compression = "lzw")
+
+par(cex = 1)
+plot(hca_samp,
+     labels = labels_clean,
+     hang   = -1,
+     main   = "")
+# dev.off()
 ```
