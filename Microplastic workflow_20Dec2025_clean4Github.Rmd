@@ -19,6 +19,14 @@ This repo is accompanying the publication: "Chemical Fingerprints of New vs. Wea
 
 ## Loading Packages and Functions
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# if packages are not install then install
+required_packages <- c("tidyverse", "readxl", "writexl", "data.table", "crayon", "grid", "gridExtra", "stats", "vegan", "cluster", "factoextra", "FactoMineR", "ggforce", "MASS", "caret", "randomForest", "ranger", "pheatmap", "viridis", "missForest", "pROC", "VIM", "softImpute", "ggpubr", "RANN", "foreach", "doParallel", "parallel")
+
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) {
+  install.packages(new_packages)
+}
+
 # #########################
 ##   Load Libraries    ##
 #########################
@@ -26,6 +34,7 @@ library(tidyverse) # Loads dplyr, tidyr, purrr, ggplot2, readr, tibble
 library(readxl)
 library(writexl)
 library(data.table)
+library(crayon)
 library(grid)
 library(gridExtra)
 library(stats)
@@ -95,7 +104,7 @@ print_filtering_stats <- function(results, meta_cols = c("Plastic_type", "techni
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # ATDGCMS -----------------------------------------------------------------
 # Using relative path
-path_atdgcms <- "./data/ATDGCMS"
+path_atdgcms <- "./Raw data/ATDGCMS"
 
 if(!dir.exists(path_atdgcms)) warning(paste("Directory not found:", path_atdgcms))
 
@@ -111,18 +120,34 @@ blank_list <- list.files(path = path_atdgcms, pattern = '*.csv', full.names = TR
 
 # Import samples to list
 read_and_add_filename <- function(file) {
-  read.csv(file) %>%
+  data.table::fread(
+    file,
+    showProgress = FALSE,
+    data.table = FALSE,
+    check.names = TRUE
+  ) %>%
     mutate(File = basename(file))
 }
 
-atdgcms_step1.1 <- lapply(atdgcms_list, read_and_add_filename) %>%
-  bind_rows() %>%
+atdgcms_step1.1 <- data.table::rbindlist(
+  lapply(atdgcms_list, read_and_add_filename),
+  use.names = TRUE,
+  fill = TRUE
+) %>%
+  as.data.frame() %>%
   dplyr::select(-any_of(c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions"))) %>%
   dplyr::mutate(File = gsub("_", "-", File)) %>%
   dplyr::mutate(File = gsub(".csv", "", File)) %>%
   mutate(type = "Sample")
 
-atdgcms_blank <- dplyr::bind_rows(purrr::map(blank_list, read.csv)) %>%
+atdgcms_blank <- data.table::rbindlist(
+  lapply(blank_list, function(path) {
+    data.table::fread(path, showProgress = FALSE, check.names = TRUE)
+  }),
+  use.names = TRUE,
+  fill = TRUE
+) %>%
+  as.data.frame() %>%
   dplyr::select(any_of(c("Area", "File", "m.z", "RT"))) %>%
   mutate(type = "Blanks")
 
@@ -133,9 +158,9 @@ atdgcms_step1.1 <- bind_rows(atdgcms_step1.1, atdgcms_blank) %>%
 # HPLCTOFMS ---------------------------------------------------------------
 
 # Define relative paths for batches
-path_batch0 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 0"
-path_batch1 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 1"
-path_batch2 <- "./data/HPLCTOFMS/EF_Non-target data_Batch 2"
+path_batch0 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 0"
+path_batch1 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 1"
+path_batch2 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 2"
 
 # Function to safely list files and read them
 read_hplc_batch <- function(dir_path, batch_num) {
@@ -145,19 +170,46 @@ read_hplc_batch <- function(dir_path, batch_num) {
     return(data.frame())
   }
   
+  cache_dir <- "./data_cache"
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  cache_file <- file.path(cache_dir, paste0("hplc_batch_", batch_num, "_skip1.rds"))
+  
+  files_all <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE)
+  if (length(files_all) == 0) return(data.frame())
+  
+  file_info <- file.info(files_all)
+  cur_sig <- data.frame(
+    path = normalizePath(files_all, winslash = "/", mustWork = FALSE),
+    mtime = as.numeric(file_info$mtime),
+    size = as.numeric(file_info$size),
+    stringsAsFactors = FALSE
+  )
+  
+  if (file.exists(cache_file)) {
+    cached <- readRDS(cache_file)
+    if (is.list(cached) && is.data.frame(cached$files) && identical(cached$files, cur_sig)) {
+      return(cached$data)
+    }
+  }
+  
   # Get Sample Files
-  files_sample <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE) %>%
-    .[!str_detect(., "Blank")]
+  files_sample <- files_all[!str_detect(files_all, "Blank")]
   
   # Get Blank Files
-  files_blank <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE) %>%
-    .[str_detect(., "Blank")]
+  files_blank <- files_all[str_detect(files_all, "Blank")]
   
   # Read and combine
-  combined <- dplyr::bind_rows(
-    purrr::map(files_sample, ~read_xls(.x, skip = 1)), 
-    purrr::map(files_blank,  ~read_xls(.x, skip = 1))
+  read_xls_fast <- function(path) {
+    readxl::read_xls(path, skip = 1) %>% as.data.frame()
+  }
+  
+  combined <- data.table::rbindlist(
+    c(lapply(files_sample, read_xls_fast),
+      lapply(files_blank, read_xls_fast)),
+    use.names = TRUE,
+    fill = TRUE
   ) %>%
+    as.data.frame() %>%
   dplyr::select(m.z = `m/z`, RT, Height, File) %>%
   mutate(File = gsub("_", "-", File),
          type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
@@ -168,6 +220,7 @@ read_hplc_batch <- function(dir_path, batch_num) {
          Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
          Batch_number = as.character(batch_num))
   
+  saveRDS(list(files = cur_sig, data = combined), cache_file)
   return(combined)
 }
 
@@ -181,10 +234,10 @@ hplc_batch1_step1.1 <- read_hplc_batch(path_batch1, 1) %>%
 hplc_batch2_step1.1 <- read_hplc_batch(path_batch2, 2) %>%
    mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
 
-# Combine All
-all_hplc <- bind_rows(hplc_batch0_step1.1,
-                      hplc_batch1_step1.1,
-                      hplc_batch2_step1.1) %>% arrange(RT)
+# Combine All using data.table::rbindlist() (much faster than bind_rows)
+all_hplc <- data.table::rbindlist(list(hplc_batch0_step1.1,
+                                        hplc_batch1_step1.1,
+                                        hplc_batch2_step1.1), use.names = TRUE, fill = TRUE) %>% arrange(RT)
 ```
 
 ## Step 1.2: Collapsing compounds based on RT1, RT2, Ion1 threshold
@@ -303,9 +356,9 @@ read_trace_metal <- function(path) {
 }
 
 # Trace metal data
-icpms_round1 <- read_trace_metal("./data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx")
-icpms_round2_batch1 <- read_trace_metal("./data/ICPMS_Trace metal/icpms_round2_batch1_rawdata.xlsx")
-icpms_round2_batch2 <- read_trace_metal("./data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx")
+icpms_round1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx")
+icpms_round2_batch1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch1_rawdata.xlsx")
+icpms_round2_batch2 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx")
 
 # 1) Select [H2] instead of [H2 HMI]
 remove_H2_HMI_modus <- function(icpms_df) {
@@ -323,9 +376,9 @@ icpms_round2_batch2 <- remove_H2_HMI_modus(icpms_round2_batch2)
 
 # 2) Process Uncertainty/Recovery
 # Load auxiliary files
-rec_unc_1 <- readxl::read_excel("./data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx")
-rec_unc_2_1 <- readxl::read_excel("./data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx")
-rec_unc_2_2 <- readxl::read_excel("./data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx")
+rec_unc_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx")
+rec_unc_2_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx")
+rec_unc_2_2 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx")
 
 # Function to select best method per element
 get_final_metal_names <- function(recovery_uncertainty, target_cols) {
@@ -385,22 +438,67 @@ icp <- combined_icpms %>%
 ## Step 5: Combine Label Info with raw data
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
-p <- "./data/Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx"
+p <- "./Raw data/Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx"
 if(!file.exists(p)) stop(paste("Label file not found:", p))
 
-sampinfo <- readxl::read_excel(path = p) %>% 
-  dplyr::select(c(File, Plastic_type, Subcategory, Polymer))
+cache_dir <- "./data_cache"
+cache_file <- file.path(cache_dir, "step5_combined_labeled.rds")
+use_step5_cache <- TRUE
+loaded_from_cache <- FALSE
 
-# Join Info
-icp <- left_join(icp, sampinfo, by = 'File')
-gc <- left_join(gc, sampinfo, by = 'File')
-hplc <- left_join(hplc, sampinfo, by = 'File')
+if (use_step5_cache && file.exists(cache_file)) {
+  cached <- readRDS(cache_file)
+  cached_mtime <- cached$meta$label_mtime
+  current_mtime <- as.numeric(file.info(p)$mtime)
+  
+  if (is.list(cached) &&
+      is.list(cached$data) &&
+      isTRUE(all.equal(cached_mtime, current_mtime))) {
+    gc <- cached$data$gc
+    hplc <- cached$data$hplc
+    icp <- cached$data$icp
+    gc_hplc <- cached$data$gc_hplc
+    gc_icp <- cached$data$gc_icp
+    hplc_icp <- cached$data$hplc_icp
+    gc_hplc_icp <- cached$data$gc_hplc_icp
+    sampinfo <- cached$data$sampinfo
+    loaded_from_cache <- TRUE
+  }
+  
+  rm(cached)
+}
 
-# Create Combinations
-gc_hplc <- bind_rows(gc, hplc)
-gc_icp <- bind_rows(icp, gc %>% dplyr::select(-c("m.z", "RT"))) 
-hplc_icp <- bind_rows(icp, hplc %>% dplyr::select(-c("m.z", "RT"))) 
-gc_hplc_icp <- bind_rows(icp, gc_hplc %>% dplyr::select(-c("m.z", "RT")))
+if (!loaded_from_cache) {
+  sampinfo <- readxl::read_excel(path = p) %>% 
+    dplyr::select(c(File, Plastic_type, Subcategory, Polymer))
+  
+  # Join Info
+  icp <- left_join(icp, sampinfo, by = 'File')
+  gc <- left_join(gc, sampinfo, by = 'File')
+  hplc <- left_join(hplc, sampinfo, by = 'File')
+  
+  # Create Combinations
+  gc_hplc <- bind_rows(gc, hplc)
+  gc_icp <- bind_rows(icp, gc %>% dplyr::select(-c("m.z", "RT"))) 
+  hplc_icp <- bind_rows(icp, hplc %>% dplyr::select(-c("m.z", "RT"))) 
+  gc_hplc_icp <- bind_rows(icp, gc_hplc %>% dplyr::select(-c("m.z", "RT")))
+  
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  cache_payload <- list(
+    meta = list(label_file = p, label_mtime = as.numeric(file.info(p)$mtime)),
+    data = list(
+      gc = gc,
+      hplc = hplc,
+      icp = icp,
+      gc_hplc = gc_hplc,
+      gc_icp = gc_icp,
+      hplc_icp = hplc_icp,
+      gc_hplc_icp = gc_hplc_icp,
+      sampinfo = sampinfo
+    )
+  )
+  saveRDS(cache_payload, cache_file)
+}
 ```
 
 
@@ -603,13 +701,24 @@ registerDoSEQ()
 target_obj <- rf_results_SB_ENV_train$gc
 if(is.null(target_obj)) target_obj <- rf_results_SB_ENV_train[[1]]
 
-df <- target_obj$final_imp_norm_dat %>%
+# target_obj is a list of folds; use the first fold
+fold_obj <- if (is.list(target_obj) && !is.null(target_obj$final_imp_norm_train)) {
+  target_obj
+} else {
+  target_obj[[1]]
+}
+if (is.null(fold_obj)) stop("No folds found in rf_results_SB_ENV_train.")
+
+df <- dplyr::bind_rows(
+  fold_obj$final_imp_norm_train,
+  fold_obj$final_imp_norm_test
+) %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
 
 hc_df <- df %>% 
-  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% 
+  dplyr::select(-any_of(c("Subcategory", "Source", "Plastic_type", "Polymer", "technique"))) %>% 
   dplyr::select(where(is.numeric)) %>%
   as.data.frame()
 
