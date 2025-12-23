@@ -1,33 +1,36 @@
-Chemical Fingerprinting Workflow Software by Huy Manh Nguyen
+Chemical Fingerprinting Workflow (Code + Data)
+Copyright (c) 2025 Huy Manh Nguyen and contributors
 
-Copyright 2022 Oregon State University. All rights reserved.
+This GitHub repository contains both software source code and research data.
+They are licensed separately:
 
-License Notice:
+1) Source Code (software, scripts, pipelines)
+   License: GNU Affero General Public License v3.0 only (AGPL-3.0-only).
+   See: LICENSE
 
-The Chemical Fingerprinting Workflow Software found in this GitHub 
-repository (the "Software") may be freely used for educational 
-and research purposes by non-profit institutions and
-Federal Government agencies worldwide. Other organizations are allowed
-to use the Software for educational and evaluation purposes only. Any other uses
-will need prior approval, and the Software may not be sold or
-redistributed without prior approval.  Portions of this Software
-are also subject to pending patents, with rights available from
-Toronto Metropolitan University: on request, please email huy.manh.nguyen@torontomu.ca or roxana.suehring@torontomu.ca.
+   Practical effect (high level): if you modify the code and provide it to others, or run a modified version to provide a network service to users, you must make the corresponding source code available under the same AGPL license terms.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
-OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND 
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
-HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, 
-WHETHER IN AN ACTION OF CONTRACT TO OR OTHERWISE, ARISING 
-FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE 
-OR OTHER DEALINGS IN THE SOFTWARE.
+2) Data (datasets, tables, extracted features, example inputs/outputs, and other non-software research data unless otherwise noted)
+   License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+   See: LICENSE-DATA (or data/LICENSE)
 
-By downloading, compiling, or executing any part of this Software 
-constitutes your agreement to these terms.
- 
----
-GitHub Repository: https://github.com/huymanhnguyen0811/Microplastic-Fingerprinting
+   Practical effect (high level): you may share and adapt the data (including
+   commercially), but you must provide attribution, indicate changes, and release
+   adapted/derived datasets under the same CC BY-SA 4.0 terms.
+
+Attribution / Citation request (not a condition of the licenses):
+If you use this work in academic outputs, please cite the associated publication(s) and/or the GitHub repository.
+
+Contact (optional; not required for use under the licenses):
+huy.manh.nguyen@torontomu.ca
+roxana.suehring@torontomu.ca
+
+Institutional reference:
 Software Disclosure References: TMU-25-12
+
+Disclaimer:
+This repository is provided “AS IS”, without warranty of any kind, to the extent permitted by applicable law. See the applicable license texts for full terms.
+
+By downloading, using, modifying, or distributing any part of this repository, you agree to comply with the applicable license(s) stated above.
 
 #eof#
