@@ -6,7 +6,7 @@ It contains the computational workflow and datasets used to analyze chemical fin
 
 ## 📂 Repository Structure
 
-* **`Microplastic workflow_20Dec2025_clean4Github.Rmd`**: The main R Markdown workflow file. It handles data import, processing, feature selection, and model training.
+* **`Conmplete Workflow.Rmd`**: The main R Markdown workflow file. It handles data import, processing, feature selection, and model training.
 * **`Helper Functions for Computational Workflow.R`**: A collection of custom functions used by the main workflow for tasks like compound grouping, imputation, and feature filtering.
 * **`Raw Data/`**: Directory containing the raw data files of instrumental analyses: ATD-GC-MS, HPLC-QTOF-MS and ICP-MS/MS.
 
