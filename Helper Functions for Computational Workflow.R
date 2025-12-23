@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
+# This code contains helper functions for Complete Workflow.Rmd file.
+# Publication: "Chemical Fingerprints of New vs. Weathered Microplastics: A Machine Learning Approach"
+
 # Functions -------------------------------------------------------------------------------------------------------
 '%notin%' <- Negate('%in%')
 
