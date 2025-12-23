@@ -101,62 +101,59 @@ print_filtering_stats <- function(results, meta_cols = c("Plastic_type", "techni
 ```
 
 # Figure 2: HCA
-
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-# Data prep for HCA ---------------------
-df <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$hplc_SB_and_ENV_train$final_imp_norm_dat %>%
+# Data prep for HCA
+# Use result from Step 7 Option 2
+target_obj <- rf_results_SB_ENV_train$gc
+if(is.null(target_obj)) target_obj <- rf_results_SB_ENV_train[[1]]
+
+# target_obj is a list of folds; use the first fold
+fold_obj <- if (is.list(target_obj) && !is.null(target_obj$final_imp_norm_train)) {
+  target_obj
+} else {
+  target_obj[[1]]
+}
+if (is.null(fold_obj)) stop("No folds found in rf_results_SB_ENV_train.")
+
+df <- dplyr::bind_rows(
+  fold_obj$final_imp_norm_train,
+  fold_obj$final_imp_norm_test
+) %>%
   dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
   dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
 
 hc_df <- df %>% 
-  dplyr::select(-c("Subcategory", "Source", "Plastic_type", "Polymer", "technique")) %>% #, "Plastic_type_Source")) %>%
+  dplyr::select(-any_of(c("Subcategory", "Source", "Plastic_type", "Polymer", "technique"))) %>% 
   dplyr::select(where(is.numeric)) %>%
   as.data.frame()
 
 # --- Clean: remove bad rows & handle non-finite values ---
-# 1) Replace non-finite with 0 (or choose a more domain-specific imputation if appropriate)
 hc_df[!is.finite(as.matrix(hc_df))] <- 0
-
-# 2) Drop rows that are all zero (Bray–Curtis can yield NaN for empty rows)
 keep <- rowSums(hc_df, na.rm = TRUE) > 0
-hc_df_clean <- hc_df[keep, , drop = FALSE] #%>% 
-  # Select the features from best performance feature selection method
-  # dplyr::select(run_rf_analysis_list_SB_and_ENV_train_02Aug2025$icp_SB_and_ENV_train$rfa_selected_feats)
-labels_clean <- df$Plastic_type_Source[keep] # df$Plastic_type_Source[keep] 
+hc_df_clean <- hc_df[keep, , drop = FALSE] 
+labels_clean <- df$Plastic_type_Source[keep] 
 
-# 3) If any negatives remain, Bray–Curtis is invalid -> fall back to a metric that permits negatives
+# --- Distance Calculation ---
 use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
 
 if (use_bray) {
   d <- vegan::vegdist(hc_df_clean, method = "manhattan")
   link <- "average"
 } else {
-  # If your features were centered/scaled, Euclidean or Manhattan are appropriate.
-  # (Alternatively, if these are compositions, consider Aitchison with a small pseudocount.)
-  d <- dist(hc_df_clean, method = "robust.aitchison")
+  d <- dist(hc_df_clean, method = "euclidean")
   link <- "average"
-  message("Detected negative values; using Euclidean instead of Bray–Curtis.")
+  message("Detected negative values; using Euclidean instead of Bray-Curtis.")
 }
 
-# --- Guard: ensure distance has no NA/NaN/Inf ---
-if (any(!is.finite(d))) {
-  stop("Distance matrix still has non-finite entries after cleaning. Re-check inputs.")
-}
+if (any(!is.finite(d))) stop("Distance matrix still has non-finite entries.")
 
 # --- Cluster & plot ---
 hca_samp <- hclust(d, method = link)
-
-cat("cophenetic correlation coefficient (CCC) from a hierarchical clustering (HCA) is:", cor(d, stats::cophenetic(hca_samp)), "\n")
-
-# tiff(filename = paste0("Figure SI_HCA_HPLC_SB_and_ENV_train_", format(Sys.time(), "%d-%m-%Y"),".tif"), width = 42*600, height = 15*600, res = 600, compression = "lzw")
+cat("cophenetic correlation coefficient (CCC) from HCA is:", cor(d, stats::cophenetic(hca_samp)), "\n")
 
 par(cex = 1)
-plot(hca_samp,
-     labels = labels_clean,
-     hang   = -1,
-     main   = "")
-# dev.off()
+plot(hca_samp, labels = labels_clean, hang = -1, main = "")
 ```
 
 # Table S6: Correlation and covariance magnitude of features across 7 data combinations
@@ -229,44 +226,6 @@ for (i in 1:length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)) {
 
 pw_df <- bind_rows(list_pairwise_df)
 write_xlsx(pw_df, path = "Table S8_Significant compounds identified via pair-wise tests between plastic categories.xlsx")
-```
-
-# Figure 3: Bar plot Comparing Feature selection - MCC score - 7 data combinations
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-df_list <- list()
-dataset_names <- c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")
-for (i in 1:length(names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025))) {
-  names <- names(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)[i]
-  df_list[[i]] <- data.frame(time = round(c(dim(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$final_imp_norm_dat)[2],
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$sig_selected_feats),
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$rfa_selected_feats),
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_100$selected_features),
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_50$selected_features),
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_25$selected_features),
-                                          length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025[[names]]$top_importance_results$top_10$selected_features)), 3)) %>% dplyr::mutate(Dataset = dataset_names[i]) %>% dplyr::mutate(Selection = c("All features", "Pairwise", "RFA", "Top 100", "Top 50", "Top 25", "Top 10"))
-}
-View(bind_rows(df_list))
-write_xlsx(bind_rows(df_list), path = paste0("Computational fingerprinting paper_feature selection comparison_train SB+ENV_04Aug2025_number selected features_", format(Sys.time(), "%d-%m-%Y"), ".xlsx"))
-
-# PLot =============================
-feature_selection <- read_xlsx(path = "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/Computational fingerprinting paper_feature selection comparison_train SB+ENV_MCC score_time_feature number_04Aug2025.xlsx") %>%  
-  dplyr::mutate(Dataset = factor(Dataset, levels = c("GC", "HPLC", "ICP", "GC-HPLC", "GC-ICP", "HPLC-ICP", "GC-HPLC-ICP")))
-
-feature_selection_plot <- ggplot(data = feature_selection, aes(x = Dataset, y = MCC, fill = `Feature selection`)) + 
-  geom_bar(position = position_dodge(width = 0.9), stat = "identity") +
-  scale_fill_manual(values =  c('#8dd3c7','#ffffb3','#bebada','#fb8072','#80b1d3','#fdb462','#b3de69','#fccde5')) +  
-  scale_y_continuous(breaks = seq(from = 0, to = 1, by =.1), expand = c(0,0), limits = c(0, 1)) +
-  theme_bw(base_size = 20) +
-  theme(axis.text.x = element_text(size =20), axis.text.y = element_text(size =20))
-feature_selection_plot
-
-ggsave(filename = paste0("Figure 3_Feature selection - MCC score - 7 data combinations_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
-       plot = feature_selection_plot, 
-       device = "png",
-       dpi = 300,        # Set DPI to 600
-       width = 18,       # Width in inches (adjust as needed)
-       height = 8,       # Height in inches (adjust as needed)
-       units = "in")
 ```
 
 # Figure SI#: Confusion matrices of training and testing on environmental plastics versus. training on store-bought plastics and testing on environmental plastics - 7 data combinations

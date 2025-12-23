@@ -696,7 +696,7 @@ stopCluster(cl)
 registerDoSEQ()
 ```
 
-## Step 8: HCA
+# Step 8: HCA
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 # Data prep for HCA
 # Use result from Step 7 Option 2
