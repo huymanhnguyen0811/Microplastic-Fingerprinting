@@ -4,6 +4,10 @@ This repository accompanies the publication: **"Chemical Fingerprints of New vs.
 
 It contains the computational workflow and datasets used to analyze chemical fingerprints of microplastics using various machine learning techniques, including Random Forest and specialized imputation/normalization methods.
 
+## License
+- Code: GNU AGPL v3.0 only (AGPL-3.0-only) — see LICENSE.
+- Data: CC BY-SA 4.0 — see LICENSE-DATA (or data/LICENSE).
+
 ## 📂 Repository Structure
 
 * **`Conmplete Workflow.Rmd`**: The main R Markdown workflow file. It handles data import, processing, feature selection, and model training.
