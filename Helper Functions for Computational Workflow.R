@@ -813,14 +813,6 @@ find_best_impute_normalize <- function(
           imputed_all <- c(imputed_all, X_norm[[col]])
         }
       }
-      ks_p <- if (length(observed_all) < 2 || length(imputed_all) < 2) {
-        NA
-      } else {
-        tryCatch(
-          stats::ks.test(observed_all, imputed_all)$p.value,
-          error = function(e) NA
-        )
-      }
 
       results_list[[length(results_list) + 1]] <- data.frame(
         Imputation = imp_name,
@@ -828,7 +820,6 @@ find_best_impute_normalize <- function(
         OOB_MCC = oob_res$OOB_MCC,
         ClusterRes = cluster_res,
         CorrScore = corr_score,
-        KS_p = ks_p,
         stringsAsFactors = FALSE
       )
     }
@@ -844,7 +835,6 @@ find_best_impute_normalize <- function(
     -df_results$OOB_MCC,
     -df_results$ClusterRes,
     -df_results$CorrScore,
-    -df_results$KS_p
   )
   df_results$combined_rank <- NA_integer_
   df_results$combined_rank[ord] <- seq_along(ord)

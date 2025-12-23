@@ -346,7 +346,7 @@ hplc <- hplc_adjusted_step3 %>%
   mutate(technique = "HPLC")
 ```
 
-## Step 4: Importing Trace metal data
+# Step 4: Importing Trace metal data
 
 #### Data prepping
 
@@ -437,7 +437,7 @@ icp <- combined_icpms %>%
   )
 ```
 
-## Step 5: Combine Label Info with raw data
+# Step 5: Combine Label Info with raw data
 
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 p <- "./Raw data/Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx"
@@ -504,7 +504,7 @@ if (!loaded_from_cache) {
 ```
 
 
-## Step 6: Feature Reduction
+# Step 6: Feature Reduction
 
 ### Summary report of data metrics before applying feature reduction
 
