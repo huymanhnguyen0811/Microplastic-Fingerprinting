@@ -5,6 +5,8 @@ output:
     variant: markdown_github
 ---
 
+# SPDX-License-Identifier: AGPL-3.0-only
+
 ```{r setup, include=FALSE}
 # Set root directory to the project root (Project folder)
 # This assumes the .Rmd is in the root of the project.
