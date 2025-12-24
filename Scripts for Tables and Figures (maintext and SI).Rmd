@@ -270,16 +270,141 @@ View(final_summary_stats)
 # Table S3. Descriptive statistics of retention time of five HPLC benchmark compounds.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
+bm_mz   <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+bm_name <- c("Acetaminophen-d4 (m/z 156.0957)", "dTEP (m/z 198.1723)", "dTPrP (m/z 246.2568)",
+             "13C-6PPD (m/z 305.1956)", "dTPP (m/z 342.1722)")
+
+tol <- 0.0005
+
+hplc_raw_data <- list(batch0 = hplc_batch0_step1.1,
+                      batch1 = hplc_batch1_step1.1,
+                      batch2 = hplc_batch2_step1.1)
+benchmark_summary <- list()
+# Build one long data frame with a facet label per target
+for (i in seq_along(hplc_raw_data)) {
+  benchmark_summary[[i]] <- map2_dfr(bm_mz, bm_name, ~
+  hplc_raw_data[[i]] %>%
+    filter(m.z >= (.x - tol), m.z <= (.x + tol)) %>%
+    transmute(RT = as.numeric(RT), bm_name = .y)
+  ) %>% 
+    dplyr::mutate(Batch_number = names(hplc_raw_data)[[i]]) %>%
+    dplyr::filter(!is.na(RT))
+}
+
+tableS3 <- bind_rows(benchmark_summary) %>% 
+  # dplyr::mutate(Batch_number = names(hplc_raw_data)[[i]]) %>%
+  dplyr::filter(!is.na(RT)) %>% 
+  dplyr::group_by(bm_name) %>%
+  dplyr::summarise(min_rt = summary(RT)[[1]],
+                   first_quan_rt = summary(RT)[[2]],
+                   median_rt = summary(RT)[[3]],
+                   mean_rt = summary(RT)[[4]],
+                   third_quan_rt = summary(RT)[[5]],
+                   max_rt = summary(RT)[[6]],
+                   max_minus_min = (summary(RT)[[6]] - summary(RT)[[1]]),
+                   sd_rt = stats::sd(RT)
+  )
 ```
 
 # Table S4. Number of unique aligned compounds that are associated with HPLC benchmarks at two sets of RT windows were applied to split HPLC peaks into different RT sets based on inspection of histogram plots of RT distribution in all HPLC samples and distribution of RT of benchmark compounds
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Testing different combinations of RT window for 2 parts of the chromatogram ----------
+combi <- tidyr::crossing(
+  # c(0.1,0.15,0.2, 0.25, 0.3, 0.35, 
+                           0.4, c(
+                             # 0.02,0.03,0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.2,
+                             0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.3, 0.31, 0.32, 0.33, 0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.4))
+rt_test_list <- list()
+for (row in 1:nrow(combi)) {
+  df <- grouping_comp(combined_df2,
+                      rtthres1 = as.numeric(combi[row,][1]),
+                      rtthres2 = as.numeric(combi[row,][2]),
+                      mzthres = 0.0005,
+                      type = "HPLCTOFMS")
+  
+  rt_test_list[[paste0(as.numeric(combi[row,][1]), "_", as.numeric(combi[row,][2]))]] <- df
+  
+  rt_6 <- df %>% filter(RT <= 6)
+  rt_higher6 <- df %>% filter(RT > 6)
+  
+  print(paste0("RT window ", as.numeric(combi[row,][1]), " No. unique compounds that belongs to Benchmark_1 Acetaminophen-d4 : ", 
+               length(unique((rt_6 %>% 
+                      filter(m.z >= (156.0957 - 0.0001) &
+                               m.z <= (156.0957 + 0.0001)))$Feature))))
+  
+  print(paste0("RT window ", as.numeric(combi[row,][1]), " No. of unique compounds : ", length(unique(rt_6$Feature))))
+  
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_2 dTEP : ", 
+               length(unique((rt_higher6 %>% 
+                                filter(m.z >= (198.1723 - 0.0001) &
+                                         m.z <= (198.1723 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_3 dTPrP : ", 
+               length(unique((rt_higher6 %>% 
+                      filter(m.z >= (246.2568 - 0.0001) &
+                               m.z <= (246.2568 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_4 13C-6PPD : ", 
+               length(unique((rt_higher6 %>% 
+                      filter(m.z >= (305.1956 - 0.0001) &
+                               m.z <= (305.1956 + 0.0001)))$Feature))))
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. unique compounds that belongs to Benchmark_5 dTPP : ", 
+               length(unique((rt_higher6 %>%
+                      filter(m.z >= (342.1722 - 0.0001) &
+                               m.z <= (342.1722 + 0.0001)))$Feature))))
 
+  print(paste0("RT window ", as.numeric(combi[row,][2]), " No. of unique compounds : ", length(unique(rt_higher6$Feature))))
+}
 ```
+
 # Table S5. Summary of missing values present in all seven data combinations across three feature reduction approaches.
 
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# As an example, here we examine "regular 80% rule" feature reduction
+### BEFORE FEATURE REDUCTION
+df_in <- gc
+
+# 1. Process Data ONCE (Consolidated Pivot)
+df_wide <- df_in %>% 
+  dplyr::select(File, Plastic_type, Source, Polymer, Feature, technique, Values) %>%
+  dplyr::group_by(File, Source, Polymer, Plastic_type, technique, Feature) %>%
+  dplyr::summarise(Values = mean(Values, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = Feature, values_from = Values) %>%
+  tibble::column_to_rownames(var = "File") 
+
+df_numeric <- df_wide %>% dplyr::select(where(is.numeric))
+
+# --- Basic Statistics ---
+cat("Number of chemical features: ", ncol(df_numeric), "\n")
+missing_pct <- sum(is.na(df_numeric)) / prod(dim(df_numeric)) * 100
+cat("Percentage of missing values (%):", round(missing_pct, 2), "\n")
+
+# --- Correlations ---
+stats_df <- tibble::tibble(
+  Feature = colnames(df_numeric),
+  num_missing_values = colSums(is.na(df_numeric)),
+  mean_response = colMeans(df_numeric, na.rm = TRUE)
+)
+
+if (all(c("m.z", "RT") %in% colnames(df_in))) {
+  feature_meta <- df_in %>%
+    dplyr::group_by(Feature) %>%
+    dplyr::summarise(
+      m_z = mean(m.z, na.rm = TRUE),
+      retention_time = mean(RT, na.rm = TRUE),
+      .groups = "drop"
+    )
+  analysis_df <- stats_df %>% dplyr::left_join(feature_meta, by = "Feature")
+  cat("Pearson (Mean Response vs Missing):", round(cor(analysis_df$mean_response, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (m/z vs Missing):          ", round(cor(analysis_df$m_z, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (RT vs Missing):           ", round(cor(analysis_df$retention_time, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+} else {
+  cat("Pearson (Mean Response vs Missing):", round(cor(stats_df$mean_response, stats_df$num_missing_values, use = "pairwise.complete.obs"), 2), "\n")
+  message("NOTE: 'm.z' and 'RT' columns missing. Skipping specific correlations.")
+}
+
+### AFTER FEATURE REDUCTION
+results <- shared_feature_filtering(gc, feat_reduc_mode = "regular80")
+print_filtering_stats(results)
 ```
 
 # Table S7. Summary of significant compounds identified via pair-wise tests between plastic categories from k-fold cross validation across seven data combinations
@@ -371,35 +496,150 @@ write_xlsx(pw_df, path = "Table S8_Significant compounds identified via pair-wis
 # Figure S1: Histogram illustrating the distribution of retention time (RT) of benchmark compound (Toluene-d8) that was injected in each run of ATD-GC-MS.
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
+# ATDGCMS data ------------------
+# Filter data
+bm_df_gcms <- atdgcms_step1.1 %>%
+  filter(m.z >= 98, m.z <= 98.5, RT < 13.6) %>%
+  mutate(RT = as.numeric(RT))
+
+# Plot in ggplot2 style to match your multi-panel code
+p <- ggplot(bm_df_gcms, aes(x = RT)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Toluene-D8",
+       x = "Retention time (seconds)",
+       y = "Count") +
+  theme_bw(base_size = 25) +
+  theme(
+    plot.margin = ggplot2::margin(t = 5, r = 40, b = 5, l = 10),  # more right padding
+    plot.title  = element_text(hjust = 0.5)                       # center title
+  )
+p
+# Save at 600 DPI, 20x10 inches (same output size as your PNG device)
+ggsave(
+  filename = sprintf("Figure S1_Histogram ATDGCMS benchmark Toluene D8_%s.png",
+                     format(Sys.time(), "%Y-%m-%d")),
+  plot = p,
+  device = "png",
+  dpi = 600,
+  width = 20,
+  height = 10,
+  units = "in"
+)
 ```
 
 # Figure S2: Histogram illustrating distribution of retention time (RT) of five benchmark compounds that were injected in each run of HPLC-qTOF-MS. All histograms demonstrated uniform distribution with RT varied in the range of ± 0.4 (for Acetaminophen-d4) and ± 0.1 (for dTEP, dTPrP, 13C-6PPD and dTPP).
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
+# HPLC data ----------------------
+bm_mz   <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+bm_name <- c("Acetaminophen-d4 (m/z 156.0957)", "dTEP (m/z 198.1723)", "dTPrP (m/z 246.2568)",
+             "13C-6PPD (m/z 305.1956)", "dTPP (m/z 342.1722)")
+
+tol <- 0.0005
+
+# Build one long data frame with a facet label per target
+panel_df <- map2_dfr(bm_mz, bm_name, ~
+  hplc_batch2_step1.1 %>%
+    filter(m.z >= (.x - tol), m.z <= (.x + tol)) %>%
+    transmute(RT = as.numeric(RT), panel = .y)
+) %>% 
+  dplyr::filter(!is.na(RT))
+
+p <- ggplot(panel_df, aes(x = RT)) +
+  geom_histogram(bins = 100) +
+  facet_wrap(~ panel, ncol = 2, scales = "free") +     # free x AND y per facet
+  scale_x_continuous(expand = expansion(mult = 0)) +   # no x padding: tight to min/max
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +  # tiny headroom on y
+  labs(x = "Retention time (seconds)", y = "Count") +
+  theme_bw(base_size = 25) +
+  theme(
+    plot.margin = ggplot2::margin(t = 5, r = 5, b = 5, l = 20)  # extra left padding
+  )
+
+p
+
+ggsave(filename = sprintf("Figure S2_Histogram HPLCTOFMS benchmarks_%s.png",
+                     format(Sys.time(), "%Y-%m-%d")), 
+       plot = p, 
+       device = "png",
+       dpi = 600,        # Set DPI to 600
+       width = 20,       # Width in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
+       units = "in")
 ```
 
-# Figure S3: HCA clustering of HPLC-QToF-MS dataset (using both store-bought and environmental plastics) with plastic categories and their corresponding sources.
+# Figure S3 & S4: HCA clustering of HPLC-QToF-MS dataset (using both store-bought and environmental plastics) with plastic categories and their corresponding sources.
 
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-```
-
-# Figure S4: HCA clustering of ICP-MS/MS dataset (using both store-bought and environmental plastics) with plastic categories and their corresponding sources.
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-```
+Please refer to step 8 HCA in the "Complete Workflow.Rmd" file on the repo to create HCA clustering figures
 
 # Figure S5: Retention time and mass-to-charge of HPLC dataset’s original features and RFA selected features
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_in <-  rf_results_SB_ENV_train$hplc
+
+## Get all features 
+all_feats_rt_mz <- hplc %>% 
+  dplyr::filter(Feature %in% colnames(data_in$fold1$final_imp_norm_train[, 6:ncol(data_in$fold1$final_imp_norm_train)])) %>%
+  dplyr::group_by(Feature) %>%
+  dplyr::summarize(mean_RT = mean(RT),
+                   mean_mz = mean(m.z))
+
+all_feats_rt_mz_plot <- ggplot(data =all_feats_rt_mz) +
+  geom_point(aes(x= mean_RT, y = mean_mz)) +
+  scale_x_continuous(limits = c(0, 18)) +
+  scale_y_continuous(limits = c(0, 800)) +
+  labs(x = NULL,
+       y = NULL,
+       title = "All features - HPLC") +
+  theme_light(base_size = 25) +
+  theme(
+    plot.title = element_text(hjust = 0.5)  # centers the title
+  )
+all_feats_rt_mz_plot
+
+# Get RFA features
+RFA_feats_rt_mz <- hplc %>% 
+  dplyr::filter(Feature %in% unique(c(data_in$fold5$rfa_selected_feats, data_in$fold4$rfa_selected_feats, data_in$fold3$rfa_selected_feats))) %>%
+  dplyr::group_by(Feature) %>%
+  dplyr::summarize(mean_RT = mean(RT),
+                   mean_mz = mean(m.z))
+
+RFA_feats_rt_mz_plot <- ggplot(data =RFA_feats_rt_mz) +
+  geom_point(aes(x= mean_RT, y = mean_mz)) +
+  scale_x_continuous(limits = c(0, 18)) +
+  scale_y_continuous(limits = c(0, 800)) +
+  labs(x = NULL,
+       y = NULL,
+       title = "RFA features - HPLC") +
+  theme_light(base_size = 25) +
+  theme(
+    plot.title = element_text(hjust = 0.5)  # centers the title
+  )
+RFA_feats_rt_mz_plot
+
+y <- textGrob("Mass-to-charge", rot = 90, gp = gpar(fontsize = 20))
+x <- textGrob("Retention time (minutes)", gp = gpar(fontsize = 20))
+
+ggsave(filename = paste0("Figure S5_mz and RT of HPLC data before and after RFA feature selection_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = grid.arrange(all_feats_rt_mz_plot, 
+             RFA_feats_rt_mz_plot, 
+             bottom = x, left =y), 
+       device = "png",
+       dpi = 300,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 10,       # Height in inches (adjust as needed)
+       units = "in") 
 ```
 
 # Figure S6 -> S12: Confusion matrices of training and testing on environmental plastics versus. training on store-bought plastics and testing on environmental plastics - 7 data combinations
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
-sb_train_only <- run_rf_analysis_list_SB_train$gc_USSB_train$conf_mat_sig
-sb_and_env_train <- run_rf_analysis_list_SB_and_ENV_train_02Aug2025$gc_SB_and_ENV_train$conf_mat_rfa
+# Here we use GC again as an example. You can change the fold number to view confusion matrices from different folds
 
-ggsave(filename = paste0("Figure 4_confusion matrix_SB train only_", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
+sb_train_only <- rf_results_SB_ENV_train$gc_USSB_train$fold1$conf_mat_rfa
+sb_and_env_train <- rf_results_SB_ENV_train$gc_SB_and_ENV_train$fold1$conf_mat_rfa
+
+ggsave(filename = paste0("Confusion matrix_SB train only_", "GC", "_", format(Sys.time(), "%d-%m-%Y"), ".png"), 
        plot = sb_train_only, 
        device = "png",
        dpi = 300,        # Set DPI to 600
