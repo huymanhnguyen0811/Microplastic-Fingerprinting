@@ -156,36 +156,14 @@ par(cex = 1)
 plot(hca_samp, labels = labels_clean, hang = -1, main = "")
 ```
 
-# Table 1: Best imputation and normalization combinations for each of the seven analytical data combinations on two data splitting scenarios
+# Table 1 and Table S6. Best imputation and normalization combinations and full results of evaluation metrics for data imputation and normalization across 7 data combinations using store-bought and environmental samples as training dataset and test on environmental samples
 
-```{r , echo=FALSE, warning = FALSE, message=FALSE}
-
-```
-
-# Table 2 and Table S6. Optimal feature-selection methods and full results of evaluation metrics for data imputation and normalization across 7 data combinations using store-bought and environmental samples as training dataset and test on environmental samples
-
-data_in <- rf_results_SB_ENV_train$gc
-
-result_gc_SBENV_train <- list()
-i <- 1
-for (fold in data_in) {
-    result_gc_SBENV_train[[i]] <- as.data.frame(fold$imp_norm_res_table) %>%
-        dplyr::mutate(Fold = fold$fold_id) %>%
-        dplyr::arrange(combined_rank) %>% dplyr::select(-KS_p)
-    i <- i + 1
-}
-
-# 3. Apply function to all data and combine
-result_gc_SBENV_train <- bind_rows(result_gc_SBENV_train) %>% 
-    dplyr::mutate(Dataset = "GC",
-                  Training = "SB and ENV")
-rm(data_in); gc()
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 # Here, as an example, we extract information of imputation and normalization from SB+ENV train
 ML_result <- rf_results_SB_ENV_train
 
-impxnorm_list <- list()
-i <- 1
+# Table 1 #########################
+optimal_imp_norm <- list()
 for (i in seq_along(ML_result)) {
   # Read data
   data_in <- ML_result[[i]]
@@ -193,53 +171,119 @@ for (i in seq_along(ML_result)) {
   # Get a clean name for the dataset from the filename (removes .rds extension)
   dataset_name <- names(ML_result)[[i]]
   
-  for (fold in ML_result[[i]]) {
-    impxnorm_list[[i]] <-  as.data.frame(fold$imp_norm_res_table) %>%
+  for (fold_id in seq_along(ML_result[[i]])) {
+    optimal_imp_norm[[i]] <-  as.data.frame(best_imp = ML_result[[i]][[fold_id]]$best_imputation,
+                                            best_norm = ML_result[[i]][[fold_id]]$best_normalization,
+                                            Dataset = dataset_name,
+                                            Training = "SB and ENV")# change to "SB only" when extracting SB only train results)
+  }
+}
+
+# Examine the dataframe before exporting to Excel
+View(bind_rows(optimal_imp_norm))
+
+# Table S6 #########################
+all_imp_norm_res_list <- list()
+for (i in seq_along(ML_result)) {
+  # Read data
+  data_in <- ML_result[[i]]
+  
+  # Get a clean name for the dataset from the filename (removes .rds extension)
+  dataset_name <- names(ML_result)[[i]]
+  
+  for (fold_id in seq_along(ML_result[[i]])) {
+    all_imp_norm_res_list[[i]] <-  as.data.frame(ML_result[[i]][[fold_id]]$imp_norm_res_table) %>%
       dplyr::select(-KS_p) %>% 
       dplyr::mutate(Fold = fold$fold_id,
                     OOB_MCC = round(OOB_MCC, 2),
                     ClusterRes = rond(ClusterRes, 2),
                     CorrScore = round(CorrScore, 2)) %>%
       dplyr::arrange(combined_rank) %>% 
-      dplyr::mutate(Dataset = dataset_name)
-    i <- i + 1
+      dplyr::mutate(Dataset = dataset_name,
+                    Training = "SB and ENV") # change to "SB only" when extracting SB only train results
   }
 }
 
-write_xlsx(bind_rows(impxnorm_list), path = "TableS6_18Dec2025- Test RF and kNN imputation_old feature reduc 12Dec2025.xlsx")
+# Examine the dataframe before exporting to Excel
+View(bind_rows(all_imp_norm_res_list))
 
-# 3. Apply function to all data and combine
-Result_icp_USSB_train <- bind_rows(Result_icp_USSB_train) %>% 
-  dplyr::mutate(Dataset = "ICP",
-                Training = "SB only")
-rm(data_in); gc()
+# Export to Excel
+write_xlsx(bind_rows(all_imp_norm_res_list), path = "Imputation and normalization results.xlsx")
+rm(ML_result); gc() # Clear cache to reduce RAM consumption
+```
 
-all_imp_norm_res_12Dec2025 <- rbind(Result_gc_hplc_icp_SB_and_ENV_train,
-                                    Result_gc_hplc_icp_USSB_train,
-                                    Result_gc_hplc_SB_and_ENV_train,
-                                    Result_gc_hplc_USSB_train,
-                                    Result_gc_icp_SB_and_ENV_train,
-                                    Result_gc_icp_USSB_train,
-                                    Result_gc_SB_and_ENV_train,
-                                    Result_gc_USSB_train,
-                                    Result_hplc_icp_SB_and_ENV_train,
-                                    Result_hplc_icp_USSB_train,
-                                    Result_hplc_SB_and_ENV_train,
-                                    Result_hplc_USSB_train,
-                                    Result_icp_SB_and_ENV_train,
-                                    Result_icp_USSB_train)
+# Table 2: Optimal feature-selection methods
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+# Here, as an example, we extract information of imputation and normalization from SB+ENV train
+data_in <- rf_results_SB_ENV_train
 
-base::saveRDS(all_imp_norm_res_12Dec2025, file = paste0(getwd(), "/ML results with 7 data combos using old feature reduction (12Dec2025)/", "Table S6_all_imp_norm_res_12Dec2025.rds"))
+# 1. Define a function to extract metrics from a SINGLE fold
+extract_metrics <- function(x, fold_idx) {
+  
+  # Helper to grab "top_X" stats easily
+  get_top <- function(k) {
+    sub <- x$top_importance_results[[paste0("top_", k)]]
+    list(mcc = sub$eval_metrics_top$MCC_Multiclass,
+         time = sub$time_top_100_50_25_10,
+         n_feat = length(sub$selected_features))
+  }
+  
+  # Create the data frame for this specific fold
+  tibble::tribble(
+    ~method,         ~MCC_Multiclass,       ~Computational_time,          ~Number_feat_selected,
+    "all feats",     x$all_features_mcc,    x$time_all_features,          x$final_rf_all_feats$num.independent.variables,
+    "sig feat",      x$mcc_sig,             x$time_sig,                   length(x$sig_selected_feats),
+    "rfa feats",     x$mcc_rfa,             x$time_rfa,                   length(x$rfa_selected_feats),
+    "top 100 feats", get_top(100)$mcc,      get_top(100)$time,            get_top(100)$n_feat,
+    "top 50 feats",  get_top(50)$mcc,       get_top(50)$time,             get_top(50)$n_feat,
+    "top 25 feats",  get_top(25)$mcc,       get_top(25)$time,             get_top(25)$n_feat,
+    "top 10 feats",  get_top(10)$mcc,       get_top(10)$time,             get_top(10)$n_feat
+  ) %>%
+    dplyr::mutate(Folds = fold_idx, .before = 1)
+}
+
+feat_select_summary <- list()
+# Summarize feature selections
+for (i in seq_along(data_in)) {
+  feat_select_summary[[i]] <- purrr::imap_dfr(data_in[[i]], extract_metrics) %>%
+    dplyr::group_by(method) %>%
+    summarise(
+      MCC_mean = round(mean(MCC_Multiclass, na.rm = TRUE), 2),
+      MCC_sd = round(sd(MCC_Multiclass, na.rm = TRUE), 2),
+      Computational_time_mean = round(mean(Computational_time, na.rm = TRUE), 2),
+      Computational_time_sd = round(sd(Computational_time, na.rm = TRUE), 2),
+      Number_feat_selected_mean = round(mean(Number_feat_selected, na.rm = TRUE), 2),
+      Number_feat_selected_sd = round(sd(Number_feat_selected, na.rm = TRUE), 2)
+    ) %>%
+    dplyr::arrange(desc(MCC_mean)) %>%
+    # Add the dataset name column so we know which file this came from
+    dplyr::mutate(Dataset = names(data_in)[[i]], .before = 1)
+}
+
+# Final Binding ---
+# Remove any NULL entries (in case of errors) and bind rows
+final_summary_stats <- bind_rows(feat_select_summary)
+
+View(final_summary_stats)
 ```
 
 # Table S3. Descriptive statistics of retention time of five HPLC benchmark compounds.
 
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+```
+
 # Table S4. Number of unique aligned compounds that are associated with HPLC benchmarks at two sets of RT windows were applied to split HPLC peaks into different RT sets based on inspection of histogram plots of RT distribution in all HPLC samples and distribution of RT of benchmark compounds
 
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+
+```
 # Table S5. Summary of missing values present in all seven data combinations across three feature reduction approaches.
 
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+```
 
 # Table S7. Summary of significant compounds identified via pair-wise tests between plastic categories from k-fold cross validation across seven data combinations
+
 ```{r , echo=FALSE, warning = FALSE, message=FALSE}
 sig_feat_list_SB_ENV <- list()
 k <- 1
@@ -307,6 +351,7 @@ write_xlsx(rbind(sig_feat_SB_ENVtrain, sig_feat_SBtrain), path = "Table S7_signi
 ```
 
 # Table S8. Significant compounds identified via pair-wise tests between plastic categories across seven data combinations
+
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 list_pairwise_df <- list()
 for (i in 1:length(run_rf_analysis_list_SB_and_ENV_train_02Aug2025)) {
