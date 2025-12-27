@@ -6,125 +6,168 @@
 # Functions -------------------------------------------------------------------------------------------------------
 '%notin%' <- Negate('%in%')
 
-# Grouping compounds based on RT1, RT2, and Ion1 - Fast window scan
+# Groups compounds based on retention time (RT) and mass-to-charge ratio (m/z)
+# Uses a fast binning algorithm to efficiently find compounds with similar RT and m/z values
+#
+# Parameters:
+#   data: Data frame containing RT and m.z columns
+#   split_time: RT threshold for splitting data into two regions (HPLCTOFMS only)
+#   rtthres1: RT tolerance for first region (or entire dataset for ATDGCMS)
+#   rtthres2: RT tolerance for second region (HPLCTOFMS only)
+#   mzthres: m/z tolerance for grouping
+#   type: Either "ATDGCMS" or "HPLCTOFMS"
+#
+# Returns: Data frame with added Feature column containing group assignments
 grouping_comp <- function(data, split_time, rtthres1, rtthres2, mzthres, type) {
+  # Initialize data and Feature column
   dat <- data[,, drop = FALSE]
   dat$Feature <- NA_character_
-
+  
+  # Validate input type
   if (!(type %in% c("ATDGCMS", "HPLCTOFMS"))) {
     stop("Invalid type specified. Must be either 'ATDGCMS' or 'HPLCTOFMS'")
   }
-
+  
+  # Core grouping algorithm: bins by RT, then scans for m/z matches within bins
   assign_groups <- function(dt, rtthres, mzthres, prefix, type_label) {
     n <- nrow(dt)
     if (n == 0) {
       return(dt)
     }
-
+    
+    # Extract RT and m/z values as numeric vectors
     rt <- base::as.numeric(dt$RT)
     mz <- base::as.numeric(dt$m.z)
     feat <- rep(NA_character_, n)
-
+    
+    # Identify valid (finite) data points
     valid <- is.finite(rt) & is.finite(mz)
     if (!any(valid)) {
       dt$Feature <- feat
       return(dt)
     }
-
+    
+    # Validate thresholds
     if (rtthres <= 0 || mzthres <= 0) {
       stop("RT/m.z thresholds must be > 0.")
     }
-
+    
+    # BIN CREATION PHASE
+    # Divide RT space into bins of size rtthres for faster neighbor searching
+    # This avoids O(n²) pairwise comparisons by only checking nearby bins
     min_rt <- min(rt[valid])
     rt_bin <- rep(NA_integer_, n)
     rt_bin[valid] <- floor((rt[valid] - min_rt) / rtthres)
-
+    
+    # Group data points by their RT bin
     bin_groups <- split(which(valid), rt_bin[valid], drop = TRUE)
+    
+    # PRE-SORT PHASE
+    # Sort m/z values within each bin to enable binary search later
     bin_idx <- vector("list", length(bin_groups))
     bin_mz <- vector("list", length(bin_groups))
     bin_keys <- names(bin_groups)
-
+    
     for (k in seq_along(bin_groups)) {
       idx <- bin_groups[[k]]
       mz_vals <- mz[idx]
       ord <- order(mz_vals)
-      bin_idx[[k]] <- idx[ord]
-      bin_mz[[k]] <- mz_vals[ord]
+      bin_idx[[k]] <- idx[ord]     # Sorted indices
+      bin_mz[[k]] <- mz_vals[ord]  # Sorted m/z values
     }
-
     names(bin_idx) <- bin_keys
     names(bin_mz) <- bin_keys
-
+    
+    # GROUP ASSIGNMENT PHASE
+    # Scan through all points and assign group IDs to connected components
     counter <- 1L
+    
     for (i in seq_len(n)) {
+      # Skip if invalid or already assigned
       if (!valid[i] || !is.na(feat[i])) {
         next
       }
-
+      
       rt_i <- rt[i]
       mz_i <- mz[i]
       rtb <- rt_bin[i]
       if (is.na(rtb)) {
         next
       }
-
+      
+      # NEIGHBOR SEARCH
+      # Check current bin and adjacent bins (offset -1, 0, +1) for RT proximity
+      # This ensures we catch compounds near bin boundaries
       cand_parts <- vector("list", 3)
       part_idx <- 0L
-
+      
       for (offset in -1:1) {
         key <- as.character(rtb + offset)
         idx_sorted <- bin_idx[[key]]
+        
         if (length(idx_sorted) == 0) {
           next
         }
-
+        
         mz_sorted <- bin_mz[[key]]
+        
+        # Binary search for m/z range [mz_i - mzthres, mz_i + mzthres]
+        # findInterval efficiently locates the boundaries in sorted array
         lo <- findInterval(mz_i - mzthres, mz_sorted) + 1L
         hi <- findInterval(mz_i + mzthres, mz_sorted)
+        
         if (hi >= lo) {
           part_idx <- part_idx + 1L
           cand_parts[[part_idx]] <- idx_sorted[lo:hi]
         }
       }
-
+      
+      # If no candidates found in any bin, skip
       if (part_idx == 0L) {
         next
       }
+      
+      # Combine candidates from all checked bins
       cand <- unlist(cand_parts[seq_len(part_idx)], use.names = FALSE)
       if (length(cand) == 0) {
         next
       }
-
+      
+      # Filter to unassigned candidates only
       cand <- cand[is.na(feat[cand])]
       if (length(cand) == 0) {
         next
       }
-
+      
+      # Apply exact RT and m/z thresholds (binary search gave us a superset)
       cand <- cand[
         abs(rt[cand] - rt_i) <= rtthres & abs(mz[cand] - mz_i) <= mzthres
       ]
-
+      
+      # Assign group ID to all matching candidates
       if (length(cand) > 0) {
         feat[cand] <- paste0(prefix, counter, ".", type_label)
         counter <- counter + 1L
       }
     }
+    
     dt$Feature <- feat
     dt
   }
-
+  
+  # MAIN EXECUTION
+  # For HPLC data: split by RT and apply different thresholds to each region
+  # For ATDGC data: process entire dataset with single threshold
   if (type %in% "HPLCTOFMS") {
     dat1 <- dat %>% filter(RT <= split_time)
     dat2 <- dat %>% filter(RT > split_time)
-
     dat1 <- assign_groups(dat1, rtthres1, mzthres, "Compound_RT1_", type)
     dat2 <- assign_groups(dat2, rtthres2, mzthres, "Compound_RT2_", type)
-
     dat <- rbind(dat1, dat2)
   } else {
     dat <- assign_groups(dat, rtthres1, mzthres, "Compound_", type)
   }
-
+  
   return(dat)
 }
 
