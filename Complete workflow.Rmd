@@ -22,7 +22,7 @@ This repo is accompanying the publication: "Chemical Fingerprints of New vs. Wea
 ## Loading Packages and Functions
 ```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
 # if packages are not install then install
-required_packages <- c("tidyverse", "readxl", "writexl", "data.table", "crayon", "grid", "gridExtra", "stats", "vegan", "cluster", "factoextra", "FactoMineR", "ggforce", "MASS", "caret", "randomForest", "ranger", "pheatmap", "viridis", "missForest", "pROC", "VIM", "softImpute", "ggpubr", "RANN", "foreach", "doParallel", "parallel")
+required_packages <- c("tidyverse", "readxl", "writexl", "data.table", "crayon", "grid", "gridExtra", "stats", "vegan", "cluster", "factoextra", "FactoMineR", "ggforce", "MASS", "caret", "randomForest", "ranger", "pheatmap", "viridis", "missForest", "pROC", "VIM", "softImpute", "ggpubr", "RANN", "foreach", "doParallel", "parallel", "ggplot2")
 
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) {
@@ -60,6 +60,7 @@ library(RANN)
 library(foreach)
 library(doParallel)
 library(parallel)
+library(ggplot2)
 
 # Load Helper Functions
 # Ensure the helper script is in the same folder as this Rmd
