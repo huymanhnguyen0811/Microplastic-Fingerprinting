@@ -1104,7 +1104,8 @@ tune_rf_subset <- function(
   metric = "Accuracy",
   parallel = TRUE,
   n_cores = NULL,
-  num_threads = 1
+  num_threads = 1,
+  min_node_size = 5 # <--- NEW PARAMETER: Default 5 for Regularization
 ) {
   y_train <- as.factor(y_train)
   y_test <- as.factor(y_test)
@@ -1186,7 +1187,9 @@ tune_rf_subset <- function(
     # ---- Branch B: too few per class -> OOB tuning grid ----
 
     train_df <- data.frame(.Class = y_train, X_train, check.names = FALSE)
-    grid <- expand.grid(ntree = ntree_candidates, mtry = mtry_vals)
+    grid <- expand.grid(ntree = ntree_candidates, 
+                        mtry = mtry_vals,
+                        min.node.size = min_node_size) # <--- Added to OOB grid
 
     # Parallel backend
     created_cluster <- FALSE
@@ -1208,45 +1211,47 @@ tune_rf_subset <- function(
       add = TRUE
     )
 
-    eval_one <- function(nt, m) {
+    eval_one <- function(nt, m, ns) {
       set.seed(123)
       rf_mod <- ranger::ranger(
         dependent.variable.name = ".Class",
         data = train_df,
         num.trees = nt,
         mtry = m,
+        min.node.size = ns,      # <--- Applies Regularization
         splitrule = "gini",
         importance = "impurity",
         probability = FALSE,
         oob.error = TRUE,
-        num.threads = 1 # important to avoid nested parallel
+        num.threads = 1
       )
       data.frame(
-        ntree = nt,
-        mtry = m,
+        ntree = nt, 
+        mtry = m, 
+        min.node.size = ns,
         oob_err = rf_mod$prediction.error
       )
     }
-
+    
     if (parallel) {
       res_grid <- foreach::foreach(
         i = seq_len(nrow(grid)),
         .combine = rbind,
         .packages = "ranger"
-      ) %dopar%
-        {
-          eval_one(grid$ntree[i], grid$mtry[i])
-        }
+      ) %dopar% {
+        eval_one(grid$ntree[i], grid$mtry[i], grid$min.node.size[i])
+      }
     } else {
       res_grid <- do.call(
         rbind,
         lapply(seq_len(nrow(grid)), function(i) {
-          eval_one(grid$ntree[i], grid$mtry[i])
+          eval_one(grid$ntree[i], grid$mtry[i], grid$min.node.size[i])
         })
       )
     }
-
+    
     res_grid <- res_grid[is.finite(res_grid$oob_err), , drop = FALSE]
+    
     if (nrow(res_grid) == 0) {
       return(list(
         model = NULL,
@@ -1266,6 +1271,7 @@ tune_rf_subset <- function(
     best_row <- res_grid[which.min(res_grid$oob_err), ]
     best_trees <- best_row$ntree
     best_mtry <- best_row$mtry
+    best_node_size <- best_row$min.node.size # Capture best regularizer
 
     set.seed(123)
     best_rf <- ranger::ranger(
@@ -1273,6 +1279,7 @@ tune_rf_subset <- function(
       data = train_df,
       num.trees = best_trees,
       mtry = best_mtry,
+      min.node.size = best_node_size, # <--- Use best node size
       splitrule = "gini",
       importance = "impurity",
       probability = TRUE,
@@ -1285,7 +1292,7 @@ tune_rf_subset <- function(
       bestTune = data.frame(
         mtry = best_mtry,
         splitrule = "gini",
-        min.node.size = 1
+        min.node.size = best_node_size
       )
     )
     final_rf <- best_rf
