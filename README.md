@@ -11,6 +11,7 @@ It contains the computational workflow and datasets used to analyze chemical fin
 ## 📂 Repository Structure
 
 * **`Conmplete Workflow.Rmd`**: The main R Markdown workflow file. It handles data import, processing, feature selection, and model training.
+* **`Automated analyses to choose appropriate ML models for Multi-class ML classification.R`**: A collection of diagnostic tests to choose an appropriate supervised ML algorithm based on the nature of user's input data.
 * **`Helper Functions for Computational Workflow.R`**: A collection of custom functions used by the main workflow for tasks like compound grouping, imputation, and feature filtering.
 * **`Raw Data/`**: Directory containing the raw data files of instrumental analyses: ATD-GC-MS, HPLC-QTOF-MS and ICP-MS/MS.
 
