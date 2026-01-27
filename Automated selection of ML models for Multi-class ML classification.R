@@ -112,10 +112,10 @@ for (pkg in required_packages) {
 #' # best_algo <- results$recommended_algorithm
 
 select_ML_diag_tests <- function(data, 
-                                  class_col, 
-                                  alpha = 0.05,
-                                  verbose = TRUE,
-                                  return_recommendations = TRUE) {
+                                 class_col, 
+                                 alpha = 0.05,
+                                 verbose = TRUE,
+                                 return_recommendations = TRUE) {
   
   # ============================================================================
   # INITIALIZATION AND DATA VALIDATION
@@ -1751,9 +1751,9 @@ select_ML_diag_tests <- function(data,
       if (grepl("VIOLATED|SEVERE|CRITICAL|HIGH-DIM|POOR", status)) {
         cat(sprintf("  ⚠ %s: %s\n", name, status))
       } else if (grepl("MODERATE|PARTIAL|WARNING", status)) {
-        cat(sprintf("  ⚡ %s: %s\n", name, status))
+        cat(sprintf(" ⚡ %s: %s\n", name, status))
       } else {
-        cat(sprintf("  ✓ %s: %s\n", name, status))
+        cat(sprintf(" ✓ %s: %s\n", name, status))
       }
     }
     
@@ -1814,8 +1814,28 @@ get_algorithm_method <- function(algorithm_name) {
 #' # Test with iris data
 #' # test_results <- test_select_ML_diag_tests()
 
-test_select_ML_diag_tests <- function() {
-  data(iris)
-  results <- select_ML_diag_tests(iris, class_col = "Species", verbose = TRUE)
+test_select_ML_diag_tests <- function(data, class_col) {
+  results <- select_ML_diag_tests(data, class_col, verbose = TRUE)
   return(results)
 }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+data <- hplc_combined_SB_ENV_shared_cols_ntr_clean %>% dplyr::select(-c(Subcategory, technique, Source, Polymer))
+target_col_name <- "Plastic_type" 
+
+# 0.000000001 imputation
+for (r in 1:nrow(data)) { 
+  data[r, which(base::is.na(data[r,]))] <- min(data %>% 
+                                                 dplyr::select(-Plastic_type), na.rm = TRUE)
+}
+
+# Percentage normalization
+data_percentage <- as.data.frame(t(apply(data[, 2:ncol(data)],
+                                         MARGIN = 1, 
+                                         function(row) {row/sum(row, na.rm = TRUE)}))) 
+
+data_percentage <- data_percentage %>%
+  mutate(Plastic_type = data$Plastic_type) %>%
+  relocate(Plastic_type, .before = 1)
+
+test <- test_select_ML_diag_tests(data_percentage, class_col = "Plastic_type")
