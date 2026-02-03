@@ -1,4 +1,4 @@
-# Microplastic Fingerprinting
+# PlastiPrint: A Microplastic Computational Fingerprinting tool
 
 This repository accompanies the publication: **"Chemical Fingerprints of New vs. Weathered Microplastics: A Machine Learning Approach"**. 
 
