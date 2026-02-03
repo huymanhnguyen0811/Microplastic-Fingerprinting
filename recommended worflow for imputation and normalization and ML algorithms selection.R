@@ -2445,20 +2445,23 @@ evaluate_combo <- function(data,
     recommended_algorithm = recommended_algo,
     algorithm_used = algo_method,
     evaluation_method = eval_method,
-    
+
     # Classification metrics
     accuracy = metrics$accuracy,
     mcc = metrics$mcc,
     kappa = metrics$kappa,
+    macro_precision = metrics$macro_precision,
+    macro_recall = metrics$macro_recall,
+    balanced_accuracy = metrics$macro_recall,  # Balanced accuracy = mean of per-class recalls
     macro_f1 = metrics$macro_f1,
     weighted_f1 = metrics$weighted_f1,
     auc = metrics$auc,
-    
+
     # Data quality metrics
     cluster_quality = cluster_quality,
     correlation_change = correlation_preserved,
     normality_pct = normality_improvement,
-    
+
     # Diagnostics
     ml_diagnostics = diag_results,
     confusion_matrix = metrics$confusion_matrix
@@ -2701,10 +2704,11 @@ find_best_impute_normalize <- function(
 #' ============================================================================
 
 #' Apply the best combination to data
-#' 
+#'
 #' @param data Original data with missing values
 #' @param class_col Class column name
 #' @param best_combo Result from find_best_impute_normalize
+#' @return Transformed data frame with imputation and normalization applied
 
 apply_best_combo <- function(data, class_col, best_combo) {
   imputed <- apply_imputation(data, best_combo$imputation, class_col)
@@ -2712,38 +2716,63 @@ apply_best_combo <- function(data, class_col, best_combo) {
   return(normalized)
 }
 
+
+#' Two-stage optimization for imputation/normalization selection
+#'
+#' @param data Data frame with features and class column
+#' @param class_col Name of the class column
+#' @param top_k Number of top candidates to refine (default: 5)
+#' @return List with refined results and best combination
+
 two_stage_optimization <- function(data, class_col, top_k = 5) {
+  # Input validation
+  if (!is.data.frame(data)) stop("data must be a data frame")
+  if (!class_col %in% names(data)) stop("class_col not found in data")
+  if (top_k < 1) stop("top_k must be at least 1")
+
   # Stage 1: Quick screen with Random Forest OOB
   quick_results <- find_best_impute_normalize(
     data = data,
     class_col = class_col,
-    use_adaptive_ml = FALSE,  # Use RF for all
+    use_adaptive_ml = FALSE,
     verbose = FALSE
   )
-  
-  # Get top K combinations
-  top_combos <- head(quick_results$summary_table, top_k)
-  
+
+  # Get top K combinations (handle case where fewer than top_k exist)
+  n_combos <- min(top_k, nrow(quick_results$summary_table))
+  top_combos <- head(quick_results$summary_table, n_combos)
+
   # Stage 2: Full adaptive evaluation on top candidates
-  refined_results <- list()
-  for (i in 1:nrow(top_combos)) {
-    cat(sprintf("Refining combo %d/%d: %s + %s\n", 
-                i, nrow(top_combos),
-                top_combos$imputation[i], 
+  refined_results <- vector("list", n_combos)
+  for (i in seq_len(n_combos)) {
+    cat(sprintf("Refining combo %d/%d: %s + %s\n",
+                i, n_combos,
+                top_combos$imputation[i],
                 top_combos$normalization[i]))
-    
-    result <- evaluate_combo(
+
+    refined_results[[i]] <- evaluate_combo(
       data = data,
       class_col = class_col,
       impute_method = top_combos$imputation[i],
       norm_method = top_combos$normalization[i],
       use_adaptive_ml = TRUE,
-      cv_folds = 10  # More thorough CV for final candidates
+      cv_folds = 10
     )
-    refined_results[[i]] <- result
   }
-  
-  return(refined_results)
+
+  # Select best from refined results
+  scores <- sapply(refined_results, function(r) if (r$success) r$mcc else -Inf)
+  best_idx <- which.max(scores)
+
+  return(list(
+    quick_screen = quick_results,
+    refined_results = refined_results,
+    best_result = refined_results[[best_idx]],
+    best_combination = list(
+      imputation = top_combos$imputation[best_idx],
+      normalization = top_combos$normalization[best_idx]
+    )
+  ))
 }
 
 
@@ -2877,11 +2906,39 @@ calculate_all_classification_metrics <- function(predicted, actual, probabilitie
 #'    Range: [-1, 1], higher is better
 
 calculate_cluster_quality <- function(transformed_data, class_labels) {
-  library(cluster)
-  
+  if (!requireNamespace("cluster", quietly = TRUE)) {
+    stop("Package 'cluster' is required for silhouette calculation")
+  }
+
+  # Edge case: Need at least 2 samples for distance calculation
+  if (nrow(transformed_data) < 2) {
+    return(list(
+      mean_silhouette = NA,
+      per_class_silhouette = NA,
+      warning = "Insufficient samples for silhouette calculation (n < 2)"
+    ))
+  }
+
+  # Edge case: Need at least 2 classes for meaningful silhouette
+  class_factor <- as.factor(class_labels)
+  n_classes <- nlevels(class_factor)
+  if (n_classes < 2) {
+    return(list(
+      mean_silhouette = NA,
+      per_class_silhouette = NA,
+      warning = "Need at least 2 classes for silhouette calculation"
+    ))
+  }
+
+  # Edge case: Each class needs at least 1 sample
+  class_counts <- table(class_factor)
+  if (any(class_counts == 0)) {
+    class_factor <- droplevels(class_factor)
+  }
+
   dist_matrix <- dist(transformed_data)
-  sil <- silhouette(as.numeric(as.factor(class_labels)), dist_matrix)
-  
+  sil <- cluster::silhouette(as.numeric(class_factor), dist_matrix)
+
   return(list(
     mean_silhouette = mean(sil[, "sil_width"]),
     per_class_silhouette = tapply(sil[, "sil_width"], class_labels, mean)
@@ -2893,31 +2950,59 @@ calculate_cluster_quality <- function(transformed_data, class_labels) {
 #'    Ratio of between-class to within-class variance
 
 calculate_discriminant_ratio <- function(transformed_data, class_labels) {
+  # Input validation
+  if (!is.data.frame(transformed_data) && !is.matrix(transformed_data)) {
+    stop("transformed_data must be a data frame or matrix")
+  }
+  if (nrow(transformed_data) != length(class_labels)) {
+    stop("Number of rows in transformed_data must match length of class_labels")
+  }
+
+  # Edge case: Need at least 2 samples
+  if (nrow(transformed_data) < 2) {
+    warning("Insufficient samples for discriminant ratio calculation")
+    return(NA)
+  }
+
+  classes <- unique(class_labels)
+
+  # Edge case: Need at least 2 classes
+  if (length(classes) < 2) {
+    warning("Need at least 2 classes for discriminant ratio calculation")
+    return(NA)
+  }
+
   # Overall mean
   grand_mean <- colMeans(transformed_data)
-  
-  # Between-class scatter
-  classes <- unique(class_labels)
   n_total <- nrow(transformed_data)
-  
+
   between_scatter <- 0
   within_scatter <- 0
-  
+
   for (cls in classes) {
     class_data <- transformed_data[class_labels == cls, , drop = FALSE]
     n_cls <- nrow(class_data)
     class_mean <- colMeans(class_data)
-    
-    # Between-class
-    between_scatter <- between_scatter + 
+
+    # Between-class scatter
+    between_scatter <- between_scatter +
       n_cls * sum((class_mean - grand_mean)^2)
-    
-    # Within-class
-    within_scatter <- within_scatter + 
-      sum(apply(class_data, 1, function(x) sum((x - class_mean)^2)))
+
+    # Within-class scatter (only if class has >1 sample)
+    if (n_cls > 1) {
+      within_scatter <- within_scatter +
+        sum(apply(class_data, 1, function(x) sum((x - class_mean)^2)))
+    }
+    # Note: Single-sample classes contribute 0 to within-scatter (no variance)
   }
-  
-  ratio <- between_scatter / (within_scatter + 1e-10)
+
+  # Edge case: All classes have single samples (within_scatter = 0)
+  if (within_scatter == 0) {
+    warning("All classes have single samples; within-scatter is zero")
+    return(Inf)  # Perfect separation in this degenerate case
+  }
+
+  ratio <- between_scatter / within_scatter
   return(ratio)
 }
 
@@ -2979,19 +3064,41 @@ calculate_normality_improvement <- function(original_data, transformed_data, alp
 #'    How well does the transformation reduce skewness?
 
 calculate_skewness_reduction <- function(original_data, transformed_data) {
-  library(moments)
-  
-  original_skew <- sapply(original_data, function(x) skewness(x, na.rm = TRUE))
-  transformed_skew <- sapply(transformed_data, skewness)
-  
+  if (!requireNamespace("moments", quietly = TRUE)) {
+    stop("Package 'moments' is required for skewness calculation")
+  }
+
+  # Calculate skewness for each column
+  original_skew <- sapply(original_data, function(x) {
+    x_clean <- x[!is.na(x)]
+    if (length(x_clean) < 3 || length(unique(x_clean)) < 2) return(NA)
+    moments::skewness(x_clean)
+  })
+
+  transformed_skew <- sapply(transformed_data, function(x) {
+    if (length(x) < 3 || length(unique(x)) < 2) return(NA)
+    moments::skewness(x)
+  })
+
   mean_abs_original <- mean(abs(original_skew), na.rm = TRUE)
   mean_abs_transformed <- mean(abs(transformed_skew), na.rm = TRUE)
-  
+
+  # Calculate percentage reduction with division-by-zero protection
+  pct_reduction <- if (is.na(mean_abs_original) || mean_abs_original == 0) {
+    if (is.na(mean_abs_transformed) || mean_abs_transformed == 0) {
+      0  # Both are zero/NA, no change
+    } else {
+      -Inf  # Original had no skew but transformed does (shouldn't happen typically)
+    }
+  } else {
+    (mean_abs_original - mean_abs_transformed) / mean_abs_original * 100
+  }
+
   return(list(
     original_mean_abs_skew = mean_abs_original,
     transformed_mean_abs_skew = mean_abs_transformed,
     skew_reduction = mean_abs_original - mean_abs_transformed,
-    pct_reduction = (mean_abs_original - mean_abs_transformed) / mean_abs_original * 100
+    pct_reduction = pct_reduction
   ))
 }
 
@@ -3035,14 +3142,13 @@ calculate_distribution_preservation <- function(original_data, imputed_data, cla
 #' a composite score that balances multiple objectives:
 
 calculate_composite_score <- function(
-    classification_metrics,  # List with accuracy, mcc, macro_f1, etc.
-    data_quality_metrics,    # List with silhouette, discriminant_ratio, etc.
+    classification_metrics,
+    data_quality_metrics = NULL,
     weights = list(
       # Classification weights (sum to 0.6)
       mcc = 0.25,
       balanced_accuracy = 0.15,
       macro_f1 = 0.20,
-      
       # Data quality weights (sum to 0.4)
       silhouette = 0.15,
       discriminant_ratio = 0.10,
@@ -3050,39 +3156,58 @@ calculate_composite_score <- function(
       skew_reduction = 0.07
     )
 ) {
-  
-  # Normalize metrics to [0, 1] range where needed
+  # Input validation
+  if (!is.list(classification_metrics)) {
+    stop("classification_metrics must be a list")
+  }
+
+  # Helper function to safely extract and normalize metric value
+  safe_get_metric <- function(metrics, name, default = 0) {
+    val <- metrics[[name]]
+    if (is.null(val) || is.na(val) || !is.finite(val)) {
+      return(default)
+    }
+    return(val)
+  }
+
   score <- 0
-  
-  # Classification metrics (already in good ranges)
-  score <- score + weights$mcc * (classification_metrics$mcc + 1) / 2  # MCC: [-1,1] -> [0,1]
-  score <- score + weights$balanced_accuracy * classification_metrics$balanced_accuracy
-  score <- score + weights$macro_f1 * classification_metrics$macro_f1
-  
-  # Data quality metrics
-  if (!is.null(data_quality_metrics$silhouette)) {
-    score <- score + weights$silhouette * 
-      (data_quality_metrics$silhouette + 1) / 2  # Silhouette: [-1,1] -> [0,1]
+
+  # Classification metrics with NA/missing handling
+  mcc_val <- safe_get_metric(classification_metrics, "mcc", 0)
+  score <- score + weights$mcc * (mcc_val + 1) / 2  # MCC: [-1,1] -> [0,1]
+
+  ba_val <- safe_get_metric(classification_metrics, "balanced_accuracy", 0)
+  score <- score + weights$balanced_accuracy * ba_val
+
+  f1_val <- safe_get_metric(classification_metrics, "macro_f1", 0)
+  score <- score + weights$macro_f1 * f1_val
+
+  # Data quality metrics (all optional)
+  if (!is.null(data_quality_metrics) && is.list(data_quality_metrics)) {
+    sil_val <- safe_get_metric(data_quality_metrics, "silhouette", NA)
+    if (!is.na(sil_val)) {
+      score <- score + weights$silhouette * (sil_val + 1) / 2
+    }
+
+    dr_val <- safe_get_metric(data_quality_metrics, "discriminant_ratio", NA)
+    if (!is.na(dr_val) && dr_val != Inf) {
+      dr_norm <- min(log1p(dr_val) / 3, 1)
+      score <- score + weights$discriminant_ratio * dr_norm
+    }
+
+    ni_val <- safe_get_metric(data_quality_metrics, "normality_improvement", NA)
+    if (!is.na(ni_val)) {
+      norm_score <- max(0, min(1, ni_val / 100))
+      score <- score + weights$normality_improvement * norm_score
+    }
+
+    sr_val <- safe_get_metric(data_quality_metrics, "skew_reduction", NA)
+    if (!is.na(sr_val)) {
+      skew_score <- max(0, min(1, sr_val / 2))
+      score <- score + weights$skew_reduction * skew_score
+    }
   }
-  
-  if (!is.null(data_quality_metrics$discriminant_ratio)) {
-    # Normalize discriminant ratio (log transform, cap at reasonable max)
-    dr_norm <- min(log1p(data_quality_metrics$discriminant_ratio) / 3, 1)
-    score <- score + weights$discriminant_ratio * dr_norm
-  }
-  
-  if (!is.null(data_quality_metrics$normality_improvement)) {
-    # Already in percentage, normalize to [0, 1]
-    norm_score <- max(0, min(1, data_quality_metrics$normality_improvement / 100))
-    score <- score + weights$normality_improvement * norm_score
-  }
-  
-  if (!is.null(data_quality_metrics$skew_reduction)) {
-    # Positive reduction is good, normalize
-    skew_score <- max(0, min(1, data_quality_metrics$skew_reduction / 2))
-    score <- score + weights$skew_reduction * skew_score
-  }
-  
+
   return(score)
 }
 
@@ -3155,21 +3280,22 @@ recommended_imp_norm_workflow <- function(data, class_col) {
   # Calculate comprehensive metrics for each refined candidate
   final_scores <- sapply(refined_results, function(result) {
     if (!result$success) return(-Inf)
-    
-    # Classification metrics
+
+    # Classification metrics (balanced_accuracy is now correctly computed in evaluate_combo)
     class_metrics <- list(
       mcc = result$mcc,
-      balanced_accuracy = (result$accuracy + result$macro_recall) / 2,
+      balanced_accuracy = result$balanced_accuracy,
       macro_f1 = result$macro_f1
     )
-    
+
     # Data quality metrics (from result)
+    # normality_pct is a proportion (0-1), multiply by 100 for percentage
     quality_metrics <- list(
       silhouette = result$cluster_quality,
-      normality_improvement = result$normality_pct * 100,
-      skew_reduction = 0  # Would need to calculate
+      normality_improvement = if (!is.na(result$normality_pct)) result$normality_pct * 100 else NA,
+      skew_reduction = 0
     )
-    
+
     calculate_composite_score(class_metrics, quality_metrics)
   })
   
