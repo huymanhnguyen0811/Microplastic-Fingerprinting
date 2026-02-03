@@ -78,16 +78,13 @@
 #' 
 #' ============================================================================
 
-# Required packages
+# Required packages - consolidated list
 required_packages <- c(
   "tidyverse", "caret", "ranger", "e1071", "MASS", "class", "xgboost",
   "missForest", "VIM", "mice", "doParallel", "foreach", "mltools",
-  "data.table", "yardstick", "pROC"
-)
-required_packages <- c(
-  "tidyverse", "caret", "e1071", "MASS", "nortest", "MVN", "heplots",
-  "corrplot", "psych", "vegan", "randomForest", "xgboost", "ranger",
-  "class", "FactoMineR", "factoextra", "car", "moments"
+  "data.table", "yardstick", "pROC", "nortest", "MVN", "heplots",
+  "corrplot", "psych", "vegan", "randomForest", "FactoMineR",
+  "factoextra", "car", "moments", "cluster"
 )
 
 # Check and install missing packages
@@ -294,11 +291,10 @@ select_ML_diag_tests <- function(data,
       scores$Score[scores$Algorithm == "XGBoost"] - 10
     scores$Score[scores$Algorithm == "Random Forest"] <- 
       scores$Score[scores$Algorithm == "Random Forest"] - 5
-    scores$Score[scores$Algorithm == "SVM (Linear)"] <- 
+    scores$Score[scores$Algorithm == "SVM (Linear)"] <-
       scores$Score[scores$Algorithm == "SVM (Linear)"] + 5
-    scores$Score[scores$Algorithm == "SVM (RBF)"] <- 
-      scores$Score[scores$Algorithm == "SVM (RBF)"] + 0
-    
+    # SVM (RBF): neutral in this scenario
+
   } else {
     assumptions$sample_size <- "OK: Adequate sample size"
     
@@ -451,12 +447,17 @@ select_ML_diag_tests <- function(data,
     ))
   }
   
-  pct_normal <- sum(normality_results$Normal, na.rm = TRUE) / 
-    sum(!is.na(normality_results$Normal)) * 100
-  
+  # Bug fix: Handle case where all normality tests return NA (division by zero)
+  non_na_count <- sum(!is.na(normality_results$Normal))
+  pct_normal <- if (non_na_count == 0) {
+    50  # Default to neutral when no tests could be computed
+  } else {
+    sum(normality_results$Normal, na.rm = TRUE) / non_na_count * 100
+  }
+
   diagnostics$univariate_normality <- normality_results
   diagnostics$pct_normal_features <- pct_normal
-  
+
   if (pct_normal < 50) {
     assumptions$univariate_normality <- "VIOLATED: Most features non-normal"
     
@@ -1873,12 +1874,7 @@ get_algorithm_method <- function(algorithm_name) {
 #' Date: January 2026
 #' ============================================================================
 
-for (pkg in required_packages) {
-  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-    install.packages(pkg, dependencies = TRUE)
-    library(pkg, character.only = TRUE)
-  }
-}
+# Note: Packages already loaded at script initialization
 
 #' ============================================================================
 #' IMPUTATION METHODS
@@ -1950,10 +1946,19 @@ apply_imputation <- function(data, method, class_col, lod_factor = 0.5) {
                              
                              "lod" = {
                                # Limit of detection: replace with factor * minimum positive value
-                               feature_data %>% 
+                               # Bug fix: Handle columns with no positive values
+                               feature_data %>%
                                  mutate(across(everything(), ~{
-                                   min_pos <- min(.[. > 0], na.rm = TRUE)
-                                   replace_na(., min_pos * lod_factor)
+                                   positive_vals <- .[. > 0 & !is.na(.)]
+                                   if (length(positive_vals) == 0) {
+                                     # Fallback: use absolute minimum non-NA value or 0
+                                     min_val <- min(abs(.[!is.na(.)]))
+                                     if (is.infinite(min_val) || is.na(min_val)) min_val <- 1
+                                     replace_na(., min_val * lod_factor)
+                                   } else {
+                                     min_pos <- min(positive_vals)
+                                     replace_na(., min_pos * lod_factor)
+                                   }
                                  }))
                              },
                              
@@ -2062,12 +2067,20 @@ apply_normalization <- function(data, method, class_col) {
                                 
                                 "box_cox" = {
                                   # Box-Cox transformation (requires positive values)
-                                  feature_data %>% 
+                                  # Bug fix: Handle constant columns and potential failures
+                                  feature_data %>%
                                     mutate(across(everything(), ~{
+                                      # Skip constant columns
+                                      if (length(unique(.)) <= 1) return(.)
                                       x_pos <- . + abs(min(., na.rm = TRUE)) + 1
-                                      bc <- MASS::boxcox(lm(x_pos ~ 1), plotit = FALSE)
-                                      lambda <- bc$x[which.max(bc$y)]
-                                      if (abs(lambda) < 0.01) log(x_pos) else (x_pos^lambda - 1) / lambda
+                                      tryCatch({
+                                        bc <- MASS::boxcox(lm(x_pos ~ 1), plotit = FALSE)
+                                        lambda <- bc$x[which.max(bc$y)]
+                                        if (abs(lambda) < 0.01) log(x_pos) else (x_pos^lambda - 1) / lambda
+                                      }, error = function(e) {
+                                        # Fallback to log transform on error
+                                        log(x_pos)
+                                      })
                                     }))
                                 },
                                 
@@ -2122,19 +2135,29 @@ multiclass_mcc <- function(conf_matrix) {
 #' @param probabilities Optional: class probabilities for AUC calculation
 
 calculate_metrics <- function(predicted, actual, probabilities = NULL) {
-  
+
+  # Bug fix: Ensure inputs are factors with consistent levels
+  if (!is.factor(actual)) {
+    actual <- as.factor(actual)
+  }
+  if (!is.factor(predicted)) {
+    predicted <- factor(predicted, levels = levels(actual))
+  }
+
   # Confusion matrix
   conf_mat <- table(Predicted = predicted, Actual = actual)
-  
+
   # Basic metrics
   accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
-  
-  # Per-class metrics
-  n_classes <- nlevels(actual)
+
+  # Per-class metrics - use length of levels instead of nlevels for robustness
+  n_classes <- length(levels(actual))
+  if (n_classes == 0) n_classes <- length(unique(actual))
+
   precision_vec <- numeric(n_classes)
   recall_vec <- numeric(n_classes)
   f1_vec <- numeric(n_classes)
-  
+
   for (i in 1:n_classes) {
     tp <- conf_mat[i, i]
     fp <- sum(conf_mat[i, ]) - tp
@@ -2282,7 +2305,16 @@ evaluate_combo <- function(data,
   
   # Step 4: Evaluate with cross-validation or OOB
   class_vector <- as.factor(normalized_data[[class_col]])
-  
+
+  # Bug fix: Remove NA values from class vector and corresponding features
+  na_idx <- is.na(class_vector)
+  if (any(na_idx)) {
+    class_vector <- class_vector[!na_idx]
+    feature_data <- feature_data[!na_idx, , drop = FALSE]
+    # Drop unused factor levels after removing NAs
+    class_vector <- droplevels(class_vector)
+  }
+
   # Determine if we can use full CV or need OOB
   min_class_size <- min(table(class_vector))
   use_oob <- algo_method == "ranger" && min_class_size < cv_folds
@@ -2759,8 +2791,13 @@ two_stage_optimization <- function(data, class_col, top_k = 5) {
 #' IMPLEMENTATION: Multi-metric scoring function
 
 calculate_all_classification_metrics <- function(predicted, actual, probabilities = NULL) {
+  # Bug fix: Ensure inputs are factors
+  if (!is.factor(actual)) actual <- as.factor(actual)
+  if (!is.factor(predicted)) predicted <- factor(predicted, levels = levels(actual))
+
   conf_mat <- table(Predicted = predicted, Actual = actual)
-  n_classes <- nlevels(actual)
+  n_classes <- length(levels(actual))
+  if (n_classes == 0) n_classes <- length(unique(actual))
   n_samples <- length(actual)
   
   # Basic accuracy
