@@ -80,6 +80,11 @@
 
 # Required packages
 required_packages <- c(
+  "tidyverse", "caret", "ranger", "e1071", "MASS", "class", "xgboost",
+  "missForest", "VIM", "mice", "doParallel", "foreach", "mltools",
+  "data.table", "yardstick", "pROC"
+)
+required_packages <- c(
   "tidyverse", "caret", "e1071", "MASS", "nortest", "MVN", "heplots",
   "corrplot", "psych", "vegan", "randomForest", "xgboost", "ranger",
   "class", "FactoMineR", "factoextra", "car", "moments"
@@ -1808,18 +1813,14 @@ get_algorithm_method <- function(algorithm_name) {
 }
 
 
-#' ============================================================================
-#' COMPREHENSIVE ANALYSIS: ML MODEL SELECTION & EVALUATION METRICS
-#' FOR MULTI-CLASS CLASSIFICATION OF PLASTIC PRODUCTS
-#' ============================================================================
+#' =======================================================================================================================
+#' COMPREHENSIVE ANALYSIS: Integreate ML MODEL SELECTION into pipeline for finding best Imputation and normalization combo
+#' =======================================================================================================================
 #' 
-#' This document addresses the key questions regarding:
+#' This section addresses the key questions regarding:
 #' 1. Integration of diagnostic tests into imputation/normalization workflow
 #' 2. Alternative evaluation metrics beyond OOB MCC
 #' 3. Best practices for multi-class classification with missing/skewed data
-#' 
-#' Author: Based on Microplastic-Fingerprinting workflow analysis
-#' Date: January 2026
 #' ============================================================================
 
 # ============================================================================
@@ -1871,16 +1872,6 @@ get_algorithm_method <- function(algorithm_name) {
 #' Author: Based on Microplastic-Fingerprinting workflow
 #' Date: January 2026
 #' ============================================================================
-
-# Source the ML diagnostic tests function
-# source("select_ML_diag_tests.R")
-
-# Required packages
-required_packages <- c(
-  "tidyverse", "caret", "ranger", "e1071", "MASS", "class", "xgboost",
-  "missForest", "VIM", "mice", "doParallel", "foreach", "mltools",
-  "data.table", "yardstick", "pROC"
-)
 
 for (pkg in required_packages) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
@@ -2724,62 +2715,8 @@ two_stage_optimization <- function(data, class_col, top_k = 5) {
 }
 
 
-#' Issue 2: Overfitting to Evaluation Metric
-#' -----------------------------------------
-#' Choosing both transformation AND algorithm to maximize a single metric
-#' can lead to over-optimistic estimates.
-#' 
-#' Solution:
-#' - Use nested cross-validation or held-out test set
-#' - Consider multiple metrics simultaneously
-
-nested_cv_evaluation <- function(data, class_col, 
-                                  outer_folds = 5, 
-                                  inner_folds = 3) {
-  
-  library(caret)
-  
-  set.seed(123)
-  outer_indices <- createFolds(data[[class_col]], k = outer_folds, 
-                               returnTrain = TRUE)
-  
-  outer_results <- list()
-  
-  for (i in 1:outer_folds) {
-    cat(sprintf("\nOuter fold %d/%d\n", i, outer_folds))
-    
-    train_data <- data[outer_indices[[i]], ]
-    test_data <- data[-outer_indices[[i]], ]
-    
-    # Inner loop: find best combo using training data only
-    best_combo <- find_best_impute_normalize(
-      data = train_data,
-      class_col = class_col,
-      cv_folds = inner_folds,
-      verbose = FALSE
-    )$best_combination
-    
-    # Apply best combo to both train and test
-    train_transformed <- apply_best_combo(train_data, class_col, best_combo)
-    test_transformed <- apply_best_combo(test_data, class_col, best_combo)
-    
-    # Train final model on transformed training data
-    # Evaluate on transformed test data
-    # ... (model training code)
-    
-    outer_results[[i]] <- list(
-      fold = i,
-      best_combo = best_combo
-      # metrics = test_metrics
-    )
-  }
-  
-  return(outer_results)
-}
-
-
 # ============================================================================
-# SECTION 2: ALTERNATIVE EVALUATION METRICS
+# ALTERNATIVE EVALUATION METRICS for OOB MCC
 # ============================================================================
 
 #' Beyond OOB MCC: Alternative Metrics for Imputation/Normalization Selection
@@ -3120,7 +3057,7 @@ calculate_composite_score <- function(
 #' RECOMMENDED COMPLETE WORKFLOW
 #' =============================
 
-recommended_workflow <- function(data, class_col) {
+recommended_imp_norm_workflow <- function(data, class_col) {
   
   # -------------------------------------------------------------------------
   # STAGE 1: Data Exploration & Quality Check
@@ -3293,23 +3230,3 @@ cat("\nExample usage:\n")
 cat("  results <- select_ML_diag_tests(my_data, class_col = 'Product_Type')\n")
 cat("  best <- find_best_impute_normalize(my_data, class_col = 'Product_Type')\n")
 
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-data <- hplc_combined_SB_ENV_shared_cols_ntr_clean %>% dplyr::select(-c(Subcategory, technique, Source, Polymer))
-target_col_name <- "Plastic_type" 
-
-# 0.000000001 imputation
-for (r in 1:nrow(data)) { 
-  data[r, which(base::is.na(data[r,]))] <- min(data %>% 
-                                                 dplyr::select(-Plastic_type), na.rm = TRUE)
-}
-
-# Percentage normalization
-data_percentage <- as.data.frame(t(apply(data[, 2:ncol(data)],
-                                         MARGIN = 1, 
-                                         function(row) {row/sum(row, na.rm = TRUE)}))) 
-
-data_percentage <- data_percentage %>%
-  mutate(Plastic_type = data$Plastic_type) %>%
-  relocate(Plastic_type, .before = 1)
-
-test <- select_ML_diag_tests(data_percentage, class_col = "Plastic_type")
