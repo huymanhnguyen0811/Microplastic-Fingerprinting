@@ -1808,16 +1808,1490 @@ get_algorithm_method <- function(algorithm_name) {
 }
 
 
-#' Quick test function
+#' ============================================================================
+#' COMPREHENSIVE ANALYSIS: ML MODEL SELECTION & EVALUATION METRICS
+#' FOR MULTI-CLASS CLASSIFICATION OF PLASTIC PRODUCTS
+#' ============================================================================
+#' 
+#' This document addresses the key questions regarding:
+#' 1. Integration of diagnostic tests into imputation/normalization workflow
+#' 2. Alternative evaluation metrics beyond OOB MCC
+#' 3. Best practices for multi-class classification with missing/skewed data
+#' 
+#' Author: Based on Microplastic-Fingerprinting workflow analysis
+#' Date: January 2026
+#' ============================================================================
+
+# ============================================================================
+# SECTION 1: ANALYSIS OF YOUR PROPOSED SOLUTION
+# ============================================================================
+
+#' Your Proposed Solution:
+#' -----------------------
+#' Integrate select_ML_diag_tests() into find_best_impute_normalize() to 
+#' recommend the best ML algorithm for each imputation/normalization combo.
+#' 
+#' VERDICT: This is a GOOD solution, but with some important considerations.
+#' 
+#' STRENGTHS:
+#' ----------
+#' 1. Adaptive Algorithm Selection: Different transformations DO change data 
+#'    characteristics, making some ML algorithms more suitable than others.
+#'    
+#' 2. Data-Driven Decisions: Running diagnostics AFTER transformation captures
+#'    the actual data structure that the ML model will see.
+#'    
+#' 3. Handles Edge Cases: Log transforms can linearize relationships, making
+#'    LDA more appropriate; Z-score normalization satisfies some parametric
+#'    assumptions, etc.
+#' 
+#' POTENTIAL ISSUES & SOLUTIONS:
+#' -----------------------------
+#' 
+#' Issue 1: Computational Cost
+#' ---------------------------
+#' Running full diagnostic tests for each of the N×M combinations 
+#' (imputation × normalization) is expensive.
+#' 
+#' Solution: 
+#' - Use a "two-stage" approach: 
+#'   Stage 1: Quick filter using a consistent algorithm (e.g., Random Forest OOB)
+#'   Stage 2: Full diagnostics only on top K candidates
+#'   
+#' Code example:
+
+#' ============================================================================
+#' ENHANCED IMPUTATION & NORMALIZATION SELECTION WITH ADAPTIVE ML EVALUATION
+#' ============================================================================
+#' 
+#' This function evaluates different combinations of data imputation and 
+#' normalization techniques, using adaptive ML algorithm selection based on
+#' diagnostic tests for each transformed data configuration.
+#' 
+#' Author: Based on Microplastic-Fingerprinting workflow
+#' Date: January 2026
+#' ============================================================================
+
+# Source the ML diagnostic tests function
+# source("select_ML_diag_tests.R")
+
+# Required packages
+required_packages <- c(
+  "tidyverse", "caret", "ranger", "e1071", "MASS", "class", "xgboost",
+  "missForest", "VIM", "mice", "doParallel", "foreach", "mltools",
+  "data.table", "yardstick", "pROC"
+)
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    install.packages(pkg, dependencies = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+#' ============================================================================
+#' IMPUTATION METHODS
+#' ============================================================================
+
+#' Apply imputation method to data
+#' 
+#' @param data Data frame with missing values
+#' @param method Imputation method: "zero", "min", "mean", "median", "knn", 
+#'               "missforest", "mice", "lod" (limit of detection)
+#' @param class_col Name of class column to exclude from imputation
+#' @param lod_factor Factor for LOD imputation (default 0.5)
+
+apply_imputation <- function(data, method, class_col, lod_factor = 0.5) {
+  
+  # Separate class and features
+  class_data <- data[[class_col]]
+  feature_data <- data %>% dplyr::select(-all_of(class_col))
+  
+  imputed_features <- switch(method,
+                             "zero" = {
+                               feature_data %>% mutate(across(everything(), ~replace_na(., 0)))
+                             },
+                             
+                             "min" = {
+                               # Replace with column minimum
+                               feature_data %>% 
+                                 mutate(across(everything(), ~replace_na(., min(., na.rm = TRUE))))
+                             },
+                             
+                             "half_min" = {
+                               # Replace with half of column minimum (common for LOD)
+                               feature_data %>% 
+                                 mutate(across(everything(), ~replace_na(., min(., na.rm = TRUE) / 2)))
+                             },
+                             
+                             "mean" = {
+                               feature_data %>% 
+                                 mutate(across(everything(), ~replace_na(., mean(., na.rm = TRUE))))
+                             },
+                             
+                             "median" = {
+                               feature_data %>% 
+                                 mutate(across(everything(), ~replace_na(., median(., na.rm = TRUE))))
+                             },
+                             
+                             "knn" = {
+                               # k-NN imputation using VIM
+                               imputed <- VIM::kNN(feature_data, k = 5, imp_var = FALSE)
+                               imputed
+                             },
+                             
+                             "missforest" = {
+                               # Random Forest imputation
+                               set.seed(123)
+                               imputed <- missForest::missForest(as.data.frame(feature_data), 
+                                                                 maxiter = 10, ntree = 100, 
+                                                                 verbose = FALSE)$ximp
+                               imputed
+                             },
+                             
+                             "mice_pmm" = {
+                               # Multiple imputation by chained equations (predictive mean matching)
+                               set.seed(123)
+                               imputed <- mice::mice(feature_data, method = "pmm", m = 1, 
+                                                     maxit = 5, printFlag = FALSE)
+                               mice::complete(imputed, 1)
+                             },
+                             
+                             "lod" = {
+                               # Limit of detection: replace with factor * minimum positive value
+                               feature_data %>% 
+                                 mutate(across(everything(), ~{
+                                   min_pos <- min(.[. > 0], na.rm = TRUE)
+                                   replace_na(., min_pos * lod_factor)
+                                 }))
+                             },
+                             
+                             # Default: no imputation (may fail downstream)
+                             {
+                               warning(paste("Unknown imputation method:", method))
+                               feature_data
+                             }
+  )
+  
+  # Recombine with class column
+  result <- bind_cols(imputed_features, tibble(!!class_col := class_data))
+  return(result)
+}
+
+
+#' ============================================================================
+#' NORMALIZATION METHODS
+#' ============================================================================
+
+#' Apply normalization method to data
+#' 
+#' @param data Data frame (already imputed)
+#' @param method Normalization method: "none", "log", "log2", "log10", 
+#'               "sqrt", "minmax", "zscore", "robust", "pareto", "quantile"
+#' @param class_col Name of class column to exclude from normalization
+
+apply_normalization <- function(data, method, class_col) {
+  
+  # Separate class and features
+  class_data <- data[[class_col]]
+  feature_data <- data %>% dplyr::select(-all_of(class_col))
+  
+  normalized_features <- switch(method,
+                                "none" = {
+                                  feature_data
+                                },
+                                
+                                "log" = {
+                                  # Natural log (add small constant to avoid log(0))
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~log(. + 1)))
+                                },
+                                
+                                "log2" = {
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~log2(. + 1)))
+                                },
+                                
+                                "log10" = {
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~log10(. + 1)))
+                                },
+                                
+                                "sqrt" = {
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~sqrt(abs(.))))
+                                },
+                                
+                                "minmax" = {
+                                  # Min-max scaling to [0, 1]
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      rng <- range(., na.rm = TRUE)
+                                      if (rng[2] - rng[1] == 0) . else (. - rng[1]) / (rng[2] - rng[1])
+                                    }))
+                                },
+                                
+                                "zscore" = {
+                                  # Z-score standardization
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      s <- sd(., na.rm = TRUE)
+                                      if (s == 0) . else (. - mean(., na.rm = TRUE)) / s
+                                    }))
+                                },
+                                
+                                "robust" = {
+                                  # Robust scaling using median and IQR
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      med <- median(., na.rm = TRUE)
+                                      iqr <- IQR(., na.rm = TRUE)
+                                      if (iqr == 0) . - med else (. - med) / iqr
+                                    }))
+                                },
+                                
+                                "pareto" = {
+                                  # Pareto scaling: center, divide by sqrt(sd)
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      s <- sd(., na.rm = TRUE)
+                                      if (s == 0) . - mean(., na.rm = TRUE) 
+                                      else (. - mean(., na.rm = TRUE)) / sqrt(s)
+                                    }))
+                                },
+                                
+                                "quantile" = {
+                                  # Quantile normalization (rank-based)
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      ranks <- rank(., na.last = "keep", ties.method = "average")
+                                      qnorm((ranks - 0.5) / sum(!is.na(.)))
+                                    }))
+                                },
+                                
+                                "box_cox" = {
+                                  # Box-Cox transformation (requires positive values)
+                                  feature_data %>% 
+                                    mutate(across(everything(), ~{
+                                      x_pos <- . + abs(min(., na.rm = TRUE)) + 1
+                                      bc <- MASS::boxcox(lm(x_pos ~ 1), plotit = FALSE)
+                                      lambda <- bc$x[which.max(bc$y)]
+                                      if (abs(lambda) < 0.01) log(x_pos) else (x_pos^lambda - 1) / lambda
+                                    }))
+                                },
+                                
+                                # Default: no normalization
+                                {
+                                  warning(paste("Unknown normalization method:", method))
+                                  feature_data
+                                }
+  )
+  
+  # Recombine with class column
+  result <- bind_cols(normalized_features, tibble(!!class_col := class_data))
+  return(result)
+}
+
+
+#' ============================================================================
+#' EVALUATION METRICS FOR MULTI-CLASS CLASSIFICATION
+#' ============================================================================
+
+#' Calculate Matthews Correlation Coefficient for multi-class
+#' 
+#' @param conf_matrix Confusion matrix
+
+multiclass_mcc <- function(conf_matrix) {
+  # Use mltools implementation or manual calculation
+  if (requireNamespace("mltools", quietly = TRUE)) {
+    return(mltools::mcc(confusionM = conf_matrix))
+  }
+  
+  # Manual calculation for multi-class MCC
+  n <- sum(conf_matrix)
+  correct <- sum(diag(conf_matrix))
+  
+  row_sums <- rowSums(conf_matrix)
+  col_sums <- colSums(conf_matrix)
+  
+  numerator <- n * correct - sum(row_sums * col_sums)
+  denominator <- sqrt(
+    (n^2 - sum(row_sums^2)) * (n^2 - sum(col_sums^2))
+  )
+  
+  if (denominator == 0) return(0)
+  return(numerator / denominator)
+}
+
+
+#' Calculate comprehensive evaluation metrics
+#' 
+#' @param predicted Predicted class labels
+#' @param actual Actual class labels
+#' @param probabilities Optional: class probabilities for AUC calculation
+
+calculate_metrics <- function(predicted, actual, probabilities = NULL) {
+  
+  # Confusion matrix
+  conf_mat <- table(Predicted = predicted, Actual = actual)
+  
+  # Basic metrics
+  accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
+  
+  # Per-class metrics
+  n_classes <- nlevels(actual)
+  precision_vec <- numeric(n_classes)
+  recall_vec <- numeric(n_classes)
+  f1_vec <- numeric(n_classes)
+  
+  for (i in 1:n_classes) {
+    tp <- conf_mat[i, i]
+    fp <- sum(conf_mat[i, ]) - tp
+    fn <- sum(conf_mat[, i]) - tp
+    
+    precision_vec[i] <- ifelse(tp + fp == 0, 0, tp / (tp + fp))
+    recall_vec[i] <- ifelse(tp + fn == 0, 0, tp / (tp + fn))
+    f1_vec[i] <- ifelse(precision_vec[i] + recall_vec[i] == 0, 0,
+                        2 * precision_vec[i] * recall_vec[i] / 
+                          (precision_vec[i] + recall_vec[i]))
+  }
+  
+  # Macro-averaged metrics
+  macro_precision <- mean(precision_vec)
+  macro_recall <- mean(recall_vec)
+  macro_f1 <- mean(f1_vec)
+  
+  # Weighted F1
+  class_weights <- table(actual) / length(actual)
+  weighted_f1 <- sum(f1_vec * class_weights)
+  
+  # Cohen's Kappa
+  p_observed <- accuracy
+  p_expected <- sum((rowSums(conf_mat) / sum(conf_mat)) * 
+                      (colSums(conf_mat) / sum(conf_mat)))
+  kappa <- (p_observed - p_expected) / (1 - p_expected)
+  
+  # MCC
+  mcc <- multiclass_mcc(conf_mat)
+  
+  # AUC (if probabilities provided)
+  auc <- NA
+  if (!is.null(probabilities) && ncol(probabilities) > 1) {
+    auc <- tryCatch({
+      pROC::multiclass.roc(actual, probabilities)$auc[1]
+    }, error = function(e) NA)
+  }
+  
+  return(list(
+    accuracy = accuracy,
+    macro_precision = macro_precision,
+    macro_recall = macro_recall,
+    macro_f1 = macro_f1,
+    weighted_f1 = weighted_f1,
+    kappa = kappa,
+    mcc = mcc,
+    auc = auc,
+    confusion_matrix = conf_mat
+  ))
+}
+
+
+#' ============================================================================
+#' EVALUATE SINGLE COMBINATION WITH ADAPTIVE ML
+#' ============================================================================
+
+#' Evaluate a single imputation-normalization combination
+#' 
+#' @param data Original data with missing values
+#' @param class_col Class column name
+#' @param impute_method Imputation method
+#' @param norm_method Normalization method
+#' @param ml_diagnostics Pre-computed ML diagnostics (optional)
+#' @param use_adaptive_ml Whether to use adaptive ML selection
+#' @param cv_folds Number of CV folds
+#' @param verbose Print progress
+
+evaluate_combo <- function(data, 
+                           class_col,
+                           impute_method, 
+                           norm_method,
+                           ml_diagnostics = NULL,
+                           use_adaptive_ml = TRUE,
+                           cv_folds = 5,
+                           verbose = FALSE) {
+  
+  set.seed(123)
+  
+  # Step 1: Apply imputation
+  imputed_data <- tryCatch({
+    apply_imputation(data, impute_method, class_col)
+  }, error = function(e) {
+    if (verbose) cat("  Imputation error:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (is.null(imputed_data)) {
+    return(list(
+      impute_method = impute_method,
+      norm_method = norm_method,
+      success = FALSE,
+      error = "Imputation failed"
+    ))
+  }
+  
+  # Step 2: Apply normalization
+  normalized_data <- tryCatch({
+    apply_normalization(imputed_data, norm_method, class_col)
+  }, error = function(e) {
+    if (verbose) cat("  Normalization error:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (is.null(normalized_data)) {
+    return(list(
+      impute_method = impute_method,
+      norm_method = norm_method,
+      success = FALSE,
+      error = "Normalization failed"
+    ))
+  }
+  
+  # Check for any remaining issues
+  feature_data <- normalized_data %>% dplyr::select(-all_of(class_col))
+  if (any(is.na(feature_data)) || any(is.infinite(as.matrix(feature_data)))) {
+    return(list(
+      impute_method = impute_method,
+      norm_method = norm_method,
+      success = FALSE,
+      error = "Invalid values after transformation"
+    ))
+  }
+  
+  # Step 3: Run ML diagnostics on transformed data (if adaptive)
+  if (use_adaptive_ml) {
+    diag_results <- tryCatch({
+      select_ML_diag_tests(normalized_data, class_col, verbose = FALSE)
+    }, error = function(e) {
+      if (verbose) cat("  Diagnostic error:", e$message, "\n")
+      NULL
+    })
+    
+    recommended_algo <- if (!is.null(diag_results)) {
+      diag_results$recommended_algorithm
+    } else {
+      "Random Forest"  # Default fallback
+    }
+    
+    algo_method <- get_algorithm_method(recommended_algo)
+  } else {
+    recommended_algo <- "Random Forest"
+    algo_method <- "ranger"
+    diag_results <- NULL
+  }
+  
+  # Step 4: Evaluate with cross-validation or OOB
+  class_vector <- as.factor(normalized_data[[class_col]])
+  
+  # Determine if we can use full CV or need OOB
+  min_class_size <- min(table(class_vector))
+  use_oob <- algo_method == "ranger" && min_class_size < cv_folds
+  
+  if (use_oob && algo_method == "ranger") {
+    # Use OOB for Random Forest
+    rf_model <- tryCatch({
+      ranger::ranger(
+        x = feature_data,
+        y = class_vector,
+        num.trees = 500,
+        mtry = floor(sqrt(ncol(feature_data))),
+        importance = "impurity",
+        oob.error = TRUE,
+        probability = TRUE
+      )
+    }, error = function(e) NULL)
+    
+    if (is.null(rf_model)) {
+      return(list(
+        impute_method = impute_method,
+        norm_method = norm_method,
+        success = FALSE,
+        error = "Model training failed"
+      ))
+    }
+    
+    # Get OOB predictions
+    oob_predictions <- rf_model$predictions
+    oob_class <- factor(
+      levels(class_vector)[max.col(oob_predictions)],
+      levels = levels(class_vector)
+    )
+    
+    metrics <- calculate_metrics(oob_class, class_vector, oob_predictions)
+    eval_method <- "OOB"
+    
+  } else {
+    # Use cross-validation
+    cv_folds_actual <- min(cv_folds, min_class_size)
+    
+    train_control <- caret::trainControl(
+      method = "cv",
+      number = cv_folds_actual,
+      classProbs = TRUE,
+      savePredictions = "final",
+      verboseIter = FALSE
+    )
+    
+    model <- tryCatch({
+      caret::train(
+        x = feature_data,
+        y = class_vector,
+        method = algo_method,
+        trControl = train_control,
+        tuneLength = 3
+      )
+    }, error = function(e) {
+      # Fallback to Random Forest
+      if (algo_method != "ranger") {
+        caret::train(
+          x = feature_data,
+          y = class_vector,
+          method = "ranger",
+          trControl = train_control,
+          tuneLength = 3
+        )
+      } else NULL
+    })
+    
+    if (is.null(model)) {
+      return(list(
+        impute_method = impute_method,
+        norm_method = norm_method,
+        success = FALSE,
+        error = "Model training failed"
+      ))
+    }
+    
+    # Extract CV predictions
+    cv_preds <- model$pred
+    cv_preds_ordered <- cv_preds[order(cv_preds$rowIndex), ]
+    
+    predicted <- cv_preds_ordered$pred
+    actual <- cv_preds_ordered$obs
+    
+    # Get probability columns
+    prob_cols <- setdiff(names(cv_preds_ordered), 
+                         c("pred", "obs", "rowIndex", names(model$bestTune)))
+    probabilities <- as.matrix(cv_preds_ordered[, prob_cols])
+    
+    metrics <- calculate_metrics(predicted, actual, probabilities)
+    eval_method <- paste0(cv_folds_actual, "-fold CV")
+  }
+  
+  # Step 5: Calculate additional quality metrics for the transformation
+  
+  # Cluster resolution (silhouette score)
+  cluster_quality <- tryCatch({
+    dist_mat <- dist(feature_data)
+    sil <- cluster::silhouette(as.numeric(class_vector), dist_mat)
+    mean(sil[, "sil_width"])
+  }, error = function(e) NA)
+  
+  # Correlation with original data structure
+  original_features <- data %>% dplyr::select(-all_of(class_col))
+  correlation_preserved <- tryCatch({
+    # Compare correlation structures
+    orig_cor <- cor(original_features, use = "pairwise.complete.obs")
+    new_cor <- cor(feature_data)
+    mean(abs(orig_cor - new_cor), na.rm = TRUE)
+  }, error = function(e) NA)
+  
+  # Distributional normality (post-transformation)
+  normality_improvement <- tryCatch({
+    sw_pvals <- sapply(feature_data, function(x) {
+      if (length(unique(x)) > 2 && length(x) <= 5000) {
+        shapiro.test(x)$p.value
+      } else NA
+    })
+    mean(sw_pvals > 0.05, na.rm = TRUE)
+  }, error = function(e) NA)
+  
+  return(list(
+    impute_method = impute_method,
+    norm_method = norm_method,
+    success = TRUE,
+    recommended_algorithm = recommended_algo,
+    algorithm_used = algo_method,
+    evaluation_method = eval_method,
+    
+    # Classification metrics
+    accuracy = metrics$accuracy,
+    mcc = metrics$mcc,
+    kappa = metrics$kappa,
+    macro_f1 = metrics$macro_f1,
+    weighted_f1 = metrics$weighted_f1,
+    auc = metrics$auc,
+    
+    # Data quality metrics
+    cluster_quality = cluster_quality,
+    correlation_change = correlation_preserved,
+    normality_pct = normality_improvement,
+    
+    # Diagnostics
+    ml_diagnostics = diag_results,
+    confusion_matrix = metrics$confusion_matrix
+  ))
+}
+
+
+#' ============================================================================
+#' MAIN FUNCTION: FIND BEST IMPUTATION & NORMALIZATION
+#' ============================================================================
+
+#' Find the best imputation and normalization combination
+#' 
+#' @param data Data frame with features and class column
+#' @param class_col Name of the class column
+#' @param imputation_methods Vector of imputation methods to test
+#' @param normalization_methods Vector of normalization methods to test
+#' @param use_adaptive_ml Use adaptive ML algorithm selection (TRUE/FALSE)
+#' @param cv_folds Number of cross-validation folds
+#' @param parallel Use parallel processing
+#' @param n_cores Number of cores for parallel processing
+#' @param ranking_metric Primary metric for ranking ("mcc", "accuracy", "macro_f1", etc.)
+#' @param verbose Print detailed progress
+#' 
+#' @return List containing best combination and all results
 #' 
 #' @examples
-#' # Test with iris data
-#' # test_results <- test_select_ML_diag_tests()
+#' # results <- find_best_impute_normalize(
+#' #   data = my_data,
+#' #   class_col = "Product_Type",
+#' #   imputation_methods = c("median", "knn", "missforest"),
+#' #   normalization_methods = c("none", "log", "zscore"),
+#' #   use_adaptive_ml = TRUE
+#' # )
 
-test_select_ML_diag_tests <- function(data, class_col) {
-  results <- select_ML_diag_tests(data, class_col, verbose = TRUE)
-  return(results)
+find_best_impute_normalize <- function(
+    data,
+    class_col,
+    imputation_methods = c("zero", "half_min", "mean", "median", "knn", "missforest"),
+    normalization_methods = c("none", "log", "log10", "sqrt", "minmax", "zscore", "robust", "pareto"),
+    use_adaptive_ml = TRUE,
+    cv_folds = 5,
+    parallel = FALSE,
+    n_cores = NULL,
+    ranking_metric = "mcc",
+    verbose = TRUE
+) {
+  
+  # ============================================================================
+  # SETUP
+  # ============================================================================
+  
+  if (verbose) {
+    cat("\n", strrep("=", 70), "\n")
+    cat("IMPUTATION & NORMALIZATION OPTIMIZATION\n")
+    cat(strrep("=", 70), "\n\n")
+    
+    cat("Configuration:\n")
+    cat(sprintf("  - Imputation methods: %s\n", paste(imputation_methods, collapse = ", ")))
+    cat(sprintf("  - Normalization methods: %s\n", paste(normalization_methods, collapse = ", ")))
+    cat(sprintf("  - Adaptive ML: %s\n", use_adaptive_ml))
+    cat(sprintf("  - Ranking metric: %s\n", ranking_metric))
+    cat(sprintf("  - Total combinations: %d\n", 
+                length(imputation_methods) * length(normalization_methods)))
+    cat("\n")
+  }
+  
+  # Create all combinations
+  combinations <- expand.grid(
+    impute = imputation_methods,
+    norm = normalization_methods,
+    stringsAsFactors = FALSE
+  )
+  
+  # ============================================================================
+  # EVALUATE ALL COMBINATIONS
+  # ============================================================================
+  
+  if (parallel && requireNamespace("doParallel", quietly = TRUE)) {
+    if (is.null(n_cores)) n_cores <- parallel::detectCores() - 1
+    cl <- parallel::makeCluster(n_cores)
+    doParallel::registerDoParallel(cl)
+    
+    results_list <- foreach::foreach(
+      i = 1:nrow(combinations),
+      .packages = c("tidyverse", "caret", "ranger", "missForest", "VIM"),
+      .export = c("apply_imputation", "apply_normalization", "evaluate_combo",
+                  "select_ML_diag_tests", "get_algorithm_method", "calculate_metrics")
+    ) %dopar% {
+      evaluate_combo(
+        data = data,
+        class_col = class_col,
+        impute_method = combinations$impute[i],
+        norm_method = combinations$norm[i],
+        use_adaptive_ml = use_adaptive_ml,
+        cv_folds = cv_folds,
+        verbose = FALSE
+      )
+    }
+    
+    parallel::stopCluster(cl)
+    
+  } else {
+    results_list <- list()
+    
+    for (i in 1:nrow(combinations)) {
+      if (verbose) {
+        cat(sprintf("  [%d/%d] Testing %s + %s... ", 
+                    i, nrow(combinations),
+                    combinations$impute[i], 
+                    combinations$norm[i]))
+      }
+      
+      result <- evaluate_combo(
+        data = data,
+        class_col = class_col,
+        impute_method = combinations$impute[i],
+        norm_method = combinations$norm[i],
+        use_adaptive_ml = use_adaptive_ml,
+        cv_folds = cv_folds,
+        verbose = FALSE
+      )
+      
+      results_list[[i]] <- result
+      
+      if (verbose) {
+        if (result$success) {
+          cat(sprintf("Done. %s=%.3f (Algo: %s)\n", 
+                      ranking_metric, 
+                      result[[ranking_metric]],
+                      result$recommended_algorithm))
+        } else {
+          cat(sprintf("Failed: %s\n", result$error))
+        }
+      }
+    }
+  }
+  
+  # ============================================================================
+  # COMPILE RESULTS
+  # ============================================================================
+  
+  # Filter successful results
+  successful_results <- results_list[sapply(results_list, function(x) x$success)]
+  
+  if (length(successful_results) == 0) {
+    warning("No successful combinations found!")
+    return(list(
+      success = FALSE,
+      error = "All combinations failed"
+    ))
+  }
+  
+  # Create summary data frame
+  summary_df <- data.frame(
+    imputation = sapply(successful_results, function(x) x$impute_method),
+    normalization = sapply(successful_results, function(x) x$norm_method),
+    algorithm = sapply(successful_results, function(x) x$recommended_algorithm),
+    eval_method = sapply(successful_results, function(x) x$evaluation_method),
+    accuracy = sapply(successful_results, function(x) x$accuracy),
+    mcc = sapply(successful_results, function(x) x$mcc),
+    kappa = sapply(successful_results, function(x) x$kappa),
+    macro_f1 = sapply(successful_results, function(x) x$macro_f1),
+    weighted_f1 = sapply(successful_results, function(x) x$weighted_f1),
+    auc = sapply(successful_results, function(x) ifelse(is.na(x$auc), NA, x$auc)),
+    cluster_quality = sapply(successful_results, function(x) x$cluster_quality),
+    correlation_change = sapply(successful_results, function(x) x$correlation_change),
+    normality_pct = sapply(successful_results, function(x) x$normality_pct),
+    stringsAsFactors = FALSE
+  )
+  
+  # Rank by primary metric
+  summary_df <- summary_df %>%
+    arrange(desc(!!sym(ranking_metric)))
+  
+  # Get best combination
+  best_idx <- 1
+  best_result <- successful_results[[which(
+    sapply(successful_results, function(x) x$impute_method) == summary_df$imputation[1] &
+      sapply(successful_results, function(x) x$norm_method) == summary_df$normalization[1]
+  )[1]]]
+  
+  # ============================================================================
+  # OUTPUT
+  # ============================================================================
+  
+  if (verbose) {
+    cat("\n", strrep("=", 70), "\n")
+    cat("RESULTS SUMMARY\n")
+    cat(strrep("=", 70), "\n\n")
+    
+    cat("Top 5 Combinations (by", ranking_metric, "):\n")
+    print(head(summary_df %>% 
+                 dplyr::select(imputation, normalization, algorithm, 
+                               accuracy, mcc, macro_f1, auc), 5))
+    
+    cat("\n", strrep("=", 70), "\n")
+    cat("BEST COMBINATION:\n")
+    cat(strrep("=", 70), "\n")
+    cat(sprintf("  Imputation: %s\n", best_result$impute_method))
+    cat(sprintf("  Normalization: %s\n", best_result$norm_method))
+    cat(sprintf("  Recommended Algorithm: %s\n", best_result$recommended_algorithm))
+    cat(sprintf("  Evaluation Method: %s\n", best_result$evaluation_method))
+    cat("\n")
+    cat("  Performance Metrics:\n")
+    cat(sprintf("    - Accuracy: %.4f\n", best_result$accuracy))
+    cat(sprintf("    - MCC: %.4f\n", best_result$mcc))
+    cat(sprintf("    - Kappa: %.4f\n", best_result$kappa))
+    cat(sprintf("    - Macro F1: %.4f\n", best_result$macro_f1))
+    if (!is.na(best_result$auc)) {
+      cat(sprintf("    - AUC: %.4f\n", best_result$auc))
+    }
+    cat(strrep("=", 70), "\n")
+  }
+  
+  return(list(
+    success = TRUE,
+    best_combination = list(
+      imputation = best_result$impute_method,
+      normalization = best_result$norm_method,
+      algorithm = best_result$recommended_algorithm
+    ),
+    best_metrics = list(
+      accuracy = best_result$accuracy,
+      mcc = best_result$mcc,
+      kappa = best_result$kappa,
+      macro_f1 = best_result$macro_f1,
+      auc = best_result$auc
+    ),
+    best_result = best_result,
+    all_results = successful_results,
+    summary_table = summary_df,
+    failed_combinations = results_list[!sapply(results_list, function(x) x$success)]
+  ))
 }
+
+
+#' ============================================================================
+#' CONVENIENCE FUNCTIONS
+#' ============================================================================
+
+#' Apply the best combination to data
+#' 
+#' @param data Original data with missing values
+#' @param class_col Class column name
+#' @param best_combo Result from find_best_impute_normalize
+
+apply_best_combo <- function(data, class_col, best_combo) {
+  imputed <- apply_imputation(data, best_combo$imputation, class_col)
+  normalized <- apply_normalization(imputed, best_combo$normalization, class_col)
+  return(normalized)
+}
+
+two_stage_optimization <- function(data, class_col, top_k = 5) {
+  # Stage 1: Quick screen with Random Forest OOB
+  quick_results <- find_best_impute_normalize(
+    data = data,
+    class_col = class_col,
+    use_adaptive_ml = FALSE,  # Use RF for all
+    verbose = FALSE
+  )
+  
+  # Get top K combinations
+  top_combos <- head(quick_results$summary_table, top_k)
+  
+  # Stage 2: Full adaptive evaluation on top candidates
+  refined_results <- list()
+  for (i in 1:nrow(top_combos)) {
+    cat(sprintf("Refining combo %d/%d: %s + %s\n", 
+                i, nrow(top_combos),
+                top_combos$imputation[i], 
+                top_combos$normalization[i]))
+    
+    result <- evaluate_combo(
+      data = data,
+      class_col = class_col,
+      impute_method = top_combos$imputation[i],
+      norm_method = top_combos$normalization[i],
+      use_adaptive_ml = TRUE,
+      cv_folds = 10  # More thorough CV for final candidates
+    )
+    refined_results[[i]] <- result
+  }
+  
+  return(refined_results)
+}
+
+
+#' Issue 2: Overfitting to Evaluation Metric
+#' -----------------------------------------
+#' Choosing both transformation AND algorithm to maximize a single metric
+#' can lead to over-optimistic estimates.
+#' 
+#' Solution:
+#' - Use nested cross-validation or held-out test set
+#' - Consider multiple metrics simultaneously
+
+nested_cv_evaluation <- function(data, class_col, 
+                                  outer_folds = 5, 
+                                  inner_folds = 3) {
+  
+  library(caret)
+  
+  set.seed(123)
+  outer_indices <- createFolds(data[[class_col]], k = outer_folds, 
+                               returnTrain = TRUE)
+  
+  outer_results <- list()
+  
+  for (i in 1:outer_folds) {
+    cat(sprintf("\nOuter fold %d/%d\n", i, outer_folds))
+    
+    train_data <- data[outer_indices[[i]], ]
+    test_data <- data[-outer_indices[[i]], ]
+    
+    # Inner loop: find best combo using training data only
+    best_combo <- find_best_impute_normalize(
+      data = train_data,
+      class_col = class_col,
+      cv_folds = inner_folds,
+      verbose = FALSE
+    )$best_combination
+    
+    # Apply best combo to both train and test
+    train_transformed <- apply_best_combo(train_data, class_col, best_combo)
+    test_transformed <- apply_best_combo(test_data, class_col, best_combo)
+    
+    # Train final model on transformed training data
+    # Evaluate on transformed test data
+    # ... (model training code)
+    
+    outer_results[[i]] <- list(
+      fold = i,
+      best_combo = best_combo
+      # metrics = test_metrics
+    )
+  }
+  
+  return(outer_results)
+}
+
+
+# ============================================================================
+# SECTION 2: ALTERNATIVE EVALUATION METRICS
+# ============================================================================
+
+#' Beyond OOB MCC: Alternative Metrics for Imputation/Normalization Selection
+#' ==========================================================================
+#' 
+#' When selecting the best imputation/normalization combo, we need metrics that
+#' capture BOTH:
+#' A) Predictive performance (classification quality)
+#' B) Data quality preservation (statistical properties)
+#' 
+#' Here are the recommended metrics organized by category:
+
+#' ============================================================================
+#' A) CLASSIFICATION-BASED METRICS
+#' ============================================================================
+#' 
+#' 1. Matthews Correlation Coefficient (MCC) - YOUR CURRENT CHOICE
+#'    - Pros: Balanced measure, works well with imbalanced classes
+#'    - Cons: Can be undefined with certain confusion matrix configurations
+#'    - Range: [-1, 1], higher is better
+#' 
+#' 2. Cohen's Kappa
+#'    - Pros: Accounts for chance agreement
+#'    - Cons: Can be pessimistic with imbalanced classes
+#'    - Range: [-1, 1], >0.8 is excellent
+#' 
+#' 3. Balanced Accuracy (BA)
+#'    - Formula: Mean of per-class recalls
+#'    - Pros: Simple, intuitive, handles imbalance
+#'    - Range: [0, 1]
+#' 
+#' 4. Macro-averaged F1 Score
+#'    - Pros: Balances precision and recall across classes
+#'    - Cons: All classes weighted equally (may not reflect importance)
+#' 
+#' 5. Weighted F1 Score
+#'    - Pros: Accounts for class sizes
+#'    - Use when: Some classes are more important/frequent
+
+#' IMPLEMENTATION: Multi-metric scoring function
+
+calculate_all_classification_metrics <- function(predicted, actual, probabilities = NULL) {
+  conf_mat <- table(Predicted = predicted, Actual = actual)
+  n_classes <- nlevels(actual)
+  n_samples <- length(actual)
+  
+  # Basic accuracy
+  accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
+  
+  # Per-class metrics
+  tp <- diag(conf_mat)
+  fp <- rowSums(conf_mat) - tp
+  fn <- colSums(conf_mat) - tp
+  tn <- sum(conf_mat) - tp - fp - fn
+  
+  precision <- ifelse(tp + fp == 0, 0, tp / (tp + fp))
+  recall <- ifelse(tp + fn == 0, 0, tp / (tp + fn))
+  specificity <- ifelse(tn + fp == 0, 0, tn / (tn + fp))
+  f1 <- ifelse(precision + recall == 0, 0, 
+               2 * precision * recall / (precision + recall))
+  
+  # Balanced accuracy
+  balanced_accuracy <- mean(recall)
+  
+  # Macro/Weighted averages
+  class_sizes <- table(actual)
+  class_weights <- class_sizes / n_samples
+  
+  macro_precision <- mean(precision)
+  macro_recall <- mean(recall)
+  macro_f1 <- mean(f1)
+  
+  weighted_precision <- sum(precision * class_weights)
+  weighted_recall <- sum(recall * class_weights)
+  weighted_f1 <- sum(f1 * class_weights)
+  
+  # Cohen's Kappa
+  p_observed <- accuracy
+  p_expected <- sum((rowSums(conf_mat) / n_samples) * 
+                      (colSums(conf_mat) / n_samples))
+  kappa <- (p_observed - p_expected) / (1 - p_expected + 1e-10)
+  
+  # MCC (multiclass)
+  mcc <- multiclass_mcc(conf_mat)
+  
+  # G-mean (geometric mean of recalls)
+  g_mean <- exp(mean(log(recall + 1e-10)))
+  
+  return(list(
+    accuracy = accuracy,
+    balanced_accuracy = balanced_accuracy,
+    kappa = kappa,
+    mcc = mcc,
+    g_mean = g_mean,
+    macro_precision = macro_precision,
+    macro_recall = macro_recall,
+    macro_f1 = macro_f1,
+    weighted_precision = weighted_precision,
+    weighted_recall = weighted_recall,
+    weighted_f1 = weighted_f1,
+    per_class = data.frame(
+      class = levels(actual),
+      precision = precision,
+      recall = recall,
+      specificity = specificity,
+      f1 = f1
+    )
+  ))
+}
+
+
+#' ============================================================================
+#' B. DATA QUALITY / TRANSFORMATION METRICS
+#' ============================================================================
+#' 
+#' These metrics evaluate how well the transformation preserves or improves
+#' data quality, independent of a specific ML model.
+#' 
+#' 1. CLUSTER SEPARATION QUALITY
+#'    Silhouette Score: Measures how well samples cluster by class
+#'    Range: [-1, 1], higher is better
+
+calculate_cluster_quality <- function(transformed_data, class_labels) {
+  library(cluster)
+  
+  dist_matrix <- dist(transformed_data)
+  sil <- silhouette(as.numeric(as.factor(class_labels)), dist_matrix)
+  
+  return(list(
+    mean_silhouette = mean(sil[, "sil_width"]),
+    per_class_silhouette = tapply(sil[, "sil_width"], class_labels, mean)
+  ))
+}
+
+
+#' 2. DISCRIMINANT RATIO (Linear Separability)
+#'    Ratio of between-class to within-class variance
+
+calculate_discriminant_ratio <- function(transformed_data, class_labels) {
+  # Overall mean
+  grand_mean <- colMeans(transformed_data)
+  
+  # Between-class scatter
+  classes <- unique(class_labels)
+  n_total <- nrow(transformed_data)
+  
+  between_scatter <- 0
+  within_scatter <- 0
+  
+  for (cls in classes) {
+    class_data <- transformed_data[class_labels == cls, , drop = FALSE]
+    n_cls <- nrow(class_data)
+    class_mean <- colMeans(class_data)
+    
+    # Between-class
+    between_scatter <- between_scatter + 
+      n_cls * sum((class_mean - grand_mean)^2)
+    
+    # Within-class
+    within_scatter <- within_scatter + 
+      sum(apply(class_data, 1, function(x) sum((x - class_mean)^2)))
+  }
+  
+  ratio <- between_scatter / (within_scatter + 1e-10)
+  return(ratio)
+}
+
+
+#' 3. CORRELATION STRUCTURE PRESERVATION
+#'    How well does the transformation preserve original variable relationships?
+
+calculate_correlation_preservation <- function(original_data, transformed_data) {
+  # Handle missing values in original
+  original_cor <- cor(original_data, use = "pairwise.complete.obs")
+  transformed_cor <- cor(transformed_data)
+  
+  # Frobenius norm of difference
+  cor_change <- sqrt(sum((original_cor - transformed_cor)^2, na.rm = TRUE))
+  
+  # Correlation between original and transformed correlation matrices
+  cor_similarity <- cor(as.vector(original_cor), as.vector(transformed_cor), 
+                        use = "complete.obs")
+  
+  return(list(
+    frobenius_change = cor_change,
+    correlation_similarity = cor_similarity
+  ))
+}
+
+
+#' 4. NORMALITY IMPROVEMENT
+#'    Percentage of features that pass normality tests after transformation
+
+calculate_normality_improvement <- function(original_data, transformed_data, alpha = 0.05) {
+  
+  # Test normality for original (non-missing values)
+  original_normal <- sapply(original_data, function(x) {
+    x <- na.omit(x)
+    if (length(x) < 3 || length(unique(x)) < 3) return(NA)
+    if (length(x) > 5000) x <- sample(x, 5000)
+    tryCatch(shapiro.test(x)$p.value > alpha, error = function(e) NA)
+  })
+  
+  # Test normality for transformed
+  transformed_normal <- sapply(transformed_data, function(x) {
+    if (length(unique(x)) < 3) return(NA)
+    if (length(x) > 5000) x <- sample(x, 5000)
+    tryCatch(shapiro.test(x)$p.value > alpha, error = function(e) NA)
+  })
+  
+  pct_original <- mean(original_normal, na.rm = TRUE) * 100
+  pct_transformed <- mean(transformed_normal, na.rm = TRUE) * 100
+  
+  return(list(
+    original_pct_normal = pct_original,
+    transformed_pct_normal = pct_transformed,
+    improvement = pct_transformed - pct_original
+  ))
+}
+
+
+#' 5. SKEWNESS REDUCTION
+#'    How well does the transformation reduce skewness?
+
+calculate_skewness_reduction <- function(original_data, transformed_data) {
+  library(moments)
+  
+  original_skew <- sapply(original_data, function(x) skewness(x, na.rm = TRUE))
+  transformed_skew <- sapply(transformed_data, skewness)
+  
+  mean_abs_original <- mean(abs(original_skew), na.rm = TRUE)
+  mean_abs_transformed <- mean(abs(transformed_skew), na.rm = TRUE)
+  
+  return(list(
+    original_mean_abs_skew = mean_abs_original,
+    transformed_mean_abs_skew = mean_abs_transformed,
+    skew_reduction = mean_abs_original - mean_abs_transformed,
+    pct_reduction = (mean_abs_original - mean_abs_transformed) / mean_abs_original * 100
+  ))
+}
+
+
+#' 6. INFORMATION PRESERVATION (for imputation)
+#'    Kolmogorov-Smirnov test comparing distributions
+
+calculate_distribution_preservation <- function(original_data, imputed_data, class_col = NULL) {
+  
+  if (!is.null(class_col)) {
+    original_data <- original_data[, !names(original_data) %in% class_col]
+    imputed_data <- imputed_data[, !names(imputed_data) %in% class_col]
+  }
+  
+  ks_pvalues <- sapply(names(original_data), function(col) {
+    orig <- na.omit(original_data[[col]])
+    imp <- imputed_data[[col]]
+    
+    if (length(orig) < 2 || length(imp) < 2) return(NA)
+    
+    tryCatch(
+      ks.test(orig, imp)$p.value,
+      error = function(e) NA
+    )
+  })
+  
+  # Higher p-values = distributions more similar = better imputation
+  return(list(
+    ks_pvalues = ks_pvalues,
+    mean_ks_pvalue = mean(ks_pvalues, na.rm = TRUE),
+    pct_preserved = mean(ks_pvalues > 0.05, na.rm = TRUE) * 100
+  ))
+}
+
+
+#' ============================================================================
+#' C) COMPOSITE SCORE: COMBINING MULTIPLE METRICS
+#' ============================================================================
+
+#' For selecting the best imputation/normalization combo, I recommend using
+#' a composite score that balances multiple objectives:
+
+calculate_composite_score <- function(
+    classification_metrics,  # List with accuracy, mcc, macro_f1, etc.
+    data_quality_metrics,    # List with silhouette, discriminant_ratio, etc.
+    weights = list(
+      # Classification weights (sum to 0.6)
+      mcc = 0.25,
+      balanced_accuracy = 0.15,
+      macro_f1 = 0.20,
+      
+      # Data quality weights (sum to 0.4)
+      silhouette = 0.15,
+      discriminant_ratio = 0.10,
+      normality_improvement = 0.08,
+      skew_reduction = 0.07
+    )
+) {
+  
+  # Normalize metrics to [0, 1] range where needed
+  score <- 0
+  
+  # Classification metrics (already in good ranges)
+  score <- score + weights$mcc * (classification_metrics$mcc + 1) / 2  # MCC: [-1,1] -> [0,1]
+  score <- score + weights$balanced_accuracy * classification_metrics$balanced_accuracy
+  score <- score + weights$macro_f1 * classification_metrics$macro_f1
+  
+  # Data quality metrics
+  if (!is.null(data_quality_metrics$silhouette)) {
+    score <- score + weights$silhouette * 
+      (data_quality_metrics$silhouette + 1) / 2  # Silhouette: [-1,1] -> [0,1]
+  }
+  
+  if (!is.null(data_quality_metrics$discriminant_ratio)) {
+    # Normalize discriminant ratio (log transform, cap at reasonable max)
+    dr_norm <- min(log1p(data_quality_metrics$discriminant_ratio) / 3, 1)
+    score <- score + weights$discriminant_ratio * dr_norm
+  }
+  
+  if (!is.null(data_quality_metrics$normality_improvement)) {
+    # Already in percentage, normalize to [0, 1]
+    norm_score <- max(0, min(1, data_quality_metrics$normality_improvement / 100))
+    score <- score + weights$normality_improvement * norm_score
+  }
+  
+  if (!is.null(data_quality_metrics$skew_reduction)) {
+    # Positive reduction is good, normalize
+    skew_score <- max(0, min(1, data_quality_metrics$skew_reduction / 2))
+    score <- score + weights$skew_reduction * skew_score
+  }
+  
+  return(score)
+}
+
+
+# ============================================================================
+# SECTION 3: RECOMMENDED WORKFLOW FOR Imputation/Normalization Selection
+# ============================================================================
+
+#' RECOMMENDED COMPLETE WORKFLOW
+#' =============================
+
+recommended_workflow <- function(data, class_col) {
+  
+  # -------------------------------------------------------------------------
+  # STAGE 1: Data Exploration & Quality Check
+  # -------------------------------------------------------------------------
+  cat("\n=== STAGE 1: Initial Data Assessment ===\n")
+  
+  # Run initial diagnostics on raw data
+  initial_diagnostics <- select_ML_diag_tests(
+    data = data,
+    class_col = class_col,
+    verbose = TRUE
+  )
+  
+  # -------------------------------------------------------------------------
+  # STAGE 2: Imputation/Normalization Selection (Two-Stage Approach)
+  # -------------------------------------------------------------------------
+  cat("\n=== STAGE 2: Imputation & Normalization Optimization ===\n")
+  
+  # Stage 2a: Quick screen
+  cat("Stage 2a: Initial screening with Random Forest OOB...\n")
+  
+  quick_results <- find_best_impute_normalize(
+    data = data,
+    class_col = class_col,
+    imputation_methods = c("half_min", "median", "knn", "missforest"),
+    normalization_methods = c("none", "log", "log10", "sqrt", "zscore", "pareto"),
+    use_adaptive_ml = FALSE,  # Use RF for all (faster)
+    cv_folds = 5,
+    ranking_metric = "mcc",
+    verbose = TRUE
+  )
+  
+  # Stage 2b: Refine top candidates with adaptive ML
+  cat("\nStage 2b: Refining top 5 candidates with adaptive ML...\n")
+  
+  top_combos <- head(quick_results$summary_table, 5)
+  
+  refined_results <- lapply(1:nrow(top_combos), function(i) {
+    cat(sprintf("  Evaluating %s + %s...\n", 
+                top_combos$imputation[i], 
+                top_combos$normalization[i]))
+    
+    evaluate_combo(
+      data = data,
+      class_col = class_col,
+      impute_method = top_combos$imputation[i],
+      norm_method = top_combos$normalization[i],
+      use_adaptive_ml = TRUE,
+      cv_folds = 10
+    )
+  })
+  
+  # -------------------------------------------------------------------------
+  # STAGE 3: Final Selection with Composite Scoring
+  # -------------------------------------------------------------------------
+  cat("\n=== STAGE 3: Final Selection with Composite Score ===\n")
+  
+  # Calculate comprehensive metrics for each refined candidate
+  final_scores <- sapply(refined_results, function(result) {
+    if (!result$success) return(-Inf)
+    
+    # Classification metrics
+    class_metrics <- list(
+      mcc = result$mcc,
+      balanced_accuracy = (result$accuracy + result$macro_recall) / 2,
+      macro_f1 = result$macro_f1
+    )
+    
+    # Data quality metrics (from result)
+    quality_metrics <- list(
+      silhouette = result$cluster_quality,
+      normality_improvement = result$normality_pct * 100,
+      skew_reduction = 0  # Would need to calculate
+    )
+    
+    calculate_composite_score(class_metrics, quality_metrics)
+  })
+  
+  best_idx <- which.max(final_scores)
+  best_result <- refined_results[[best_idx]]
+  
+  # -------------------------------------------------------------------------
+  # STAGE 4: Final Validation
+  # -------------------------------------------------------------------------
+  cat("\n=== STAGE 4: Final Validation ===\n")
+  cat(sprintf("Best combination: %s + %s\n", 
+              best_result$impute_method, 
+              best_result$norm_method))
+  cat(sprintf("Recommended algorithm: %s\n", best_result$recommended_algorithm))
+  cat(sprintf("Composite score: %.4f\n", final_scores[best_idx]))
+  
+  return(list(
+    initial_diagnostics = initial_diagnostics,
+    quick_screen_results = quick_results,
+    refined_results = refined_results,
+    final_scores = final_scores,
+    best_result = best_result,
+    best_combination = list(
+      imputation = best_result$impute_method,
+      normalization = best_result$norm_method,
+      algorithm = best_result$recommended_algorithm
+    )
+  ))
+}
+
+
+# ============================================================================
+# SECTION 4: SUMMARY OF RECOMMENDATIONS
+# ============================================================================
+
+#' SUMMARY: KEY RECOMMENDATIONS FOR YOUR WORKFLOW
+#' ===============================================
+#' 
+#' 1. YOUR SOLUTION IS VALID
+#'    - Integrating select_ML_diag_tests() into find_best_impute_normalize()
+#'      is a sound approach
+#'    - Different transformations DO change data characteristics
+#'    - Adaptive algorithm selection addresses this well
+#' 
+#' 2. IMPROVEMENTS TO CONSIDER
+#'    a) Two-stage approach to reduce computational cost
+#'    b) Use nested CV to avoid overfitting to evaluation metric
+#'    c) Consider multiple metrics in a composite score
+#' 
+#' 3. RECOMMENDED EVALUATION METRICS
+#'    Primary: MCC or Balanced Accuracy (for classification)
+#'    Secondary: Silhouette score (for cluster quality)
+#'    Supporting: Normality improvement, skewness reduction, K-S test
+#' 
+#' 4. FOR LEFT-SKEWED DATA SPECIFICALLY
+#'    - Log transforms (log, log2, log10) often work well
+#'    - Square root transform is gentler alternative
+#'    - Box-Cox transformation can find optimal power automatically
+#'    - Random Forest and XGBoost handle skewness well even without normalization
+#' 
+#' 5. FOR MISSING DATA
+#'    - kNN imputation preserves local structure
+#'    - missForest captures non-linear relationships
+#'    - Half-minimum or LOD imputation is appropriate for detection limits
+#'    - ALWAYS validate that imputation doesn't distort class distributions
+#' 
+#' 6. FINAL NOTE ON ALGORITHM SELECTION
+#'    Given your description (missing values + left-skewed data):
+#'    - Random Forest/XGBoost: Most robust, likely top performers
+#'    - SVM (RBF): Good if data becomes more separable after transformation
+#'    - LDA: Consider if transformations achieve near-normality
+#'    - Naive Bayes: Avoid unless independence assumption holds
+
+#' ============================================================================
+#' QUICK REFERENCE TABLE: When to Use Each Metric
+#' ============================================================================
+#'
+#' | Situation                      | Primary Metric    | Secondary Metrics    |
+#' |-------------------------------|-------------------|---------------------|
+#' | Balanced classes              | Accuracy, F1      | AUC, MCC            |
+#' | Imbalanced classes            | MCC, Bal. Accuracy| Macro F1, Kappa     |
+#' | Care about false positives    | Precision         | Specificity         |
+#' | Care about false negatives    | Recall            | Sensitivity         |
+#' | Evaluating transformations    | Composite Score   | Silhouette, K-S     |
+#' | Final model selection         | MCC + CV variance | Per-class metrics   |
+#' ============================================================================
+
+cat("\n=== Functions loaded successfully ===\n")
+cat("Available functions:\n")
+cat("  - select_ML_diag_tests(): Run diagnostic tests for ML selection\n")
+cat("  - find_best_impute_normalize(): Find best imputation/normalization combo\n")
+cat("  - recommended_workflow(): Complete recommended workflow\n")
+cat("  - calculate_composite_score(): Multi-metric composite scoring\n")
+cat("\nExample usage:\n")
+cat("  results <- select_ML_diag_tests(my_data, class_col = 'Product_Type')\n")
+cat("  best <- find_best_impute_normalize(my_data, class_col = 'Product_Type')\n")
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 data <- hplc_combined_SB_ENV_shared_cols_ntr_clean %>% dplyr::select(-c(Subcategory, technique, Source, Polymer))
@@ -1838,4 +3312,4 @@ data_percentage <- data_percentage %>%
   mutate(Plastic_type = data$Plastic_type) %>%
   relocate(Plastic_type, .before = 1)
 
-test <- test_select_ML_diag_tests(data_percentage, class_col = "Plastic_type")
+test <- select_ML_diag_tests(data_percentage, class_col = "Plastic_type")
