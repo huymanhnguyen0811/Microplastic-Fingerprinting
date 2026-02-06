@@ -2101,3 +2101,441 @@ run_rf_analysis_manuscript1 <- function(
 
   return(final_final_res_list)
 }
+
+
+#' Run Hybrid Pipeline Analysis for Microplastic Fingerprinting
+#'
+#' This function integrates the new hybrid pipeline optimization workflow
+#' into the existing computational workflow, providing:
+#' - Best preprocessing + algorithm selection via composite scoring
+#' - Robust feature selection via ensemble stability analysis
+#' - Publication-ready confusion matrix and classification metrics
+#' - Tier-ranked feature set for regulatory/scientific purposes
+#'
+#' @param data Data frame with features and class column
+#' @param type_col Name of class column (e.g., "Plastic_type")
+#' @param remove_cols Columns to remove from feature set
+#' @param data_name Dataset identifier for labeling
+#' @param use_source_split Use Source column for train/test split
+#' @param use_store_vs_environmental_split Use SB for training, ENV for testing
+#' @param imputation_methods Vector of imputation methods to test
+#' @param normalization_methods Vector of normalization methods to test
+#' @param algorithms Vector of caret algorithm names to test
+#' @param cv_folds Cross-validation folds
+#' @param top_k Number of top pipelines for ensemble
+#' @param top_percent Percentage of features considered "top" per pipeline
+#' @param stability_threshold Minimum stability for robust features (CONFIGURABLE)
+#' @param mean_rank_percentile Maximum rank percentile for robust features (CONFIGURABLE)
+#' @param n_permutations Permutations for importance calculation
+#' @param composite_weights Weights for composite score (NULL = defaults)
+#' @param parallel Use parallel processing
+#' @param n_cores Number of cores
+#' @param seed Random seed
+#' @param min_sample_number Minimum samples per class
+#' @param verbose Print progress
+#'
+#' @return List containing:
+#'   - pipeline_results: Full pipeline optimization results
+#'   - feature_selection: Ensemble feature selection results
+#'   - final_classification: Final model with confusion matrix and metrics
+#'   - robust_features: Selected robust feature names
+#'   - feature_tiers: Tier-ranked feature summary
+#'   - confusion_matrix: Publication-ready confusion matrix
+#'   - mcc: Matthews Correlation Coefficient
+#'   - plots: List of ggplot objects
+#'   - preprocessed_data: Train/test data for HCA
+run_hybrid_analysis_manuscript1 <- function(
+    data,
+    type_col,
+    remove_cols = c("Source", "Polymer", "technique"),
+    data_name = "Dataset",
+    use_source_split = FALSE,
+    use_store_vs_environmental_split = FALSE,
+    imputation_methods = c("half_min", "median", "knn"),
+    normalization_methods = c("none", "log", "log10", "zscore", "pareto"),
+    algorithms = c("ranger", "svmRadial", "xgbTree"),
+    cv_folds = 5,
+    top_k = 5,
+    top_percent = 0.20,
+    stability_threshold = 0.60,
+    mean_rank_percentile = 0.30,
+    n_permutations = 10,
+    composite_weights = NULL,
+    parallel = TRUE,
+    n_cores = NULL,
+    seed = 123,
+    min_sample_number = 2,
+    verbose = TRUE
+) {
+  
+  # ============================================================================
+  # SETUP
+  # ============================================================================
+  
+  set.seed(seed)
+  start_time <- Sys.time()
+  
+  # Style functions for console output
+  use_crayon <- requireNamespace("crayon", quietly = TRUE)
+  style_info <- function(text) if (use_crayon) crayon::cyan(text) else text
+  style_step <- function(text) if (use_crayon) crayon::bold(crayon::blue(text)) else text
+  
+  if (verbose) {
+    cat("\n", strrep("=", 70), "\n")
+    cat(style_step(sprintf("HYBRID PIPELINE ANALYSIS: %s\n", data_name)))
+    cat(strrep("=", 70), "\n\n")
+  }
+  
+  # ============================================================================
+  # STEP 0: DATA PREPARATION
+  # ============================================================================
+  
+  if (verbose) cat(style_step("STEP 0: Preparing data...\n"))
+  
+  # Clean class labels
+  data[[type_col]] <- as.factor(data[[type_col]])
+  levels(data[[type_col]]) <- make.names(levels(data[[type_col]]), unique = TRUE)
+  
+  # Filter classes with minimum samples
+  class_counts <- table(data[[type_col]])
+  keep_classes <- names(class_counts[class_counts >= min_sample_number])
+  data <- data[data[[type_col]] %in% keep_classes, ]
+  data[[type_col]] <- droplevels(data[[type_col]])
+  
+  # Handle train/test splits
+  if (use_store_vs_environmental_split) {
+    if (!"Source" %in% names(data)) {
+      stop("Column 'Source' not found but use_store_vs_environmental_split = TRUE")
+    }
+    train_data_full <- data[data$Source == "Store-Bought", ]
+    test_data_full <- data[data$Source == "Environmental", ]
+    
+    if (verbose) {
+      cat(sprintf("  Store-Bought for training: %d samples\n", nrow(train_data_full)))
+      cat(sprintf("  Environmental for testing: %d samples\n", nrow(test_data_full)))
+    }
+    
+  } else if (use_source_split) {
+    if (!"Source" %in% names(data)) {
+      stop("Column 'Source' not found but use_source_split = TRUE")
+    }
+    train_data_full <- data
+    test_data_full <- data[data$Source == "Environmental", ]
+    
+    if (verbose) {
+      cat(sprintf("  All data for training: %d samples\n", nrow(train_data_full)))
+      cat(sprintf("  Environmental for testing: %d samples\n", nrow(test_data_full)))
+    }
+    
+  } else {
+    train_data_full <- data
+    test_data_full <- NULL
+    
+    if (verbose) {
+      cat(sprintf("  All data with CV: %d samples\n", nrow(data)))
+    }
+  }
+  
+  # Remove non-feature columns for pipeline optimization
+  cols_to_keep <- setdiff(names(train_data_full), remove_cols)
+  train_data_clean <- train_data_full[, cols_to_keep, drop = FALSE]
+  
+  if (!is.null(test_data_full)) {
+    test_data_clean <- test_data_full[, cols_to_keep, drop = FALSE]
+  } else {
+    test_data_clean <- NULL
+  }
+  
+  if (verbose) {
+    cat(sprintf("  Features: %d\n", ncol(train_data_clean) - 1))
+    cat(sprintf("  Classes: %s\n\n", paste(levels(train_data_clean[[type_col]]), collapse = ", ")))
+  }
+  
+  # ============================================================================
+  # STEP 1: FIND BEST PIPELINE WITH COMPOSITE SCORING
+  # ============================================================================
+  
+  if (verbose) cat(style_step("STEP 1: Finding best pipeline with composite scoring...\n"))
+  
+  pipeline_results <- find_best_impute_normalize(
+    data = train_data_clean,
+    class_col = type_col,
+    imputation_methods = imputation_methods,
+    normalization_methods = normalization_methods,
+    algorithms = algorithms,
+    use_adaptive_ml = TRUE,
+    cv_folds = cv_folds,
+    parallel = parallel,
+    n_cores = n_cores,
+    top_k = top_k,
+    composite_weights = composite_weights,
+    verbose = verbose
+  )
+  
+  if (!pipeline_results$success) {
+    stop("Pipeline optimization failed: ", pipeline_results$error)
+  }
+  
+  # ============================================================================
+  # STEP 2: ENSEMBLE FEATURE SELECTION
+  # ============================================================================
+  
+  if (verbose) cat(style_step("\nSTEP 2: Ensemble feature selection with stability analysis...\n"))
+  
+  feature_selection <- ensemble_feature_selection(
+    data = train_data_clean,
+    class_col = type_col,
+    top_k_pipelines = pipeline_results$top_k_pipelines,
+    top_percent = top_percent,
+    stability_threshold = stability_threshold,
+    mean_rank_percentile = mean_rank_percentile,
+    n_permutations = n_permutations,
+    parallel = parallel,
+    n_cores = n_cores,
+    verbose = verbose
+  )
+  
+  # Get robust features with fallback
+  robust_features <- feature_selection$robust_features
+  
+  if (length(robust_features) < 5) {
+    if (verbose) {
+      cat(sprintf("  Warning: Only %d robust features. Using stable features.\n", 
+                  length(robust_features)))
+    }
+    robust_features <- feature_selection$stable_features
+    
+    if (length(robust_features) < 5) {
+      n_top <- max(5, ceiling(0.20 * nrow(feature_selection$feature_summary)))
+      robust_features <- feature_selection$feature_summary$feature[1:n_top]
+      if (verbose) {
+        cat(sprintf("  Using top %d features by stability.\n", n_top))
+      }
+    }
+  }
+  
+  if (verbose) {
+    cat(sprintf("  Selected %d robust features for final model.\n", length(robust_features)))
+  }
+  
+  # ============================================================================
+  # STEP 3: FINAL CLASSIFICATION WITH ROBUST FEATURES
+  # ============================================================================
+  
+  if (verbose) cat(style_step("\nSTEP 3: Training final model with robust features...\n"))
+  
+  best_pipeline <- pipeline_results$best_result
+  
+  final_classification <- train_final_model(
+    data = train_data_clean,
+    class_col = type_col,
+    robust_features = robust_features,
+    best_pipeline = best_pipeline,
+    test_data = test_data_clean,
+    cv_folds = cv_folds,
+    verbose = verbose
+  )
+  
+  # ============================================================================
+  # STEP 4: GENERATE PUBLICATION OUTPUTS
+  # ============================================================================
+  
+  if (verbose) cat(style_step("\nSTEP 4: Generating publication-ready outputs...\n"))
+  
+  # Confusion matrix plot
+  conf_mat_plot <- plot_confusion_matrix(
+    final_classification$confusion_matrix_df,
+    title = sprintf("Confusion Matrix: %s", data_name),
+    mcc = final_classification$metrics$mcc
+  )
+  
+  # Feature tier plot
+  tier_plot <- plot_feature_tiers(
+    feature_selection$feature_summary,
+    top_n = min(30, nrow(feature_selection$feature_summary))
+  )
+  
+  # Get preprocessed data for HCA (from best pipeline)
+  preprocessed_train <- best_pipeline$preprocessed_data
+  
+  # Add back metadata columns
+  if (!is.null(train_data_full)) {
+    meta_cols <- intersect(remove_cols, names(train_data_full))
+    if (length(meta_cols) > 0) {
+      preprocessed_train <- dplyr::bind_cols(
+        preprocessed_train,
+        train_data_full[, meta_cols, drop = FALSE]
+      )
+    }
+  }
+  
+  if (!is.null(test_data_full) && !is.null(test_data_clean)) {
+    # For test data, apply same preprocessing
+    imputed_test <- apply_imputation(test_data_clean, best_pipeline$impute_method, type_col)
+    normalized_test <- apply_normalization(imputed_test, best_pipeline$norm_method, type_col)
+    preprocessed_test <- normalized_test
+    
+    meta_cols <- intersect(remove_cols, names(test_data_full))
+    if (length(meta_cols) > 0) {
+      preprocessed_test <- dplyr::bind_cols(
+        preprocessed_test,
+        test_data_full[, meta_cols, drop = FALSE]
+      )
+    }
+  } else {
+    preprocessed_test <- preprocessed_train
+  }
+  
+  # ============================================================================
+  # COMPILE RESULTS
+  # ============================================================================
+  
+  end_time <- Sys.time()
+  total_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+  
+  if (verbose) {
+    cat("\n", strrep("=", 70), "\n")
+    cat("ANALYSIS COMPLETE\n")
+    cat(strrep("=", 70), "\n")
+    cat(sprintf("Total time: %.1f seconds (%.1f minutes)\n", total_time, total_time / 60))
+    
+    cat("\nBEST PIPELINE:\n")
+    cat(sprintf("  Imputation: %s\n", best_pipeline$impute_method))
+    cat(sprintf("  Normalization: %s\n", best_pipeline$norm_method))
+    cat(sprintf("  Algorithm: %s\n", best_pipeline$best_algorithm))
+    cat(sprintf("  Composite Score: %.4f\n", best_pipeline$composite_score))
+    
+    cat("\nCLASSIFICATION RESULTS:\n")
+    cat(sprintf("  MCC: %.4f\n", final_classification$metrics$mcc))
+    cat(sprintf("  Balanced Accuracy: %.4f\n", final_classification$metrics$macro_recall))
+    cat(sprintf("  Macro F1: %.4f\n", final_classification$metrics$macro_f1))
+    
+    cat("\nFEATURE TIERS:\n")
+    tier_table <- table(feature_selection$feature_summary$tier)
+    for (tier_name in names(tier_table)) {
+      cat(sprintf("  %s: %d\n", tier_name, tier_table[tier_name]))
+    }
+    
+    cat(strrep("=", 70), "\n")
+  }
+  
+  return(list(
+    # Main results
+    pipeline_results = pipeline_results,
+    feature_selection = feature_selection,
+    final_classification = final_classification,
+    
+    # Key outputs for publication
+    robust_features = robust_features,
+    feature_tiers = feature_selection$feature_summary,
+    confusion_matrix = final_classification$confusion_matrix,
+    confusion_matrix_df = final_classification$confusion_matrix_df,
+    mcc = final_classification$metrics$mcc,
+    metrics = final_classification$metrics,
+    
+    # Plots
+    plots = list(
+      confusion_matrix = conf_mat_plot,
+      feature_tiers = tier_plot
+    ),
+    
+    # Best pipeline info
+    best_pipeline = best_pipeline,
+    best_imputation = best_pipeline$impute_method,
+    best_normalization = best_pipeline$norm_method,
+    best_algorithm = best_pipeline$best_algorithm,
+    
+    # Preprocessed data for downstream (HCA)
+    final_imp_norm_train = preprocessed_train,
+    final_imp_norm_test = preprocessed_test,
+    
+    # Model
+    final_model = final_classification$final_model,
+    
+    # Timing
+    total_time_seconds = total_time,
+    
+    # Parameters used
+    parameters = list(
+      data_name = data_name,
+      type_col = type_col,
+      stability_threshold = stability_threshold,
+      mean_rank_percentile = mean_rank_percentile,
+      top_k = top_k
+    )
+  ))
+}
+
+
+#' Print summary of hybrid analysis results
+#'
+#' @param results Output from run_hybrid_analysis_manuscript1
+print_hybrid_summary <- function(results) {
+  
+  cat("\n", strrep("=", 70), "\n")
+  cat("HYBRID ANALYSIS SUMMARY\n")
+  cat(strrep("=", 70), "\n\n")
+  
+  cat("BEST PIPELINE:\n")
+  cat(sprintf("  Imputation: %s\n", results$best_imputation))
+  cat(sprintf("  Normalization: %s\n", results$best_normalization))
+  cat(sprintf("  Algorithm: %s\n", results$best_algorithm))
+  
+  cat("\nCLASSIFICATION METRICS:\n")
+  cat(sprintf("  MCC: %.4f\n", results$mcc))
+  cat(sprintf("  Balanced Accuracy: %.4f\n", results$metrics$macro_recall))
+  cat(sprintf("  Macro F1: %.4f\n", results$metrics$macro_f1))
+  cat(sprintf("  Kappa: %.4f\n", results$metrics$kappa))
+  
+  cat("\nROBUST FEATURES: %d\n", length(results$robust_features))
+  
+  cat("\nCONFUSION MATRIX:\n")
+  print(results$confusion_matrix)
+  
+  cat(strrep("=", 70), "\n")
+}
+
+
+#' Export hybrid analysis results to CSV files
+#'
+#' @param results Output from run_hybrid_analysis_manuscript1
+#' @param output_dir Output directory
+#' @param prefix File name prefix
+export_hybrid_results <- function(results, output_dir = ".", prefix = "hybrid") {
+  
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+  
+  # Feature summary
+  write.csv(results$feature_tiers, 
+            file.path(output_dir, paste0(prefix, "_feature_tiers.csv")), 
+            row.names = FALSE)
+  
+  # Confusion matrix
+  write.csv(results$confusion_matrix_df,
+            file.path(output_dir, paste0(prefix, "_confusion_matrix.csv")),
+            row.names = FALSE)
+  
+  # Metrics
+  metrics_df <- data.frame(
+    metric = c("MCC", "Balanced_Accuracy", "Macro_F1", "Kappa", "Accuracy"),
+    value = c(results$mcc, results$metrics$macro_recall,
+              results$metrics$macro_f1, results$metrics$kappa, 
+              results$metrics$accuracy)
+  )
+  write.csv(metrics_df,
+            file.path(output_dir, paste0(prefix, "_metrics.csv")),
+            row.names = FALSE)
+  
+  # Save plots
+  if (!is.null(results$plots$confusion_matrix)) {
+    ggplot2::ggsave(file.path(output_dir, paste0(prefix, "_confusion_matrix.png")),
+                    results$plots$confusion_matrix, width = 10, height = 8, dpi = 300)
+  }
+  
+  if (!is.null(results$plots$feature_tiers)) {
+    ggplot2::ggsave(file.path(output_dir, paste0(prefix, "_feature_tiers.png")),
+                    results$plots$feature_tiers, width = 12, height = 10, dpi = 300)
+  }
+  
+  cat("Results exported to:", output_dir, "\n")
+}
