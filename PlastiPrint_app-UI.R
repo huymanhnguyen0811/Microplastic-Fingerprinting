@@ -205,9 +205,8 @@ ui <- dashboardPage(
           box(width = 4, status = "primary", solidHeader = TRUE,
               title = "Step 1: Data Import & Compound Grouping",
               h5("1.1 — Import Raw Data"),
-              p("Reads CSV files from ", tags$code("Raw data/ATDGCMS"),
-                " and XLS files from ", tags$code("Raw data/HPLCTOFMS"), "."),
-              actionButton("run_step1_import", "Import Data",
+              p("Click the button below to select your data files manually."),
+              actionButton("open_import_modal", "Import Data",
                            class = "btn-primary", icon = icon("upload")),
               hr(),
               h5("1.2 — Compound Grouping Parameters"),
@@ -606,103 +605,199 @@ server <- function(input, output, session) {
   #  STEP 1  —  Import, Group, Benchmark
   # ===========================================================================
 
-  # ── 1.1: Import raw data ───────────────────────────────────────────────────
-  observeEvent(input$run_step1_import, {
+  # ── 1.1: Show Import Modal Dialog ───────────────────────────────────────────
+  observeEvent(input$open_import_modal, {
+    showModal(modalDialog(
+      title = "Import Data Files",
+      size = "l",
+      easyClose = FALSE,
+      
+      fluidRow(
+        column(12,
+          h4(icon("flask"), " ATD-GC-MS Data (CSV files)"),
+          p("Select CSV files for ATD-GC-MS sample data. You can select multiple files."),
+          fileInput("gc_sample_files", 
+                    label = "GC Sample Files (.csv):",
+                    multiple = TRUE,
+                    accept = c(".csv", "text/csv"),
+                    width = "100%"),
+          fileInput("gc_blank_files", 
+                    label = "GC Blank Files (.csv) [Optional]:",
+                    multiple = TRUE,
+                    accept = c(".csv", "text/csv"),
+                    width = "100%"),
+          hr(),
+          
+          h4(icon("tint"), " HPLC-TOF-MS Data (XLS files)"),
+          p("Select XLS files for HPLC-TOF-MS data. You can select multiple files."),
+          fileInput("hplc_files", 
+                    label = "HPLC Files (.xls):",
+                    multiple = TRUE,
+                    accept = c(".xls", ".xlsx", "application/vnd.ms-excel"),
+                    width = "100%"),
+          hr(),
+          
+          div(style = "background-color: #f5f5f5; padding: 10px; border-radius: 5px;",
+            h5(icon("info-circle"), " File Selection Summary:"),
+            textOutput("import_summary")
+          )
+        )
+      ),
+      
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_import", "Import Selected Files", 
+                     class = "btn-primary", icon = icon("check"))
+      )
+    ))
+  })
+  
+  # ── Summary of selected files in modal ──────────────────────────────────────
+  output$import_summary <- renderText({
+    gc_samples <- if (!is.null(input$gc_sample_files)) nrow(input$gc_sample_files) else 0
+    gc_blanks <- if (!is.null(input$gc_blank_files)) nrow(input$gc_blank_files) else 0
+    hplc <- if (!is.null(input$hplc_files)) nrow(input$hplc_files) else 0
+    
+    paste0(
+      "GC Sample files: ", gc_samples, " | ",
+      "GC Blank files: ", gc_blanks, " | ",
+      "HPLC files: ", hplc
+    )
+  })
+
+  # ── 1.1: Import raw data from selected files ─────────────────────────────────
+  observeEvent(input$confirm_import, {
+    removeModal()
     rv$log_step1 <- ""
+    
     tryCatch({
       # --- ATD-GC-MS ---
       append_log("log_step1", "── Importing ATD-GC-MS data ──")
-      path_atdgcms <- "./Raw data/ATDGCMS"
-      if (!dir.exists(path_atdgcms)) stop(paste("Directory not found:", path_atdgcms))
-
-      atdgcms_list <- list.files(path_atdgcms, pattern = "*.csv", full.names = TRUE) %>%
-        .[!str_detect(., "2022")] %>%
-        .[!str_detect(., "USE_(01|02|05|06|09|10|11|12|13|15|16|17|18|19|20)")] %>%
-        .[!str_detect(., "USSB_(01|08)")]
-      blank_list <- list.files(path_atdgcms, pattern = "*.csv", full.names = TRUE) %>%
-        .[str_detect(., "2022-")]
-
-      read_and_add_filename <- function(file) {
-        data.table::fread(file, showProgress = FALSE, data.table = FALSE,
+      
+      read_and_add_filename <- function(file_path, file_name) {
+        data.table::fread(file_path, showProgress = FALSE, data.table = FALSE,
                           check.names = TRUE) %>%
-          mutate(File = basename(file))
+          mutate(File = file_name)
       }
-
-      atdgcms_raw <- data.table::rbindlist(
-        lapply(atdgcms_list, read_and_add_filename),
-        use.names = TRUE, fill = TRUE) %>%
-        as.data.frame() %>%
-        dplyr::select(-any_of(c("Start","End","Width","Base.Peak",
-                                "Cpd","Label","Height","Ions"))) %>%
-        dplyr::mutate(File = gsub("_", "-", File)) %>%
-        dplyr::mutate(File = gsub(".csv", "", File)) %>%
-        mutate(type = "Sample")
-
-      atdgcms_blank <- data.table::rbindlist(
-        lapply(blank_list, function(path) {
-          data.table::fread(path, showProgress = FALSE, check.names = TRUE)
-        }), use.names = TRUE, fill = TRUE) %>%
-        as.data.frame() %>%
-        dplyr::select(any_of(c("Area","File","m.z","RT"))) %>%
-        mutate(type = "Blanks")
-
-      atdgcms_step1 <- bind_rows(atdgcms_raw, atdgcms_blank) %>%
-        arrange(RT) %>%
-        mutate(simplified_file = map_chr(File, ~ paste(
-          str_split_1(.x, pattern = "-")[c(4, 5)], collapse = "-")))
-
-      rv$atdgcms_raw   <- atdgcms_raw
-      rv$atdgcms_blank <- atdgcms_blank
-      rv$atdgcms_step1 <- atdgcms_step1
-      append_log("log_step1", sprintf("  GC samples: %d rows from %d files",
-                                      nrow(atdgcms_raw), length(atdgcms_list)))
-      append_log("log_step1", sprintf("  GC blanks : %d rows from %d files",
-                                      nrow(atdgcms_blank), length(blank_list)))
+      
+      # Process GC Sample Files
+      if (!is.null(input$gc_sample_files) && nrow(input$gc_sample_files) > 0) {
+        gc_sample_list <- lapply(1:nrow(input$gc_sample_files), function(i) {
+          read_and_add_filename(
+            input$gc_sample_files$datapath[i],
+            gsub(".csv", "", input$gc_sample_files$name[i])
+          )
+        })
+        
+        atdgcms_raw <- data.table::rbindlist(gc_sample_list, use.names = TRUE, fill = TRUE) %>%
+          as.data.frame() %>%
+          dplyr::select(-any_of(c("Start","End","Width","Base.Peak",
+                                  "Cpd","Label","Height","Ions"))) %>%
+          dplyr::mutate(File = gsub("_", "-", File)) %>%
+          mutate(type = "Sample")
+        
+        append_log("log_step1", sprintf("  GC samples: %d rows from %d files",
+                                        nrow(atdgcms_raw), nrow(input$gc_sample_files)))
+      } else {
+        atdgcms_raw <- data.frame()
+        append_log("log_step1", "  No GC sample files selected.")
+      }
+      
+      # Process GC Blank Files
+      if (!is.null(input$gc_blank_files) && nrow(input$gc_blank_files) > 0) {
+        gc_blank_list <- lapply(1:nrow(input$gc_blank_files), function(i) {
+          data.table::fread(input$gc_blank_files$datapath[i], 
+                           showProgress = FALSE, check.names = TRUE) %>%
+            mutate(File = gsub(".csv", "", input$gc_blank_files$name[i]))
+        })
+        
+        atdgcms_blank <- data.table::rbindlist(gc_blank_list, use.names = TRUE, fill = TRUE) %>%
+          as.data.frame() %>%
+          dplyr::select(any_of(c("Area","File","m.z","RT"))) %>%
+          mutate(type = "Blanks")
+        
+        append_log("log_step1", sprintf("  GC blanks : %d rows from %d files",
+                                        nrow(atdgcms_blank), nrow(input$gc_blank_files)))
+      } else {
+        atdgcms_blank <- data.frame()
+        append_log("log_step1", "  No GC blank files selected.")
+      }
+      
+      # Combine GC data
+      if (nrow(atdgcms_raw) > 0 || nrow(atdgcms_blank) > 0) {
+        atdgcms_step1 <- bind_rows(atdgcms_raw, atdgcms_blank) %>%
+          arrange(RT) %>%
+          mutate(simplified_file = map_chr(File, ~ {
+            parts <- str_split_1(.x, pattern = "-")
+            if (length(parts) >= 5) {
+              paste(parts[c(4, 5)], collapse = "-")
+            } else {
+              .x
+            }
+          }))
+        
+        rv$atdgcms_raw   <- atdgcms_raw
+        rv$atdgcms_blank <- atdgcms_blank
+        rv$atdgcms_step1 <- atdgcms_step1
+      }
 
       # --- HPLC-TOF-MS ---
       append_log("log_step1", "\n── Importing HPLC-TOF-MS data ──")
-      path_batch0 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 0"
-      path_batch1 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 1"
-      path_batch2 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 2"
-
-      read_hplc_batch_gui <- function(dir_path, batch_num) {
-        if (!dir.exists(dir_path)) {
-          warning(paste("Directory not found:", dir_path))
-          return(data.frame())
+      
+      if (!is.null(input$hplc_files) && nrow(input$hplc_files) > 0) {
+        read_hplc_file <- function(file_path, file_name) {
+          df <- readxl::read_xls(file_path, skip = 1) %>% as.data.frame()
+          
+          # Handle column names
+          if ("m/z" %in% names(df)) {
+            df <- df %>% dplyr::rename(m.z = `m/z`)
+          }
+          
+          df <- df %>%
+            dplyr::select(any_of(c("m.z", "RT", "Height", "Area"))) %>%
+            mutate(
+              File = gsub("_", "-", gsub("\\.(xls|xlsx)$", "", file_name)),
+              type = ifelse(str_detect(file_name, regex("blank", ignore_case = TRUE)), "Blanks", "Sample"),
+              Day = case_when(
+                str_detect(file_name, "Day0") ~ "0",
+                str_detect(file_name, "Day2") ~ "2",
+                str_detect(file_name, "Day15") ~ "15",
+                TRUE ~ "34"
+              ),
+              Replicate = ifelse(str_detect(file_name, "R1"), "R1", "R2"),
+              Batch_number = "manual"
+            )
+          return(df)
         }
-        files_all <- list.files(dir_path, pattern = "*.xls", full.names = TRUE)
-        if (length(files_all) == 0) return(data.frame())
-
-        read_xls_fast <- function(path) readxl::read_xls(path, skip = 1) %>% as.data.frame()
-
-        combined <- data.table::rbindlist(
-          lapply(files_all, read_xls_fast),
-          use.names = TRUE, fill = TRUE) %>%
+        
+        hplc_list <- lapply(1:nrow(input$hplc_files), function(i) {
+          tryCatch({
+            read_hplc_file(input$hplc_files$datapath[i], input$hplc_files$name[i])
+          }, error = function(e) {
+            warning(paste("Error reading file:", input$hplc_files$name[i], "-", e$message))
+            return(data.frame())
+          })
+        })
+        
+        all_hplc <- data.table::rbindlist(hplc_list, use.names = TRUE, fill = TRUE) %>%
           as.data.frame() %>%
-          dplyr::select(m.z = `m/z`, RT, Height, File) %>%
-          mutate(File = gsub("_", "-", File),
-                 type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
-                 Day = case_when(str_detect(File, "Day0") ~ "0",
-                                 str_detect(File, "Day2") ~ "2",
-                                 str_detect(File, "Day15") ~ "15",
-                                 TRUE ~ "34"),
-                 Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
-                 Batch_number = as.character(batch_num))
-        return(combined)
+          arrange(RT) %>%
+          mutate(simplified_file = map_chr(File, ~ {
+            parts <- str_split_1(.x, "-")
+            if (length(parts) >= 2) {
+              paste(parts[1:min(2, length(parts))], collapse = "-")
+            } else {
+              .x
+            }
+          }))
+        
+        rv$all_hplc <- all_hplc
+        append_log("log_step1", sprintf("  HPLC total: %d rows from %d files", 
+                                        nrow(all_hplc), nrow(input$hplc_files)))
+      } else {
+        append_log("log_step1", "  No HPLC files selected.")
       }
-
-      hplc_b0 <- read_hplc_batch_gui(path_batch0, 0) %>%
-        mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[1:2], collapse = "-")))
-      hplc_b1 <- read_hplc_batch_gui(path_batch1, 1) %>%
-        mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
-      hplc_b2 <- read_hplc_batch_gui(path_batch2, 2) %>%
-        mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
-
-      all_hplc <- data.table::rbindlist(list(hplc_b0, hplc_b1, hplc_b2),
-                                        use.names = TRUE, fill = TRUE) %>%
-        as.data.frame() %>% arrange(RT)
-      rv$all_hplc <- all_hplc
-      append_log("log_step1", sprintf("  HPLC total: %d rows", nrow(all_hplc)))
+      
       append_log("log_step1", "\n✓ Data import complete.")
     },
     error = function(e) {
@@ -712,26 +807,46 @@ server <- function(input, output, session) {
 
   # ── 1.2: Compound grouping ─────────────────────────────────────────────────
   observeEvent(input$run_step1_group, {
-    req(rv$atdgcms_step1, rv$all_hplc)
+    # Check if at least one dataset is available
+    has_gc <- !is.null(rv$atdgcms_step1) && nrow(rv$atdgcms_step1) > 0
+    has_hplc <- !is.null(rv$all_hplc) && nrow(rv$all_hplc) > 0
+    
+    if (!has_gc && !has_hplc) {
+      append_log("log_step1", "\n⚠ No data imported yet. Please import data first.")
+      return()
+    }
+    
     tryCatch({
       append_log("log_step1", "\n── Grouping compounds ──")
-      rv$atdgcms_grouped <- grouping_comp(
-        rv$atdgcms_step1,
-        rtthres1 = input$gc_rtthres1,
-        mzthres  = input$gc_mzthres,
-        type     = "ATDGCMS")
-      append_log("log_step1", sprintf("  GC grouped: %d unique features",
-                                      n_distinct(rv$atdgcms_grouped$Feature, na.rm = TRUE)))
+      
+      # Process GC data if available
+      if (has_gc) {
+        rv$atdgcms_grouped <- grouping_comp(
+          rv$atdgcms_step1,
+          rtthres1 = input$gc_rtthres1,
+          mzthres  = input$gc_mzthres,
+          type     = "ATDGCMS")
+        append_log("log_step1", sprintf("  GC grouped: %d unique features",
+                                        n_distinct(rv$atdgcms_grouped$Feature, na.rm = TRUE)))
+      } else {
+        append_log("log_step1", "  GC: No data to group (skipped)")
+      }
 
-      rv$hplc_grouped <- grouping_comp(
-        rv$all_hplc,
-        split_time = input$hplc_split_time,
-        rtthres1   = input$hplc_rtthres1,
-        rtthres2   = input$hplc_rtthres2,
-        mzthres    = input$hplc_mzthres,
-        type       = "HPLCTOFMS")
-      append_log("log_step1", sprintf("  HPLC grouped: %d unique features",
-                                      n_distinct(rv$hplc_grouped$Feature, na.rm = TRUE)))
+      # Process HPLC data if available
+      if (has_hplc) {
+        rv$hplc_grouped <- grouping_comp(
+          rv$all_hplc,
+          split_time = input$hplc_split_time,
+          rtthres1   = input$hplc_rtthres1,
+          rtthres2   = input$hplc_rtthres2,
+          mzthres    = input$hplc_mzthres,
+          type       = "HPLCTOFMS")
+        append_log("log_step1", sprintf("  HPLC grouped: %d unique features",
+                                        n_distinct(rv$hplc_grouped$Feature, na.rm = TRUE)))
+      } else {
+        append_log("log_step1", "  HPLC: No data to group (skipped)")
+      }
+      
       append_log("log_step1", "✓ Grouping complete.")
     },
     error = function(e) append_log("log_step1", paste("✗ ERROR:", conditionMessage(e))))
@@ -739,30 +854,49 @@ server <- function(input, output, session) {
 
   # ── 1.3: Benchmark removal ─────────────────────────────────────────────────
   observeEvent(input$run_step1_bench, {
-    req(rv$atdgcms_grouped, rv$hplc_grouped)
+    # Check if at least one grouped dataset is available
+    has_gc <- !is.null(rv$atdgcms_grouped) && nrow(rv$atdgcms_grouped) > 0
+    has_hplc <- !is.null(rv$hplc_grouped) && nrow(rv$hplc_grouped) > 0
+    
+    if (!has_gc && !has_hplc) {
+      append_log("log_step1", "\n⚠ No grouped data available. Please run 'Group Compounds' first.")
+      return()
+    }
+    
     tryCatch({
       append_log("log_step1", "\n── Removing benchmarks ──")
 
-      gc_g <- rv$atdgcms_grouped
-      n_before_gc <- nrow(gc_g)
-      idx <- which(gc_g$m.z >= 98 & gc_g$m.z <= 98.5 &
-                   gc_g$RT > 13.4 & gc_g$RT < 13.5)
-      if (length(idx) > 0) gc_g <- gc_g[-idx, ]
-      rv$atdgcms_grouped <- gc_g
-      append_log("log_step1", sprintf("  GC: removed %d benchmark rows", n_before_gc - nrow(gc_g)))
-
-      hplc_g <- rv$hplc_grouped
-      n_before_hplc <- nrow(hplc_g)
-      hplc_benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
-      hplc_idx <- c()
-      for (mz in hplc_benchmark_mz) {
-        idx <- which(abs(hplc_g$m.z - mz) <= 0.0005)
-        hplc_idx <- c(hplc_idx, idx)
+      # Process GC data if available
+      if (has_gc) {
+        gc_g <- rv$atdgcms_grouped
+        n_before_gc <- nrow(gc_g)
+        idx <- which(gc_g$m.z >= 98 & gc_g$m.z <= 98.5 &
+                     gc_g$RT > 13.4 & gc_g$RT < 13.5)
+        if (length(idx) > 0) gc_g <- gc_g[-idx, ]
+        rv$atdgcms_grouped <- gc_g
+        append_log("log_step1", sprintf("  GC: removed %d benchmark rows", n_before_gc - nrow(gc_g)))
+      } else {
+        append_log("log_step1", "  GC: No data to process (skipped)")
       }
-      if (length(hplc_idx) > 0) hplc_g <- hplc_g[-hplc_idx, ]
-      rv$hplc_grouped <- hplc_g
-      append_log("log_step1", sprintf("  HPLC: removed %d benchmark rows",
-                                      n_before_hplc - nrow(hplc_g)))
+
+      # Process HPLC data if available
+      if (has_hplc) {
+        hplc_g <- rv$hplc_grouped
+        n_before_hplc <- nrow(hplc_g)
+        hplc_benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+        hplc_idx <- c()
+        for (mz in hplc_benchmark_mz) {
+          idx <- which(abs(hplc_g$m.z - mz) <= 0.0005)
+          hplc_idx <- c(hplc_idx, idx)
+        }
+        if (length(hplc_idx) > 0) hplc_g <- hplc_g[-hplc_idx, ]
+        rv$hplc_grouped <- hplc_g
+        append_log("log_step1", sprintf("  HPLC: removed %d benchmark rows",
+                                        n_before_hplc - nrow(hplc_g)))
+      } else {
+        append_log("log_step1", "  HPLC: No data to process (skipped)")
+      }
+      
       append_log("log_step1", "✓ Benchmarks removed.")
     },
     error = function(e) append_log("log_step1", paste("✗ ERROR:", conditionMessage(e))))
@@ -771,11 +905,17 @@ server <- function(input, output, session) {
   # Step 1 outputs
   output$step1_log <- renderText(rv$log_step1)
   output$step1_gc_table <- renderDT({
-    req(rv$atdgcms_grouped)
+    if (is.null(rv$atdgcms_grouped) || nrow(rv$atdgcms_grouped) == 0) {
+      return(datatable(data.frame(Message = "No GC data available. Import and group data first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$atdgcms_grouped, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
   output$step1_hplc_table <- renderDT({
-    req(rv$hplc_grouped)
+    if (is.null(rv$hplc_grouped) || nrow(rv$hplc_grouped) == 0) {
+      return(datatable(data.frame(Message = "No HPLC data available. Import and group data first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$hplc_grouped, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
 
@@ -783,45 +923,62 @@ server <- function(input, output, session) {
   #  STEP 2  —  Blank Subtraction
   # ===========================================================================
   observeEvent(input$run_step2, {
-    req(rv$atdgcms_grouped, rv$hplc_grouped)
+    # Check if at least one grouped dataset is available
+    has_gc <- !is.null(rv$atdgcms_grouped) && nrow(rv$atdgcms_grouped) > 0
+    has_hplc <- !is.null(rv$hplc_grouped) && nrow(rv$hplc_grouped) > 0
+    
+    if (!has_gc && !has_hplc) {
+      rv$log_step2 <- "⚠ No grouped data available. Please complete Step 1 first."
+      return()
+    }
+    
     rv$log_step2 <- ""
     tryCatch({
       sd_mult <- input$blank_sd_mult
       append_log("log_step2", sprintf("── Blank subtraction (SD multiplier = %.1f) ──", sd_mult))
 
       # GC
-      gc_adj <- rv$atdgcms_grouped %>%
-        dplyr::group_by(Feature) %>%
-        dplyr::mutate(
-          has_blank = any(type == "Blanks"),
-          blank_mean = mean(Area[type == "Blanks"], na.rm = TRUE),
-          blank_sd   = sd(Area[type == "Blanks"], na.rm = TRUE)) %>%
-        ungroup() %>%
-        dplyr::filter(type != "Blanks") %>%
-        dplyr::mutate(
-          Area = if_else(has_blank, Area - blank_mean, Area),
-          threshold = if_else(has_blank, sd_mult * blank_sd, 0)) %>%
-        dplyr::filter(Area > 0, Area > threshold) %>%
-        dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
-      rv$atdgcms_step2 <- gc_adj
-      append_log("log_step2", sprintf("  GC after blank sub: %d rows", nrow(gc_adj)))
+      if (has_gc) {
+        gc_adj <- rv$atdgcms_grouped %>%
+          dplyr::group_by(Feature) %>%
+          dplyr::mutate(
+            has_blank = any(type == "Blanks"),
+            blank_mean = mean(Area[type == "Blanks"], na.rm = TRUE),
+            blank_sd   = sd(Area[type == "Blanks"], na.rm = TRUE)) %>%
+          ungroup() %>%
+          dplyr::filter(type != "Blanks") %>%
+          dplyr::mutate(
+            Area = if_else(has_blank, Area - blank_mean, Area),
+            threshold = if_else(has_blank, sd_mult * blank_sd, 0)) %>%
+          dplyr::filter(Area > 0, Area > threshold) %>%
+          dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
+        rv$atdgcms_step2 <- gc_adj
+        append_log("log_step2", sprintf("  GC after blank sub: %d rows", nrow(gc_adj)))
+      } else {
+        append_log("log_step2", "  GC: No data to process (skipped)")
+      }
 
       # HPLC
-      hplc_adj <- rv$hplc_grouped %>%
-        dplyr::group_by(Batch_number, Feature) %>%
-        dplyr::mutate(
-          has_blank = any(type == "Blanks"),
-          blank_mean = mean(Height[type == "Blanks"], na.rm = TRUE),
-          blank_sd   = sd(Height[type == "Blanks"], na.rm = TRUE)) %>%
-        ungroup() %>%
-        dplyr::filter(type != "Blanks") %>%
-        dplyr::mutate(
-          Height = if_else(has_blank, Height - blank_mean, Height),
-          threshold = if_else(has_blank, sd_mult * blank_sd, 0)) %>%
-        dplyr::filter(Height > 0, Height > threshold) %>%
-        dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
-      rv$hplc_step2 <- hplc_adj
-      append_log("log_step2", sprintf("  HPLC after blank sub: %d rows", nrow(hplc_adj)))
+      if (has_hplc) {
+        hplc_adj <- rv$hplc_grouped %>%
+          dplyr::group_by(Batch_number, Feature) %>%
+          dplyr::mutate(
+            has_blank = any(type == "Blanks"),
+            blank_mean = mean(Height[type == "Blanks"], na.rm = TRUE),
+            blank_sd   = sd(Height[type == "Blanks"], na.rm = TRUE)) %>%
+          ungroup() %>%
+          dplyr::filter(type != "Blanks") %>%
+          dplyr::mutate(
+            Height = if_else(has_blank, Height - blank_mean, Height),
+            threshold = if_else(has_blank, sd_mult * blank_sd, 0)) %>%
+          dplyr::filter(Height > 0, Height > threshold) %>%
+          dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
+        rv$hplc_step2 <- hplc_adj
+        append_log("log_step2", sprintf("  HPLC after blank sub: %d rows", nrow(hplc_adj)))
+      } else {
+        append_log("log_step2", "  HPLC: No data to process (skipped)")
+      }
+      
       append_log("log_step2", "✓ Blank subtraction complete.")
     },
     error = function(e) append_log("log_step2", paste("✗ ERROR:", conditionMessage(e))))
@@ -829,11 +986,17 @@ server <- function(input, output, session) {
 
   output$step2_log <- renderText(rv$log_step2)
   output$step2_gc_table <- renderDT({
-    req(rv$atdgcms_step2)
+    if (is.null(rv$atdgcms_step2) || nrow(rv$atdgcms_step2) == 0) {
+      return(datatable(data.frame(Message = "No GC data available. Run blank subtraction first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$atdgcms_step2, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
   output$step2_hplc_table <- renderDT({
-    req(rv$hplc_step2)
+    if (is.null(rv$hplc_step2) || nrow(rv$hplc_step2) == 0) {
+      return(datatable(data.frame(Message = "No HPLC data available. Run blank subtraction first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$hplc_step2, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
 
@@ -841,31 +1004,47 @@ server <- function(input, output, session) {
   #  STEP 3  —  Source assignment
   # ===========================================================================
   observeEvent(input$run_step3, {
-    req(rv$atdgcms_step2, rv$hplc_step2)
+    # Check if at least one dataset is available from Step 2
+    has_gc <- !is.null(rv$atdgcms_step2) && nrow(rv$atdgcms_step2) > 0
+    has_hplc <- !is.null(rv$hplc_step2) && nrow(rv$hplc_step2) > 0
+    
+    if (!has_gc && !has_hplc) {
+      rv$log_step3 <- "⚠ No data available from Step 2. Please complete Step 2 first."
+      return()
+    }
+    
     rv$log_step3 <- ""
     tryCatch({
       append_log("log_step3", "── Assigning Source & Technique ──")
 
-      gc <- rv$atdgcms_step2 %>%
-        dplyr::filter(!is.na(Feature)) %>%
-        dplyr::select(File, Feature, m.z, RT, Area) %>%
-        mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
-        dplyr::rename(Values = Area) %>%
-        mutate(technique = "GC")
-      rv$gc <- gc
+      if (has_gc) {
+        gc <- rv$atdgcms_step2 %>%
+          dplyr::filter(!is.na(Feature)) %>%
+          dplyr::select(File, Feature, m.z, RT, Area) %>%
+          mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+          dplyr::rename(Values = Area) %>%
+          mutate(technique = "GC")
+        rv$gc <- gc
+        append_log("log_step3", sprintf("  GC:   %d rows  |  SB: %d  ENV: %d",
+          nrow(gc), sum(gc$Source == "Store-Bought"), sum(gc$Source == "Environmental")))
+      } else {
+        append_log("log_step3", "  GC: No data to process (skipped)")
+      }
 
-      hplc <- rv$hplc_step2 %>%
-        dplyr::filter(!is.na(Feature)) %>%
-        dplyr::select(File, Feature, m.z, RT, Height) %>%
-        dplyr::mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
-        dplyr::rename(Values = Height) %>%
-        mutate(technique = "HPLC")
-      rv$hplc <- hplc
-
-      append_log("log_step3", sprintf("  GC:   %d rows  |  SB: %d  ENV: %d",
-        nrow(gc), sum(gc$Source == "Store-Bought"), sum(gc$Source == "Environmental")))
-      append_log("log_step3", sprintf("  HPLC: %d rows  |  SB: %d  ENV: %d",
-        nrow(hplc), sum(hplc$Source == "Store-Bought"), sum(hplc$Source == "Environmental")))
+      if (has_hplc) {
+        hplc <- rv$hplc_step2 %>%
+          dplyr::filter(!is.na(Feature)) %>%
+          dplyr::select(File, Feature, m.z, RT, Height) %>%
+          dplyr::mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+          dplyr::rename(Values = Height) %>%
+          mutate(technique = "HPLC")
+        rv$hplc <- hplc
+        append_log("log_step3", sprintf("  HPLC: %d rows  |  SB: %d  ENV: %d",
+          nrow(hplc), sum(hplc$Source == "Store-Bought"), sum(hplc$Source == "Environmental")))
+      } else {
+        append_log("log_step3", "  HPLC: No data to process (skipped)")
+      }
+      
       append_log("log_step3", "✓ Step 3 complete.")
     },
     error = function(e) append_log("log_step3", paste("✗ ERROR:", conditionMessage(e))))
@@ -873,11 +1052,17 @@ server <- function(input, output, session) {
 
   output$step3_log <- renderText(rv$log_step3)
   output$step3_gc_table <- renderDT({
-    req(rv$gc)
+    if (is.null(rv$gc) || nrow(rv$gc) == 0) {
+      return(datatable(data.frame(Message = "No GC data available. Run Step 3 first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$gc, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
   output$step3_hplc_table <- renderDT({
-    req(rv$hplc)
+    if (is.null(rv$hplc) || nrow(rv$hplc) == 0) {
+      return(datatable(data.frame(Message = "No HPLC data available. Run Step 3 first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$hplc, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
 
@@ -964,7 +1149,16 @@ server <- function(input, output, session) {
   #  STEP 5  —  Label merge & Combinations
   # ===========================================================================
   observeEvent(input$run_step5, {
-    req(rv$gc, rv$hplc, rv$icp)
+    # Check what data is available
+    has_gc <- !is.null(rv$gc) && nrow(rv$gc) > 0
+    has_hplc <- !is.null(rv$hplc) && nrow(rv$hplc) > 0
+    has_icp <- !is.null(rv$icp) && nrow(rv$icp) > 0
+    
+    if (!has_gc && !has_hplc && !has_icp) {
+      rv$log_step5 <- "⚠ No data available. Please complete Steps 1-3 (and optionally Step 4 for ICP)."
+      return()
+    }
+    
     rv$log_step5 <- ""
     tryCatch({
       append_log("log_step5", "── Merging label information ──")
@@ -980,31 +1174,72 @@ server <- function(input, output, session) {
         dplyr::select(c(File, Plastic_type, Subcategory, Polymer))
       rv$sampinfo <- sampinfo
 
-      gc   <- left_join(rv$gc,   sampinfo, by = "File")
-      hplc <- left_join(rv$hplc, sampinfo, by = "File")
-      icp  <- left_join(rv$icp,  sampinfo, by = "File")
+      # Process GC if available
+      if (has_gc) {
+        gc <- left_join(rv$gc, sampinfo, by = "File")
+        rv$gc_labeled <- gc
+        append_log("log_step5", sprintf("  GC:   %d rows  (%d plastic types)",
+                                        nrow(gc), n_distinct(gc$Plastic_type, na.rm = TRUE)))
+      } else {
+        gc <- NULL
+        append_log("log_step5", "  GC: No data (skipped)")
+      }
+      
+      # Process HPLC if available
+      if (has_hplc) {
+        hplc <- left_join(rv$hplc, sampinfo, by = "File")
+        rv$hplc_labeled <- hplc
+        append_log("log_step5", sprintf("  HPLC: %d rows  (%d plastic types)",
+                                        nrow(hplc), n_distinct(hplc$Plastic_type, na.rm = TRUE)))
+      } else {
+        hplc <- NULL
+        append_log("log_step5", "  HPLC: No data (skipped)")
+      }
+      
+      # Process ICP if available
+      if (has_icp) {
+        icp <- left_join(rv$icp, sampinfo, by = "File")
+        rv$icp_labeled <- icp
+        append_log("log_step5", sprintf("  ICP:  %d rows  (%d plastic types)",
+                                        nrow(icp), n_distinct(icp$Plastic_type, na.rm = TRUE)))
+      } else {
+        icp <- NULL
+        append_log("log_step5", "  ICP: No data (skipped)")
+      }
 
-      rv$gc_labeled   <- gc
-      rv$hplc_labeled <- hplc
-      rv$icp_labeled  <- icp
+      # Create combinations based on available data
+      combinations_created <- c()
+      
+      if (has_gc && has_hplc) {
+        gc_hplc <- bind_rows(gc, hplc)
+        rv$gc_hplc <- gc_hplc
+        combinations_created <- c(combinations_created, "gc_hplc")
+      }
+      
+      if (has_gc && has_icp) {
+        gc_icp <- bind_rows(icp, gc %>% dplyr::select(-any_of(c("m.z", "RT"))))
+        rv$gc_icp <- gc_icp
+        combinations_created <- c(combinations_created, "gc_icp")
+      }
+      
+      if (has_hplc && has_icp) {
+        hplc_icp <- bind_rows(icp, hplc %>% dplyr::select(-any_of(c("m.z", "RT"))))
+        rv$hplc_icp <- hplc_icp
+        combinations_created <- c(combinations_created, "hplc_icp")
+      }
+      
+      if (has_gc && has_hplc && has_icp) {
+        gc_hplc_icp <- bind_rows(icp, bind_rows(gc, hplc) %>% dplyr::select(-any_of(c("m.z", "RT"))))
+        rv$gc_hplc_icp <- gc_hplc_icp
+        combinations_created <- c(combinations_created, "gc_hplc_icp")
+      }
 
-      gc_hplc     <- bind_rows(gc, hplc)
-      gc_icp      <- bind_rows(icp, gc %>% dplyr::select(-c("m.z", "RT")))
-      hplc_icp    <- bind_rows(icp, hplc %>% dplyr::select(-c("m.z", "RT")))
-      gc_hplc_icp <- bind_rows(icp, gc_hplc %>% dplyr::select(-c("m.z", "RT")))
-
-      rv$gc_hplc     <- gc_hplc
-      rv$gc_icp      <- gc_icp
-      rv$hplc_icp    <- hplc_icp
-      rv$gc_hplc_icp <- gc_hplc_icp
-
-      append_log("log_step5", sprintf("  GC:   %d rows  (%d plastic types)",
-                                      nrow(gc), n_distinct(gc$Plastic_type, na.rm = TRUE)))
-      append_log("log_step5", sprintf("  HPLC: %d rows  (%d plastic types)",
-                                      nrow(hplc), n_distinct(hplc$Plastic_type, na.rm = TRUE)))
-      append_log("log_step5", sprintf("  ICP:  %d rows  (%d plastic types)",
-                                      nrow(icp), n_distinct(icp$Plastic_type, na.rm = TRUE)))
-      append_log("log_step5", "  Combinations created: gc_hplc, gc_icp, hplc_icp, gc_hplc_icp")
+      if (length(combinations_created) > 0) {
+        append_log("log_step5", sprintf("  Combinations created: %s", paste(combinations_created, collapse = ", ")))
+      } else {
+        append_log("log_step5", "  No combinations created (need at least 2 data types)")
+      }
+      
       append_log("log_step5", "✓ Step 5 complete.")
     },
     error = function(e) append_log("log_step5", paste("✗ ERROR:", conditionMessage(e))))
@@ -1012,20 +1247,60 @@ server <- function(input, output, session) {
 
   output$step5_log <- renderText(rv$log_step5)
   output$step5_summary_table <- renderDT({
-    req(rv$gc_labeled)
-    summary_df <- data.frame(
-      Dataset = c("gc", "hplc", "icp", "gc_hplc", "gc_icp", "hplc_icp", "gc_hplc_icp"),
-      Rows = c(nrow(rv$gc_labeled), nrow(rv$hplc_labeled), nrow(rv$icp_labeled),
-               nrow(rv$gc_hplc), nrow(rv$gc_icp), nrow(rv$hplc_icp), nrow(rv$gc_hplc_icp)),
-      Features = c(n_distinct(rv$gc_labeled$Feature), n_distinct(rv$hplc_labeled$Feature),
-                   n_distinct(rv$icp_labeled$Feature), n_distinct(rv$gc_hplc$Feature),
-                   n_distinct(rv$gc_icp$Feature), n_distinct(rv$hplc_icp$Feature),
-                   n_distinct(rv$gc_hplc_icp$Feature))
-    )
+    # Build summary based on available data
+    datasets <- c()
+    rows <- c()
+    features <- c()
+    
+    if (!is.null(rv$gc_labeled) && nrow(rv$gc_labeled) > 0) {
+      datasets <- c(datasets, "gc")
+      rows <- c(rows, nrow(rv$gc_labeled))
+      features <- c(features, n_distinct(rv$gc_labeled$Feature))
+    }
+    if (!is.null(rv$hplc_labeled) && nrow(rv$hplc_labeled) > 0) {
+      datasets <- c(datasets, "hplc")
+      rows <- c(rows, nrow(rv$hplc_labeled))
+      features <- c(features, n_distinct(rv$hplc_labeled$Feature))
+    }
+    if (!is.null(rv$icp_labeled) && nrow(rv$icp_labeled) > 0) {
+      datasets <- c(datasets, "icp")
+      rows <- c(rows, nrow(rv$icp_labeled))
+      features <- c(features, n_distinct(rv$icp_labeled$Feature))
+    }
+    if (!is.null(rv$gc_hplc) && nrow(rv$gc_hplc) > 0) {
+      datasets <- c(datasets, "gc_hplc")
+      rows <- c(rows, nrow(rv$gc_hplc))
+      features <- c(features, n_distinct(rv$gc_hplc$Feature))
+    }
+    if (!is.null(rv$gc_icp) && nrow(rv$gc_icp) > 0) {
+      datasets <- c(datasets, "gc_icp")
+      rows <- c(rows, nrow(rv$gc_icp))
+      features <- c(features, n_distinct(rv$gc_icp$Feature))
+    }
+    if (!is.null(rv$hplc_icp) && nrow(rv$hplc_icp) > 0) {
+      datasets <- c(datasets, "hplc_icp")
+      rows <- c(rows, nrow(rv$hplc_icp))
+      features <- c(features, n_distinct(rv$hplc_icp$Feature))
+    }
+    if (!is.null(rv$gc_hplc_icp) && nrow(rv$gc_hplc_icp) > 0) {
+      datasets <- c(datasets, "gc_hplc_icp")
+      rows <- c(rows, nrow(rv$gc_hplc_icp))
+      features <- c(features, n_distinct(rv$gc_hplc_icp$Feature))
+    }
+    
+    if (length(datasets) == 0) {
+      return(datatable(data.frame(Message = "No data available. Run Step 5 first."),
+                       options = list(dom = 't')))
+    }
+    
+    summary_df <- data.frame(Dataset = datasets, Rows = rows, Features = features)
     datatable(summary_df, options = list(dom = 't'))
   })
   output$step5_gc_table <- renderDT({
-    req(rv$gc_labeled)
+    if (is.null(rv$gc_labeled) || nrow(rv$gc_labeled) == 0) {
+      return(datatable(data.frame(Message = "No GC data available."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$gc_labeled, 200), options = list(scrollX = TRUE, pageLength = 10))
   })
 
@@ -1052,7 +1327,12 @@ server <- function(input, output, session) {
     tryCatch({
       ds_name <- input$feat_dataset
       ds <- get_dataset(ds_name)
-      req(ds)
+      
+      if (is.null(ds) || nrow(ds) == 0) {
+        rv$log_step6 <- sprintf("⚠ Dataset '%s' is not available. Please complete Step 5 first.", ds_name)
+        return()
+      }
+      
       mode <- input$feat_mode
 
       append_log("log_step6", sprintf("── Feature reduction: %s [%s] ──", ds_name, mode))
@@ -1070,37 +1350,85 @@ server <- function(input, output, session) {
 
   # ── 6.4: Data fusion ───────────────────────────────────────────────────────
   observeEvent(input$run_step6_fusion, {
-    req(rv$gc_labeled, rv$hplc_labeled, rv$icp_labeled)
+    # Check what data is available
+    has_gc <- !is.null(rv$gc_labeled) && nrow(rv$gc_labeled) > 0
+    has_hplc <- !is.null(rv$hplc_labeled) && nrow(rv$hplc_labeled) > 0
+    has_icp <- !is.null(rv$icp_labeled) && nrow(rv$icp_labeled) > 0
+    
+    if (!has_gc && !has_hplc && !has_icp) {
+      append_log("log_step6", "\n⚠ No labeled data available. Please complete Step 5 first.")
+      return()
+    }
+    
     tryCatch({
       append_log("log_step6", "\n── Running in-house filter + data fusion ──")
-
-      gc_clean   <- shared_feature_filtering(rv$gc_labeled,   feat_reduc_mode = "inhouse")$filtered_data
-      hplc_clean <- shared_feature_filtering(rv$hplc_labeled, feat_reduc_mode = "inhouse")$filtered_data
-      icp_clean  <- shared_feature_filtering(rv$icp_labeled,  feat_reduc_mode = "inhouse")$filtered_data
-      rv$gc_clean   <- gc_clean
-      rv$hplc_clean <- hplc_clean
-      rv$icp_clean  <- icp_clean
-
-      rv$gc_hplc_clean     <- data_fusion(rv$gc_hplc,     source_feats = list(gc_clean, hplc_clean))
-      rv$gc_icp_clean      <- data_fusion(rv$gc_icp,      source_feats = list(gc_clean, icp_clean))
-      rv$hplc_icp_clean    <- data_fusion(rv$hplc_icp,    source_feats = list(hplc_clean, icp_clean))
-      rv$gc_hplc_icp_clean <- data_fusion(rv$gc_hplc_icp, source_feats = list(gc_clean, hplc_clean, icp_clean))
-
+      
       meta <- c("Plastic_type", "technique", "Source", "Polymer")
+      fusion_datasets <- c()
+      fusion_samples <- c()
+      fusion_features <- c()
+
+      # Process individual datasets
+      if (has_gc) {
+        gc_clean <- shared_feature_filtering(rv$gc_labeled, feat_reduc_mode = "inhouse")$filtered_data
+        rv$gc_clean <- gc_clean
+        fusion_datasets <- c(fusion_datasets, "gc")
+        fusion_samples <- c(fusion_samples, nrow(gc_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(gc_clean), meta)))
+        append_log("log_step6", sprintf("  GC: %d samples, %d features", nrow(gc_clean), length(setdiff(names(gc_clean), meta))))
+      }
+      
+      if (has_hplc) {
+        hplc_clean <- shared_feature_filtering(rv$hplc_labeled, feat_reduc_mode = "inhouse")$filtered_data
+        rv$hplc_clean <- hplc_clean
+        fusion_datasets <- c(fusion_datasets, "hplc")
+        fusion_samples <- c(fusion_samples, nrow(hplc_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(hplc_clean), meta)))
+        append_log("log_step6", sprintf("  HPLC: %d samples, %d features", nrow(hplc_clean), length(setdiff(names(hplc_clean), meta))))
+      }
+      
+      if (has_icp) {
+        icp_clean <- shared_feature_filtering(rv$icp_labeled, feat_reduc_mode = "inhouse")$filtered_data
+        rv$icp_clean <- icp_clean
+        fusion_datasets <- c(fusion_datasets, "icp")
+        fusion_samples <- c(fusion_samples, nrow(icp_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(icp_clean), meta)))
+        append_log("log_step6", sprintf("  ICP: %d samples, %d features", nrow(icp_clean), length(setdiff(names(icp_clean), meta))))
+      }
+
+      # Create combinations based on available data
+      if (has_gc && has_hplc && !is.null(rv$gc_hplc)) {
+        rv$gc_hplc_clean <- data_fusion(rv$gc_hplc, source_feats = list(rv$gc_clean, rv$hplc_clean))
+        fusion_datasets <- c(fusion_datasets, "gc_hplc")
+        fusion_samples <- c(fusion_samples, nrow(rv$gc_hplc_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(rv$gc_hplc_clean), meta)))
+      }
+      
+      if (has_gc && has_icp && !is.null(rv$gc_icp)) {
+        rv$gc_icp_clean <- data_fusion(rv$gc_icp, source_feats = list(rv$gc_clean, rv$icp_clean))
+        fusion_datasets <- c(fusion_datasets, "gc_icp")
+        fusion_samples <- c(fusion_samples, nrow(rv$gc_icp_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(rv$gc_icp_clean), meta)))
+      }
+      
+      if (has_hplc && has_icp && !is.null(rv$hplc_icp)) {
+        rv$hplc_icp_clean <- data_fusion(rv$hplc_icp, source_feats = list(rv$hplc_clean, rv$icp_clean))
+        fusion_datasets <- c(fusion_datasets, "hplc_icp")
+        fusion_samples <- c(fusion_samples, nrow(rv$hplc_icp_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(rv$hplc_icp_clean), meta)))
+      }
+      
+      if (has_gc && has_hplc && has_icp && !is.null(rv$gc_hplc_icp)) {
+        rv$gc_hplc_icp_clean <- data_fusion(rv$gc_hplc_icp, source_feats = list(rv$gc_clean, rv$hplc_clean, rv$icp_clean))
+        fusion_datasets <- c(fusion_datasets, "gc_hplc_icp")
+        fusion_samples <- c(fusion_samples, nrow(rv$gc_hplc_icp_clean))
+        fusion_features <- c(fusion_features, length(setdiff(names(rv$gc_hplc_icp_clean), meta)))
+      }
+
       fusion_summary <- data.frame(
-        Dataset = c("gc", "hplc", "icp", "gc_hplc", "gc_icp", "hplc_icp", "gc_hplc_icp"),
-        Samples = c(nrow(gc_clean), nrow(hplc_clean), nrow(icp_clean),
-                    nrow(rv$gc_hplc_clean), nrow(rv$gc_icp_clean),
-                    nrow(rv$hplc_icp_clean), nrow(rv$gc_hplc_icp_clean)),
-        Features = c(
-          length(setdiff(names(gc_clean), meta)),
-          length(setdiff(names(hplc_clean), meta)),
-          length(setdiff(names(icp_clean), meta)),
-          length(setdiff(names(rv$gc_hplc_clean), meta)),
-          length(setdiff(names(rv$gc_icp_clean), meta)),
-          length(setdiff(names(rv$hplc_icp_clean), meta)),
-          length(setdiff(names(rv$gc_hplc_icp_clean), meta))
-        )
+        Dataset = fusion_datasets,
+        Samples = fusion_samples,
+        Features = fusion_features
       )
       rv$fusion_summary <- fusion_summary
       append_log("log_step6", "✓ Data fusion complete. See 'Fusion Summary' tab.")
@@ -1111,12 +1439,18 @@ server <- function(input, output, session) {
   output$step6_log <- renderText(rv$log_step6)
   output$step6_stats <- renderText(rv$step6_stats_text)
   output$step6_table <- renderDT({
-    req(rv$filter_results)
+    if (is.null(rv$filter_results)) {
+      return(datatable(data.frame(Message = "No filter results available. Run feature reduction first."),
+                       options = list(dom = 't')))
+    }
     datatable(head(rv$filter_results$filtered_data, 200),
               options = list(scrollX = TRUE, pageLength = 10))
   })
   output$step6_fusion_table <- renderDT({
-    req(rv$fusion_summary)
+    if (is.null(rv$fusion_summary)) {
+      return(datatable(data.frame(Message = "No fusion summary available. Run data fusion first."),
+                       options = list(dom = 't')))
+    }
     datatable(rv$fusion_summary, options = list(dom = 't'))
   })
 
@@ -1124,7 +1458,17 @@ server <- function(input, output, session) {
   #  STEP 7  —  Hybrid ML Pipeline
   # ===========================================================================
   observeEvent(input$run_step7, {
-    req(rv$gc_clean)
+    # Check if any cleaned data is available
+    has_any_data <- (!is.null(rv$gc_clean) && nrow(rv$gc_clean) > 0) ||
+                    (!is.null(rv$gc_icp_clean) && nrow(rv$gc_icp_clean) > 0) ||
+                    (!is.null(rv$hplc_clean) && nrow(rv$hplc_clean) > 0) ||
+                    (!is.null(rv$icp_clean) && nrow(rv$icp_clean) > 0)
+    
+    if (!has_any_data) {
+      rv$log_step7 <- "⚠ No cleaned data available. Please complete Step 6 (Data Fusion) first."
+      return()
+    }
+    
     rv$log_step7 <- ""
     tryCatch({
       option <- input$step7_option
@@ -1143,11 +1487,16 @@ server <- function(input, output, session) {
 
       append_log("log_step7", sprintf("── Hybrid Pipeline Analysis [%s] ──", option))
 
-      # Build data combinations from cleaned datasets
-      all_clean <- list(
-        gc      = rv$gc_clean,
-        gc_icp  = rv$gc_icp_clean
-      )
+      # Build data combinations from cleaned datasets (include all available)
+      all_clean <- list()
+      if (!is.null(rv$gc_clean) && nrow(rv$gc_clean) > 0) all_clean$gc <- rv$gc_clean
+      if (!is.null(rv$hplc_clean) && nrow(rv$hplc_clean) > 0) all_clean$hplc <- rv$hplc_clean
+      if (!is.null(rv$icp_clean) && nrow(rv$icp_clean) > 0) all_clean$icp <- rv$icp_clean
+      if (!is.null(rv$gc_hplc_clean) && nrow(rv$gc_hplc_clean) > 0) all_clean$gc_hplc <- rv$gc_hplc_clean
+      if (!is.null(rv$gc_icp_clean) && nrow(rv$gc_icp_clean) > 0) all_clean$gc_icp <- rv$gc_icp_clean
+      if (!is.null(rv$hplc_icp_clean) && nrow(rv$hplc_icp_clean) > 0) all_clean$hplc_icp <- rv$hplc_icp_clean
+      if (!is.null(rv$gc_hplc_icp_clean) && nrow(rv$gc_hplc_icp_clean) > 0) all_clean$gc_hplc_icp <- rv$gc_hplc_icp_clean
+      
       data_combinations <- all_clean[names(all_clean) %in% datasets_to_run]
 
       if (length(data_combinations) == 0) {
