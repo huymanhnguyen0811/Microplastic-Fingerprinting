@@ -27,13 +27,10 @@ PlastiPrint/
 ├── PlastiPrint_app-UI.R                                   ← the Shiny app
 ├── Helper_Functions_for_Computational_Workflow_06Feb2026.R ← helper functions
 └── Raw Data - for Github only/
-    ├── ATDGCMS/
-    ├── HPLCTOFMS/
-    │   ├── EF_Non-target data_Batch 0/
-    │   ├── EF_Non-target data_Batch 1/
-    │   └── EF_Non-target data_Batch 2/
-    ├── ICPMS_Trace metal/
-    └── Sample Labelling_all data_GC+HPLC+ICP_30Sept2025.xlsx
+    ├── ATDGCMS_data.xlsx
+    ├── HPLCQTOFMS_data.xlsx
+    ├── ICPMSMS_data.xlsx
+    └── Sample Labelling_all data_GC+HPLC+ICP_26Feb2026.xlsx
 ```
 
 ### 2. Place files
