@@ -9,7 +9,7 @@ The app provides a 9-tab guided workflow that takes users from raw instrumental 
 ## License
 
 - **Code**: GNU AGPL v3.0 only (AGPL-3.0-only) — see `LICENSE.txt`
-- **Data**: CC BY-SA 4.0 — see `data/LICENSE-DATA.txt`
+- **Data**: CC BY-SA 4.0 — see `Raw Data - for Github only/LICENSE-DATA.txt`
 
 ---
 
