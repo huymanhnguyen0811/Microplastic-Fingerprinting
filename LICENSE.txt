@@ -6,8 +6,6 @@ They are licensed separately:
 
 1) Source Code (software, scripts, pipelines)
    License: GNU Affero General Public License v3.0 only (AGPL-3.0-only).
-   See: LICENSE
-
    Practical effect (high level): if you modify the code and provide it to others, or run a modified version to provide a network service to users, you must make the corresponding source code available under the same AGPL license terms.
 
 2) Data (datasets, tables, extracted features, example inputs/outputs, and other non-software research data unless otherwise noted)
