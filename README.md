@@ -13,10 +13,20 @@ The app provides a 9-tab guided workflow that takes users from raw instrumental 
 
 ---
 
+## 🧰 System requirements
+
+- **OS**: Developed on Windows 11 (11th Gen Intel® Core™ i7‑11800H, 16 GB RAM)
+- **R**: 4.3.1 (or newer recommended)
+- **RStudio**: 2023.06.0+421 “Mountain Hydrangea” (or newer)
+
+---
+
 ## Prerequisites
 
 - **R ≥ 4.2** — <https://cran.r-project.org>
 - **RStudio** (recommended) — <https://posit.co/downloads/>
+
+---
 
 ## Installation
 
