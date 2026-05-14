@@ -13,11 +13,12 @@ The app provides a 9-tab guided workflow that takes users from raw instrumental 
 
 ---
 
-## 🧰 System requirements
+## 💻 System Specifications
 
-- **OS**: Developed on Windows 11 (11th Gen Intel® Core™ i7‑11800H, 16 GB RAM)
-- **R**: 4.3.1 (or newer recommended)
-- **RStudio**: 2023.06.0+421 “Mountain Hydrangea” (or newer)
+Developed and tested on:
+- **OS**: Windows 11 Pro 64-bit (Build 26200)
+- **Processor**: 11th Gen Intel Core i7-11800H @ 2.30 GHz (16 CPUs)
+- **Memory**: 16 GB RAM
 
 ---
 
@@ -154,15 +155,6 @@ Select Step 7 results, configure distance metric (manhattan/euclidean/bray) and 
 | `Raw Data - for Github only/` | Raw instrumental data (ATD-GC-MS, HPLC-QToF-MS, ICP-MS/MS) |
 | `Supplementary documents for publication/` | Supplementary materials accompanying the publication |
 | `R package versions.txt` | Exact package versions for reproducibility |
-
----
-
-## 💻 System Specifications
-
-Developed and tested on:
-- **OS**: Windows 11 Pro 64-bit (Build 26200)
-- **Processor**: 11th Gen Intel Core i7-11800H @ 2.30 GHz (16 CPUs)
-- **Memory**: 16 GB RAM
 
 ---
 
