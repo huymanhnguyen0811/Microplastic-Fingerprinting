@@ -203,20 +203,16 @@ Reads three raw ICP-MS Excel files plus three matching recovery/uncertainty Exce
 
 Merges plastic type, subcategory, and polymer labels from the sample-labelling file. Creates all dataset combinations (gc, hplc, icp, and their fusions).
 
-![Step 5 — Label file selection and run button](images/step5_label_upload.png)
-
-![Step 5 — Datasets summary table showing rows and feature counts per combination](images/step5_summary.png)
+![Step 5 — Label file selection -> run button -> Datasets summary table showing rows and feature counts per combination](images/step5_summary.png)
 
 ---
 
 ### Step 6 — Feature Reduction & Data Fusion
 
 - **6.1–6.3 Feature Reduction**: pick a single-instrument dataset (`gc`, `hplc`, or `icp`) and choose a filtering method (regular 80% rule, modified 80% rule, or in-house comprehensive 4-rule filter).
-- **6.4 Data Fusion**: applies in-house filtering per instrument, then fuses multi-instrument datasets (`gc_hplc`, `gc_icp`, `hplc_icp`, `gc_hplc_icp`).
+- **6.4 Data Fusion**: applies in-house filtering per instrument, then fuses multi-instrument datasets (`gc_hplc`, `gc_icp`, `hplc_icp`, `gc_hplc_icp`).Selec
 
-![Step 6 — Feature reduction options and filtering statistics](images/step6_filter.png)
-
-![Step 6 — Fusion summary table](images/step6_fusion.png)
+![Step 6 — Feature reduction options and filtering statistics and Fusion summary table](images/step6_summary.png)
 
 ---
 
@@ -256,9 +252,7 @@ After the run finishes, three dropdowns under **View results** populate automati
 | **Selected Features** | The actual features chosen by each method for the currently-viewed fold. Empty methods get an explicit row reading "(no features selected — not computed for this fold)". |
 | **Best Imputation+Normalization** | The best (imputation, normalization) pair per fold from the screening step. Shows "—" cleanly if screening was disabled. |
 
-![Step 7 — Confusion matrix view](images/step7_confmat.png)
-
-![Step 7 — Aggregated metrics table (mean ± SD across folds)](images/step7_metrics.png)
+![Step 7 — View Random Forest results](images/step7_viewresults.png)
 
 #### Exporting results
 
@@ -279,8 +273,6 @@ HCA operates on the post-processing (imputed + normalized) data from a Step 7 fo
 | **Linkage method** | Average (default) / Complete / Single / Ward.D2 |
 
 Click **Run HCA** to build and display the dendrogram. The cophenetic correlation coefficient (CCC) is printed above the plot.
-
-![Step 8 — Distance and linkage configuration](images/step8_config.png)
 
 #### Output tabs (right)
 
