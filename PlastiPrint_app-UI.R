@@ -76,10 +76,10 @@ suppressPackageStartupMessages({
 })
 
 # ── 2.  Source helper functions ───────────────────────────────────────────────
-helper_file <- file.path(getwd(), "Helper_Functions_for_Computational_Workflow_06Feb2026.R")
+helper_file <- file.path(getwd(), "Helper Function using only RF_Github_13May2026.R")
 if (!file.exists(helper_file)) {
   # Also try one level up or in the app directory
-  alt <- list.files(path = c(".", ".."), pattern = "Helper.*Functions.*\\.R$",
+  alt <- list.files(path = c(".", ".."), pattern = "Helper.*Function.*\\.R$",
                     full.names = TRUE, recursive = FALSE)
   if (length(alt)) helper_file <- alt[1]
 }
@@ -135,9 +135,9 @@ ui <- dashboardPage(
       menuItem("Step 3 — Source",   tabName = "step3",    icon = icon("tags")),
       menuItem("Step 4 — Metals",   tabName = "step4",    icon = icon("flask")),
       menuItem("Step 5 — Labels",   tabName = "step5",    icon = icon("link")),
-      menuItem("Step 6 — Features", tabName = "step6",    icon = icon("cut")),
-      menuItem("Step 7 — ML",       tabName = "step7",    icon = icon("brain")),
-      menuItem("Step 8 — HCA",      tabName = "step8",    icon = icon("project-diagram"))
+      menuItem("Step 6 — Features", tabName = "step6",    icon = icon("cut")) #,
+      # menuItem("Step 7 — ML",       tabName = "step7",    icon = icon("brain")),
+      # menuItem("Step 8 — HCA",      tabName = "step8",    icon = icon("project-diagram"))
     ),
     hr(),
     div(style = "padding: 10px; font-size: 11px; color: #aaa;",
@@ -167,20 +167,17 @@ ui <- dashboardPage(
       tabItem("welcome",
         fluidRow(
           box(width = 12, status = "primary", solidHeader = TRUE,
-              title = "Welcome to PlastiPrint",
-              h4("Chemical Fingerprints of New vs. Weathered Microplastics"),
-              p("This GUI walks you through the complete computational",
-                "workflow for microplastic chemical fingerprinting.",
-                "Each tab on the left corresponds to a major step."),
+              title = "Welcome to PlastiPrint - A R Shiny App for Data processing & Source tracking of Complex contaminant mixtures",
+              h4("This GUI was developed from the publication, titled:", 
+                 tags$b("Chemical Fingerprints of New vs. Weathered Microplastics")),
+              p("This GUI walks you through the complete computational workflow for microplastic chemical fingerprinting. Each tab on the left corresponds to a major step."),
               tags$ol(
                 tags$li(tags$b("Step 1:"), " Import raw data (ATD-GC-MS / HPLC-TOF-MS) and group compounds"),
                 tags$li(tags$b("Step 2:"), " Blank subtraction & negative-peak removal"),
                 tags$li(tags$b("Step 3:"), " Assign source (Store-Bought / Environmental)"),
                 tags$li(tags$b("Step 4:"), " Import ICP-MS trace-metal data"),
                 tags$li(tags$b("Step 5:"), " Merge label information & create dataset combinations"),
-                tags$li(tags$b("Step 6:"), " Feature reduction (Regular 80%, Modified 80%, In-House) & data fusion"),
-                tags$li(tags$b("Step 7:"), " Hybrid pipeline ML optimization with ensemble feature selection"),
-                tags$li(tags$b("Step 8:"), " Hierarchical Cluster Analysis")
+                tags$li(tags$b("Step 6:"), " Feature reduction (Regular 80%, Modified 80%, In-House) & data fusion")
               ),
               hr(),
               h4("Getting Started"),
@@ -400,113 +397,9 @@ ui <- dashboardPage(
               )
           )
         )
-      ),
-
-      # ────────────────────── STEP 7 ──────────────────────
-      tabItem("step7",
-        fluidRow(
-          box(width = 4, status = "primary", solidHeader = TRUE,
-              title = "Step 7: Hybrid Pipeline ML Optimization",
-              h5("Train / Test Strategy"),
-              radioButtons("step7_option", "Training approach:",
-                choices = c(
-                  "Store-Bought → Predict Environmental" = "sb_only",
-                  "Both (SB+ENV) → Predict Environmental" = "sb_env"
-                ), selected = "sb_only"),
-              h5("Datasets to analyze"),
-              checkboxGroupInput("step7_datasets", NULL,
-                choices = c("gc", "gc_icp"),
-                selected = c("gc", "gc_icp")),
-              hr(),
-              h5("Pipeline Search Space"),
-              checkboxGroupInput("step7_impute", "Imputation methods:",
-                choices  = c("half_min", "median", "knn"),
-                selected = c("half_min", "median", "knn"), inline = TRUE),
-              checkboxGroupInput("step7_norm", "Normalization methods:",
-                choices  = c("none", "log", "log10", "zscore", "pareto"),
-                selected = c("none", "log", "log10", "zscore", "pareto"),
-                inline = TRUE),
-              checkboxGroupInput("step7_algo", "ML algorithms:",
-                choices  = c("ranger", "svmRadial", "xgbTree"),
-                selected = c("ranger", "svmRadial", "xgbTree"), inline = TRUE),
-              hr(),
-              h5("Feature Selection Thresholds"),
-              sliderInput("step7_top_pct", "Top % features per pipeline:",
-                          min = 0.05, max = 0.50, value = 0.20, step = 0.05),
-              sliderInput("step7_stab", "Stability threshold:",
-                          min = 0.30, max = 0.90, value = 0.60, step = 0.05),
-              sliderInput("step7_rank", "Mean rank percentile:",
-                          min = 0.10, max = 0.50, value = 0.30, step = 0.05),
-              hr(),
-              h5("Other Settings"),
-              numericInput("step7_cv", "CV folds:", 5, min = 2, max = 10),
-              numericInput("step7_topk", "Top-k pipelines:", 5, min = 2, max = 20),
-              numericInput("step7_nperm", "Permutation reps:", 10, min = 5, max = 50),
-              numericInput("step7_seed", "Random seed:", 123, min = 1),
-              checkboxInput("step7_parallel", "Use parallel processing", FALSE),
-              hr(),
-              actionButton("run_step7", "Run Hybrid Analysis",
-                           class = "btn-danger btn-lg",
-                           icon = icon("play"),
-                           style = "width:100%;"),
-              p(tags$small("⚠ This step may take several minutes.")),
-              hr(),
-              actionButton("go_step8", "Next → Step 8",
-                           class = "btn-info nav-step-btn", icon = icon("arrow-right"))
-          ),
-          box(width = 8, status = "info", solidHeader = TRUE,
-              title = "Results",
-              tabsetPanel(
-                tabPanel("Console Log",
-                         div(class = "log-box", textOutput("step7_log"))),
-                tabPanel("Best Pipeline", verbatimTextOutput("step7_best")),
-                tabPanel("Metrics", DTOutput("step7_metrics_table")),
-                tabPanel("Confusion Matrix", plotOutput("step7_cm_plot",
-                                                        height = "500px")),
-                tabPanel("Feature Tiers", plotOutput("step7_tier_plot",
-                                                     height = "600px")),
-                tabPanel("Top Features", DTOutput("step7_features_table"))
-              )
-          )
-        )
-      ),
-
-      # ────────────────────── STEP 8 ──────────────────────
-      tabItem("step8",
-        fluidRow(
-          box(width = 4, status = "primary", solidHeader = TRUE,
-              title = "Step 8: Hierarchical Cluster Analysis",
-              selectInput("hca_source", "Use results from:",
-                choices = c("Step 7 Option 1 (SB train)" = "sb",
-                            "Step 7 Option 2 (SB+ENV train)" = "sb_env"),
-                selected = "sb"),
-              selectInput("hca_dataset", "Dataset:", choices = c("gc", "gc_icp"),
-                          selected = "gc"),
-              selectInput("hca_dist", "Distance method:",
-                choices = c("manhattan", "euclidean", "bray"),
-                selected = "manhattan"),
-              selectInput("hca_link", "Linkage method:",
-                choices = c("average", "complete", "ward.D2", "single"),
-                selected = "average"),
-              actionButton("run_step8", "Run HCA",
-                           class = "btn-primary", icon = icon("project-diagram")),
-              hr(),
-              h5("Export"),
-              downloadButton("download_hca", "Download Dendrogram (PDF)")
-          ),
-          box(width = 8, status = "info", solidHeader = TRUE,
-              title = "Dendrogram",
-              tabsetPanel(
-                tabPanel("Plot",
-                         plotOutput("step8_dendro", height = "600px")),
-                tabPanel("Console Log",
-                         div(class = "log-box", textOutput("step8_log"))),
-                tabPanel("CCC",
-                         verbatimTextOutput("step8_ccc"))
-              )
-          )
-        )
       )
+    
+      
     ) # end tabItems
   ) # end dashboardBody
 ) # end dashboardPage
@@ -552,11 +445,6 @@ server <- function(input, output, session) {
     gc_hplc_clean   = NULL,
     hplc_icp_clean  = NULL,
     gc_hplc_icp_clean = NULL,
-    # Step 7
-    hybrid_results_sb     = NULL,
-    hybrid_results_sb_env = NULL,
-    # Step 8
-    hca_result      = NULL,
 
     # Logs
     log_step1 = "Awaiting input...",
@@ -565,8 +453,6 @@ server <- function(input, output, session) {
     log_step4 = "Awaiting input...",
     log_step5 = "Run Steps 1-4 first.",
     log_step6 = "Run Step 5 first.",
-    log_step7 = "Run Step 6 first.",
-    log_step8 = "Run Step 7 first.",
     step6_stats_text = ""
   )
 
@@ -587,8 +473,6 @@ server <- function(input, output, session) {
   observeEvent(input$go_step4, updateTabItems(session, "main_tabs", "step4"))
   observeEvent(input$go_step5, updateTabItems(session, "main_tabs", "step5"))
   observeEvent(input$go_step6, updateTabItems(session, "main_tabs", "step6"))
-  observeEvent(input$go_step7, updateTabItems(session, "main_tabs", "step7"))
-  observeEvent(input$go_step8, updateTabItems(session, "main_tabs", "step8"))
 
   # ── Set directory ───────────────────────────────────────────────────────────
   observeEvent(input$set_dir, {
@@ -1101,13 +985,13 @@ server <- function(input, output, session) {
         return(kept_names)
       }
 
-      icpms_r1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx") %>% remove_H2_HMI_modus()
-      icpms_r2b1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch1_rawdata.xlsx") %>% remove_H2_HMI_modus()
-      icpms_r2b2 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx") %>% remove_H2_HMI_modus()
+      icpms_r1 <- read_trace_metal("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx") %>% remove_H2_HMI_modus()
+      icpms_r2b1 <- read_trace_metal("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/icpms_round2_batch1_rawdata_26Feb2026.xlsx") %>% remove_H2_HMI_modus()
+      icpms_r2b2 <- read_trace_metal("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx") %>% remove_H2_HMI_modus()
 
-      rec_unc_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx")
-      rec_unc_2_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx")
-      rec_unc_2_2 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx")
+      rec_unc_1 <- readxl::read_excel("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx")
+      rec_unc_2_1 <- readxl::read_excel("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx")
+      rec_unc_2_2 <- readxl::read_excel("./Microplastic manuscript 1 - Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx")
 
       fn1 <- get_final_metal_names(rec_unc_1, colnames(icpms_r1))
       fn2_1 <- get_final_metal_names(rec_unc_2_1, colnames(icpms_r2b1))
@@ -1453,290 +1337,8 @@ server <- function(input, output, session) {
     }
     datatable(rv$fusion_summary, options = list(dom = 't'))
   })
-
-  # ===========================================================================
-  #  STEP 7  —  Hybrid ML Pipeline
-  # ===========================================================================
-  observeEvent(input$run_step7, {
-    # Check if any cleaned data is available
-    has_any_data <- (!is.null(rv$gc_clean) && nrow(rv$gc_clean) > 0) ||
-                    (!is.null(rv$gc_icp_clean) && nrow(rv$gc_icp_clean) > 0) ||
-                    (!is.null(rv$hplc_clean) && nrow(rv$hplc_clean) > 0) ||
-                    (!is.null(rv$icp_clean) && nrow(rv$icp_clean) > 0)
-    
-    if (!has_any_data) {
-      rv$log_step7 <- "⚠ No cleaned data available. Please complete Step 6 (Data Fusion) first."
-      return()
-    }
-    
-    rv$log_step7 <- ""
-    tryCatch({
-      option <- input$step7_option
-      datasets_to_run <- input$step7_datasets
-
-      # Validate selections
-      if (length(input$step7_impute) == 0 || length(input$step7_norm) == 0 ||
-          length(input$step7_algo) == 0) {
-        append_log("log_step7", "✗ Please select at least one imputation, normalization, and algorithm.")
-        return()
-      }
-      if (length(datasets_to_run) == 0) {
-        append_log("log_step7", "✗ Please select at least one dataset.")
-        return()
-      }
-
-      append_log("log_step7", sprintf("── Hybrid Pipeline Analysis [%s] ──", option))
-
-      # Build data combinations from cleaned datasets (include all available)
-      all_clean <- list()
-      if (!is.null(rv$gc_clean) && nrow(rv$gc_clean) > 0) all_clean$gc <- rv$gc_clean
-      if (!is.null(rv$hplc_clean) && nrow(rv$hplc_clean) > 0) all_clean$hplc <- rv$hplc_clean
-      if (!is.null(rv$icp_clean) && nrow(rv$icp_clean) > 0) all_clean$icp <- rv$icp_clean
-      if (!is.null(rv$gc_hplc_clean) && nrow(rv$gc_hplc_clean) > 0) all_clean$gc_hplc <- rv$gc_hplc_clean
-      if (!is.null(rv$gc_icp_clean) && nrow(rv$gc_icp_clean) > 0) all_clean$gc_icp <- rv$gc_icp_clean
-      if (!is.null(rv$hplc_icp_clean) && nrow(rv$hplc_icp_clean) > 0) all_clean$hplc_icp <- rv$hplc_icp_clean
-      if (!is.null(rv$gc_hplc_icp_clean) && nrow(rv$gc_hplc_icp_clean) > 0) all_clean$gc_hplc_icp <- rv$gc_hplc_icp_clean
-      
-      data_combinations <- all_clean[names(all_clean) %in% datasets_to_run]
-
-      if (length(data_combinations) == 0) {
-        append_log("log_step7", "✗ No datasets selected or available.")
-        return()
-      }
-
-      # Parallel setup
-      if (input$step7_parallel) {
-        num_cores <- max(1, parallel::detectCores(logical = FALSE) - 1)
-        cl <- parallel::makePSOCKcluster(num_cores)
-        doParallel::registerDoParallel(cl)
-        append_log("log_step7", sprintf("  Parallel: %d cores", num_cores))
-      }
-
-      t0 <- Sys.time()
-      results <- list()
-
-      withProgress(message = "Running hybrid analysis...", value = 0, {
-        n_datasets <- length(data_combinations)
-        for (i in seq_along(data_combinations)) {
-          name <- names(data_combinations)[i]
-          incProgress(1 / n_datasets, detail = paste("Dataset:", name))
-          append_log("log_step7", sprintf("\n  Processing: %s ...", name))
-
-        # Determine the split argument based on option
-        use_sb_only   <- (option == "sb_only")
-        use_source_sp <- (option == "sb_env")
-
-        args <- list(
-          data = data_combinations[[name]],
-          type_col = "Plastic_type",
-          remove_cols = c("Source", "Polymer", "technique"),
-          data_name = name,
-          imputation_methods = input$step7_impute,
-          normalization_methods = input$step7_norm,
-          algorithms = input$step7_algo,
-          cv_folds = input$step7_cv,
-          top_k = input$step7_topk,
-          top_percent = input$step7_top_pct,
-          stability_threshold = input$step7_stab,
-          mean_rank_percentile = input$step7_rank,
-          n_permutations = input$step7_nperm,
-          parallel = FALSE,
-          seed = input$step7_seed,
-          min_sample_number = 2,
-          verbose = TRUE
-        )
-
-        if (use_sb_only) {
-          args$use_store_vs_environmental_split <- TRUE
-        } else {
-          args$use_source_split <- TRUE
-        }
-
-        results[[name]] <- do.call(run_hybrid_analysis_manuscript1, args)
-        gc()
-        }
-      }) # end withProgress
-
-      t1 <- Sys.time()
-      append_log("log_step7", sprintf("\n  Total run time: %.2f minutes",
-                                      as.numeric(difftime(t1, t0, units = "mins"))))
-
-      if (input$step7_parallel) {
-        parallel::stopCluster(cl)
-        foreach::registerDoSEQ()
-      }
-
-      # Store results
-      if (option == "sb_only") {
-        rv$hybrid_results_sb <- results
-      } else {
-        rv$hybrid_results_sb_env <- results
-      }
-
-      append_log("log_step7", "✓ Hybrid analysis complete. Check the results tabs.")
-    },
-    error = function(e) append_log("log_step7", paste("✗ ERROR:", conditionMessage(e))))
-  })
-
-  # Step 7 output renderers
-  output$step7_log <- renderText(rv$log_step7)
-
-  get_step7_result <- reactive({
-    res <- if (input$step7_option == "sb_only") rv$hybrid_results_sb else rv$hybrid_results_sb_env
-    if (is.null(res) || length(res) == 0) return(NULL)
-    # Prefer the first selected dataset that has results
-    for (nm in input$step7_datasets) {
-      if (!is.null(res[[nm]])) return(res[[nm]])
-    }
-    # Fallback to first result
-    res[[1]]
-  })
-
-  output$step7_best <- renderText({
-    r <- get_step7_result()
-    req(r)
-    paste(
-      sprintf("Best Pipeline:"),
-      sprintf("  Imputation:    %s", r$best_imputation %||% "N/A"),
-      sprintf("  Normalization: %s", r$best_normalization %||% "N/A"),
-      sprintf("  Algorithm:     %s", r$best_algorithm %||% "N/A"),
-      "",
-      sprintf("MCC:               %.4f", r$mcc %||% NA),
-      sprintf("Balanced Accuracy: %.4f", r$metrics$macro_recall %||% NA),
-      sprintf("Macro F1:          %.4f", r$metrics$macro_f1 %||% NA),
-      sep = "\n"
-    )
-  })
-
-  output$step7_metrics_table <- renderDT({
-    r <- get_step7_result()
-    req(r)
-    m <- r$metrics
-    df <- data.frame(
-      Metric = c("MCC", "Accuracy", "Balanced Accuracy", "Macro F1", "Kappa"),
-      Value  = round(c(m$mcc %||% NA, m$accuracy %||% NA,
-                       m$macro_recall %||% NA, m$macro_f1 %||% NA,
-                       m$kappa %||% NA), 4)
-    )
-    datatable(df, options = list(dom = 't'))
-  })
-
-  output$step7_cm_plot <- renderPlot({
-    r <- get_step7_result()
-    req(r, r$plots$confusion_matrix)
-    r$plots$confusion_matrix
-  })
-
-  output$step7_tier_plot <- renderPlot({
-    r <- get_step7_result()
-    req(r, r$plots$feature_tiers)
-    r$plots$feature_tiers
-  })
-
-  output$step7_features_table <- renderDT({
-    r <- get_step7_result()
-    req(r, r$feature_tiers)
-    datatable(r$feature_tiers[, c("feature", "stability_score", "mean_rank", "tier")],
-              options = list(scrollX = TRUE, pageLength = 20))
-  })
-
-  # ===========================================================================
-  #  STEP 8  —  HCA
-  # ===========================================================================
-  observeEvent(input$run_step8, {
-    rv$log_step8 <- ""
-    tryCatch({
-      append_log("log_step8", "── Hierarchical Cluster Analysis ──")
-
-      # Get the right results object
-      src <- input$hca_source
-      ds  <- input$hca_dataset
-      res_list <- if (src == "sb") rv$hybrid_results_sb else rv$hybrid_results_sb_env
-      req(res_list)
-
-      target_obj <- res_list[[ds]]
-      if (is.null(target_obj)) target_obj <- res_list[[1]]
-      if (is.null(target_obj)) stop("No results found from Step 7.")
-
-      df <- dplyr::bind_rows(
-        target_obj$final_imp_norm_train,
-        target_obj$final_imp_norm_test
-      ) %>%
-        dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
-        dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE))
-
-      if ("Source" %in% names(df)) {
-        df <- df %>% dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
-      } else {
-        df <- df %>% dplyr::mutate(Plastic_type_Source = Plastic_type)
-      }
-
-      hc_df <- df %>%
-        dplyr::select(-any_of(c("Subcategory","Source","Plastic_type","Polymer","technique"))) %>%
-        dplyr::select(where(is.numeric)) %>%
-        as.data.frame()
-
-      hc_df[!is.finite(as.matrix(hc_df))] <- 0
-      keep <- rowSums(hc_df, na.rm = TRUE) > 0
-      hc_df_clean <- hc_df[keep, , drop = FALSE]
-      labels_clean <- df$Plastic_type_Source[keep]
-
-      dist_method <- input$hca_dist
-      link_method <- input$hca_link
-
-      if (dist_method == "bray") {
-        if (any(hc_df_clean < 0, na.rm = TRUE)) {
-          append_log("log_step8", "  Negative values detected — falling back to manhattan.")
-          dist_method <- "manhattan"
-        }
-      }
-
-      d <- if (dist_method == "bray") {
-        vegan::vegdist(hc_df_clean, method = "bray")
-      } else if (dist_method == "manhattan") {
-        vegan::vegdist(hc_df_clean, method = "manhattan")
-      } else {
-        dist(hc_df_clean, method = dist_method)
-      }
-
-      if (any(!is.finite(d))) stop("Distance matrix has non-finite entries.")
-
-      hca_obj <- hclust(d, method = link_method)
-      ccc <- cor(d, stats::cophenetic(hca_obj))
-
-      rv$hca_result <- list(hca = hca_obj, labels = labels_clean, ccc = ccc)
-
-      append_log("log_step8", sprintf("  Distance: %s  |  Linkage: %s", dist_method, link_method))
-      append_log("log_step8", sprintf("  Cophenetic correlation: %.4f", ccc))
-      append_log("log_step8", "✓ HCA complete.")
-    },
-    error = function(e) append_log("log_step8", paste("✗ ERROR:", conditionMessage(e))))
-  })
-
-  output$step8_log <- renderText(rv$log_step8)
-  output$step8_ccc <- renderText({
-    req(rv$hca_result)
-    sprintf("Cophenetic Correlation Coefficient (CCC): %.4f", rv$hca_result$ccc)
-  })
-  output$step8_dendro <- renderPlot({
-    req(rv$hca_result)
-    par(cex = 0.7, mar = c(5, 4, 2, 1))
-    plot(rv$hca_result$hca, labels = rv$hca_result$labels, hang = -1,
-         main = "Hierarchical Cluster Analysis", xlab = "", sub = "")
-  })
-
-  output$download_hca <- downloadHandler(
-    filename = function() paste0("PlastiPrint_HCA_", Sys.Date(), ".pdf"),
-    content = function(file) {
-      req(rv$hca_result)
-      pdf(file, width = 16, height = 8)
-      par(cex = 0.6)
-      plot(rv$hca_result$hca, labels = rv$hca_result$labels, hang = -1,
-           main = "PlastiPrint — HCA Dendrogram", xlab = "", sub = "")
-      dev.off()
-    }
-  )
-
+  
+  
 } # end server
 
 # =============================================================================
