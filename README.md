@@ -129,7 +129,7 @@ For exact versions used during development, see `R package versions.txt`.
 
 ## Launching the App
 
-**RStudio:** Open `PlastiPrint_app-UI_13May2026_version2.R` → click **Run App** in the top-right of the editor pane.
+**If you use RStudio:** Open `PlastiPrint_app-UI_13May2026_version2.R` → click **Run App** in the top-right of the editor pane.
 
 **R console:**
 ```r
