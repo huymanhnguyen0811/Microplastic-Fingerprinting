@@ -33,10 +33,9 @@ Developed and tested on:
 
 | File / Folder | Description |
 |---|---|
-| `PlastiPrint_app-UI.R` | The Shiny application (main entry point) |
-| `Helper Functions for Computational Workflow_06Feb2026.R` | Custom functions for compound grouping, imputation, and feature filtering |
-| `Complete workflow.Rmd` | The original R Markdown workflow (non-GUI version) |
-| `recommended worflow for imputation and normalization and ML algorithms selection_05Feb2026.R` | Diagnostic tests for choosing appropriate ML algorithms |
+| `PlastiPrint_app-UI_13May2026_version2.R` | The Shiny application (main entry point) |
+| `Helper Function using only RF_Github_13May2026.R` | Custom functions for compound grouping, imputation, and feature filtering |
+| `Complete workflow_13May2026.Rmd` | The original R Markdown workflow (non-GUI version) |
 | `Scripts for Tables and Figures (maintext and SI).Rmd` | Scripts for publication figures and tables |
 | `Raw Data - for Github only/` | Raw instrumental data (ATD-GC-MS, HPLC-QToF-MS, ICP-MS/MS) |
 | `Supplementary documents for publication/` | Supplementary materials accompanying the publication |
