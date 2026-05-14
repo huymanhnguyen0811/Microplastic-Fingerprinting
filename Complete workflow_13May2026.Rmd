@@ -1,0 +1,767 @@
+---
+title: "Microplastic fingerprinting"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+# SPDX-License-Identifier: AGPL-3.0-only
+
+```{r setup, include=FALSE}
+# Set root directory to the project root (Project folder)
+# This assumes the .Rmd is in the root of the project.
+knitr::opts_knit$set(root.dir = getwd())
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(out.width='750px', dpi=200)
+```
+
+## Documentation
+
+This repo is accompanying the publication: "Chemical Fingerprints of New vs. Weathered Microplastics: A Machine Learning Approach"
+
+## Loading Packages and Functions
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# if packages are not install then install
+required_packages <- c("tidyverse", "readxl", "writexl", "data.table", "crayon", "grid", "gridExtra", "stats", "vegan", "cluster", "factoextra", "FactoMineR", "ggforce", "MASS", "caret", "randomForest", "ranger", "pheatmap", "viridis", "missForest", "pROC", "VIM", "softImpute", "ggpubr", "RANN", "foreach", "doParallel", "parallel", "ggplot2")
+
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) {
+  install.packages(new_packages)
+}
+
+# #########################
+##   Load Libraries    ##
+#########################
+library(tidyverse) # Loads dplyr, tidyr, purrr, ggplot2, readr, tibble
+library(readxl)
+library(writexl)
+library(data.table)
+library(crayon)
+library(grid)
+library(gridExtra)
+library(stats)
+library(vegan)
+library(cluster)
+library(factoextra)
+library(FactoMineR)
+library(ggforce)
+library(MASS)
+library(caret)
+library(randomForest)
+library(ranger)
+library(pheatmap)
+library(viridis)
+library(missForest)
+library(pROC)
+library(VIM)
+library(softImpute)
+library(ggpubr)
+library(RANN)
+library(foreach)
+library(doParallel)
+library(parallel)
+library(ggplot2)
+
+# Load Helper Functions
+# Ensure the helper script is in the same folder as this Rmd
+helper_file <- "C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Roxana- Nature_Microplastic Project paper/Helper Function using only RF_Github_13May2026.R"
+#  "Helper Functions for Computational Workflow.R"
+if(file.exists(helper_file)) {
+  source(helper_file)
+} else {
+  warning(paste("CRITICAL WARNING: Helper file '", helper_file, "' not found in working directory:", getwd()))
+}
+
+# --- OPTIMIZATION: Helper function for Stats Reporting in Step 6 ---
+print_filtering_stats <- function(results, meta_cols = c("Plastic_type", "technique", "Source", "Polymer", "Subcategory")) {
+  
+  df_final <- results$filtered_data
+  df_orig  <- results$original_data
+  
+  # Get list of feature names only
+  feats_final <- setdiff(names(df_final), meta_cols)
+  feats_orig  <- setdiff(names(df_orig), meta_cols)
+  
+  # 1. Percentage of chemical features retained (%)
+  pct_features <- (length(feats_final) / length(feats_orig)) * 100
+  cat(paste0("1. Percentage of chemical features retained: ", round(pct_features, 2), "%\n"))
+  
+  # 2. Percentage of missing values after feature reduction (%)
+  if(length(feats_final) > 0) {
+    vals_final <- df_final[, feats_final, drop = FALSE]
+    pct_missing <- (sum(is.na(vals_final)) / prod(dim(vals_final))) * 100
+    cat(paste0("2. Percentage of missing values after feature reduction: ", round(pct_missing, 2), "%\n"))
+  } else {
+    cat("2. Percentage of missing values after feature reduction: 0% (No features left)\n")
+    vals_final <- data.frame(0) # Placeholder for signal calc
+  }
+  
+  # 3. Percentage of signal response after feature reduction (%)
+  signal_final <- sum(vals_final, na.rm = TRUE)
+  signal_orig  <- sum(df_orig[, feats_orig, drop = FALSE], na.rm = TRUE)
+  pct_signal   <- (signal_final / signal_orig) * 100
+  cat(paste0("3. Percentage of signal response after feature reduction: ", round(pct_signal, 2), "%\n"))
+}
+```
+
+## Step 1.1: Data import
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS -----------------------------------------------------------------
+# Using relative path
+path_atdgcms <- "./Raw data/ATDGCMS"
+
+if(!dir.exists(path_atdgcms)) warning(paste("Directory not found:", path_atdgcms))
+
+atdgcms_list <- list.files(path = path_atdgcms, pattern = '*.csv', full.names = TRUE) %>%
+  .[!str_detect(., "2022")] %>%
+  # remove USE samples with only 1 replication or specific exclusions
+  .[!str_detect(., "USE_(01|02|05|06|09|10|11|12|13|15|16|17|18|19|20)")] %>%
+  .[!str_detect(., "USSB_(01|08)")]
+
+# Blank samples 
+blank_list <- list.files(path = path_atdgcms, pattern = '*.csv', full.names = TRUE) %>%
+  .[str_detect(., "2022-")]
+
+# Import samples to list
+read_and_add_filename <- function(file) {
+  data.table::fread(
+    file,
+    showProgress = FALSE,
+    data.table = FALSE,
+    check.names = TRUE
+  ) %>%
+    mutate(File = basename(file))
+}
+
+atdgcms_step1.1 <- data.table::rbindlist(
+  lapply(atdgcms_list, read_and_add_filename),
+  use.names = TRUE,
+  fill = TRUE
+) %>%
+  as.data.frame() %>%
+  dplyr::select(-any_of(c("Start", "End", "Width", "Base.Peak", "Cpd", "Label", "Height", "Ions"))) %>%
+  dplyr::mutate(File = gsub("_", "-", File)) %>%
+  dplyr::mutate(File = gsub(".csv", "", File)) %>%
+  mutate(type = "Sample")
+
+atdgcms_blank <- data.table::rbindlist(
+  lapply(blank_list, function(path) {
+    data.table::fread(path, showProgress = FALSE, check.names = TRUE)
+  }),
+  use.names = TRUE,
+  fill = TRUE
+) %>%
+  as.data.frame() %>%
+  dplyr::select(any_of(c("Area", "File", "m.z", "RT"))) %>%
+  mutate(type = "Blanks")
+
+atdgcms_step1.1 <- bind_rows(atdgcms_step1.1, atdgcms_blank) %>% 
+  arrange(RT) %>%
+  mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, pattern = "-")[c(4, 5)], collapse = "-")))
+
+# HPLCTOFMS ---------------------------------------------------------------
+
+# Define relative paths for batches
+path_batch0 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 0"
+path_batch1 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 1"
+path_batch2 <- "./Raw data/HPLCTOFMS/EF_Non-target data_Batch 2"
+
+# Function to safely list files and read them
+read_hplc_batch <- function(dir_path, batch_num) {
+  
+  if(!dir.exists(dir_path)) {
+    warning(paste("Directory not found:", dir_path))
+    return(data.frame())
+  }
+  
+  cache_dir <- "./data_cache"
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  cache_file <- file.path(cache_dir, paste0("hplc_batch_", batch_num, "_skip1.rds"))
+  
+  files_all <- list.files(path = dir_path, pattern = '*.xls', full.names = TRUE)
+  if (length(files_all) == 0) return(data.frame())
+  
+  file_info <- file.info(files_all)
+  cur_sig <- data.frame(
+    path = normalizePath(files_all, winslash = "/", mustWork = FALSE),
+    mtime = as.numeric(file_info$mtime),
+    size = as.numeric(file_info$size),
+    stringsAsFactors = FALSE
+  )
+  
+  if (file.exists(cache_file)) {
+    cached <- readRDS(cache_file)
+    if (is.list(cached) && is.data.frame(cached$files) && identical(cached$files, cur_sig)) {
+      return(cached$data)
+    }
+  }
+  
+  # Get Sample Files
+  files_sample <- files_all[!str_detect(files_all, "Blank")]
+  
+  # Get Blank Files
+  files_blank <- files_all[str_detect(files_all, "Blank")]
+  
+  # Read and combine
+  read_xls_fast <- function(path) {
+    readxl::read_xls(path, skip = 1) %>% as.data.frame()
+  }
+  
+  combined <- data.table::rbindlist(
+    c(lapply(files_sample, read_xls_fast),
+      lapply(files_blank, read_xls_fast)),
+    use.names = TRUE,
+    fill = TRUE
+  ) %>%
+    as.data.frame() %>%
+  dplyr::select(m.z = `m/z`, RT, Height, File) %>%
+  mutate(File = gsub("_", "-", File),
+         type = ifelse(str_detect(File, "Blank"), "Blanks", "Sample"),
+         Day = case_when(str_detect(File, "Day0") ~ "0",
+                         str_detect(File, "Day2") ~ "2",
+                         str_detect(File, "Day15") ~ "15",
+                         TRUE ~ "34"),
+         Replicate = ifelse(str_detect(File, "R1"), "R1", "R2"),
+         Batch_number = as.character(batch_num))
+  
+  saveRDS(list(files = cur_sig, data = combined), cache_file)
+  return(combined)
+}
+
+# Import Batches
+hplc_batch0_step1.1 <- read_hplc_batch(path_batch0, 0) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[1:2], collapse = "-")))
+
+hplc_batch1_step1.1 <- read_hplc_batch(path_batch1, 1) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
+
+hplc_batch2_step1.1 <- read_hplc_batch(path_batch2, 2) %>%
+   mutate(simplified_file = map_chr(File, ~ paste(str_split_1(.x, "-")[2:3], collapse = "-")))
+
+# Combine All using data.table::rbindlist() (much faster than bind_rows)
+all_hplc <- data.table::rbindlist(list(hplc_batch0_step1.1,
+                                        hplc_batch1_step1.1,
+                                        hplc_batch2_step1.1), use.names = TRUE, fill = TRUE) %>% arrange(RT)
+```
+
+## Step 1.2: Collapsing compounds based on RT1, RT2, Ion1 threshold
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+atdgcms_grouped <- grouping_comp(atdgcms_step1.1,
+                                 rtthres1 = 0.005,
+                                 mzthres = 0.05,
+                                 type = "ATDGCMS")
+
+# HPLCTOFMS
+# Apply different alignment to 2 parts of chromatogram via rtthres1 (RT <= 6 min) and rtthres2 (RT > 6 min)
+hplc_batch_grouped <- grouping_comp(all_hplc,
+                                    split_time = 6,
+                                    rtthres1 = 0.4,
+                                    rtthres2 = 0.28,
+                                    mzthres = 0.0005,
+                                    type = "HPLCTOFMS")
+```
+
+## Step 1.3: Remove all the benchmark compounds for HPLC (4) and GC (1 - Toluene)
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+idx <- which(atdgcms_grouped$m.z >= 98 & 
+               atdgcms_grouped$m.z <= 98.5 & 
+               atdgcms_grouped$RT > 13.4 & 
+               atdgcms_grouped$RT < 13.5)
+if(length(idx) > 0) atdgcms_grouped <- atdgcms_grouped[-idx,]
+
+# HPLC
+hplc_benchmark_mz <- c(156.0957, 198.1723, 246.2568, 305.1956, 342.1722)
+hplc_benchmark_idx <- c()
+for (mz in hplc_benchmark_mz) {
+  # Vectorized check for range
+  idx <- which(abs(hplc_batch_grouped$m.z - mz) <= 0.0005)
+  hplc_benchmark_idx <- c(hplc_benchmark_idx, idx)
+}
+if(length(hplc_benchmark_idx) > 0) hplc_batch_grouped <- hplc_batch_grouped[-hplc_benchmark_idx,]
+```
+
+
+## Step 2: Blank subtraction & Remove all detections with negative peak area
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS Optimization
+atdgcms_adjusted_step3 <- atdgcms_grouped %>%
+  dplyr::group_by(Feature) %>%
+  dplyr::mutate(
+    # Check if this feature has any blanks
+    has_blank = any(type == "Blanks"),
+    # Calculate blank stats (returns NA if no blanks, handled by check)
+    blank_mean = mean(Area[type == "Blanks"], na.rm = TRUE),
+    blank_sd   = sd(Area[type == "Blanks"], na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  # Filter: Keep samples (discard blanks)
+  dplyr::filter(type != "Blanks") %>%
+  # Apply subtraction logic
+  dplyr::mutate(
+    Area = if_else(has_blank, Area - blank_mean, Area),
+    # If no blank exists, treat threshold as 0 (always keep positive)
+    threshold = if_else(has_blank, 3 * blank_sd, 0)
+  ) %>%
+  # Keep only positive areas above threshold
+  dplyr::filter(Area > 0, Area > threshold) %>%
+  dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
+
+# HPLCTOFMS Optimization (Group by Batch AND Feature)
+hplc_adjusted_step3 <- hplc_batch_grouped %>%
+  dplyr::group_by(Batch_number, Feature) %>%
+  dplyr::mutate(
+    has_blank = any(type == "Blanks"),
+    blank_mean = mean(Height[type == "Blanks"], na.rm = TRUE),
+    blank_sd   = sd(Height[type == "Blanks"], na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  dplyr::filter(type != "Blanks") %>%
+  dplyr::mutate(
+    Height = if_else(has_blank, Height - blank_mean, Height),
+    threshold = if_else(has_blank, 3 * blank_sd, 0)
+  ) %>%
+  dplyr::filter(Height > 0, Height > threshold) %>%
+  dplyr::select(-has_blank, -blank_mean, -blank_sd, -threshold)
+```
+
+# Step 3: Add info on Source and rename columns
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# ATDGCMS
+gc <- atdgcms_adjusted_step3 %>%
+  dplyr::filter(!is.na(Feature)) %>%
+  dplyr::select(File, Feature, m.z, RT, Area) %>%
+  mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+  dplyr::rename(Values = Area) %>%
+  mutate(technique = "GC")
+
+# HPLCTOFMS
+hplc <- hplc_adjusted_step3 %>% 
+  dplyr::filter(!is.na(Feature)) %>%
+  dplyr::select(File, Feature, m.z, RT, Height) %>%
+  dplyr::mutate(Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought")) %>%
+  dplyr::rename(Values = Height) %>%
+  mutate(technique = "HPLC")
+```
+
+# Step 4: Importing Trace metal data
+
+#### Data prepping
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Helper to read excel safely
+read_trace_metal <- function(path) {
+  if(!file.exists(path)) stop(paste("File missing:", path))
+  readxl::read_excel(path) %>% column_to_rownames(var = "File")
+}
+
+# Trace metal data
+icpms_round1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round1_rawdata_removal USE-01-rep1 and USE-03 (only2observations).xlsx")
+icpms_round2_batch1 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch1_rawdata.xlsx")
+icpms_round2_batch2 <- read_trace_metal("./Raw data/ICPMS_Trace metal/icpms_round2_batch2_rawdata.xlsx")
+
+# 1) Select [H2] instead of [H2 HMI]
+remove_H2_HMI_modus <- function(icpms_df) {
+  strings <- colnames(icpms_df)
+  pattern <- "^(.*\\[ )([A-Za-z0-9 ]+)( \\])$"
+  
+  # Filter out H2 HMI
+  keep_cols <- strings[!str_detect(str_match(strings, pattern)[,3], "H2 HMI")]
+  icpms_df %>% dplyr::select(all_of(keep_cols))
+}
+
+icpms_round1 <- remove_H2_HMI_modus(icpms_round1)
+icpms_round2_batch1 <- remove_H2_HMI_modus(icpms_round2_batch1)
+icpms_round2_batch2 <- remove_H2_HMI_modus(icpms_round2_batch2)
+
+# 2) Process Uncertainty/Recovery
+# Load auxiliary files
+rec_unc_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round1.xlsx")
+rec_unc_2_1 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch1.xlsx")
+rec_unc_2_2 <- readxl::read_excel("./Raw data/ICPMS_Trace metal/Trace metal data_Recovery_Uncertainty_round2_batch2.xlsx")
+
+# Function to select best method per element
+get_final_metal_names <- function(recovery_uncertainty, target_cols) {
+  # Filter to columns actually present in the data
+  recovery_uncertainty <- recovery_uncertainty %>% filter(`Element+Modus` %in% target_cols)
+  
+  first_numbers <- sub(" .*", "", recovery_uncertainty$`Element+Modus`)
+  
+  # Identify duplicates
+  dupes <- first_numbers[duplicated(first_numbers)] %>% unique()
+  
+  kept_names <- c()
+  
+  # Process all unique elements
+  for(num in unique(first_numbers)) {
+    rows <- recovery_uncertainty[first_numbers == num, ]
+    if(nrow(rows) == 1) {
+      kept_names <- c(kept_names, rows$`Element+Modus`)
+    } else {
+      # Selection logic: Max Recovery, else Min Uncertainty
+      best_row <- rows[which.max(rows$`Recovery [%]`), ]
+      if(nrow(best_row) == 0) best_row <- rows[which.min(rows$`U(k=2)`), ]
+      kept_names <- c(kept_names, best_row$`Element+Modus`)
+    }
+  }
+  return(kept_names)
+}
+
+final_names_1 <- get_final_metal_names(rec_unc_1, colnames(icpms_round1))
+final_names_2_1 <- get_final_metal_names(rec_unc_2_1, colnames(icpms_round2_batch1))
+final_names_2_2 <- get_final_metal_names(rec_unc_2_2, colnames(icpms_round2_batch2))
+
+# Subset
+final_icpms_round1 <- icpms_round1 %>% dplyr::select(all_of(final_names_1))
+final_icpms_round2_batch1 <- icpms_round2_batch1 %>% dplyr::select(all_of(final_names_2_1))
+final_icpms_round2_batch2 <- icpms_round2_batch2 %>% dplyr::select(all_of(final_names_2_2))
+
+# Combine
+common_cols <- Reduce(intersect, list(names(final_icpms_round1), names(final_icpms_round2_batch1), names(final_icpms_round2_batch2)))
+combined_icpms <- rbind(final_icpms_round1[common_cols], final_icpms_round2_batch1[common_cols], final_icpms_round2_batch2[common_cols])
+
+# 4) Discard Seawater Metals
+strings_to_remove <- c("Na", "Mg", "K", "Ca")
+cols_to_remove <- unique(unlist(sapply(strings_to_remove, function(x) grep(x, colnames(combined_icpms)))))
+if(length(cols_to_remove) > 0) combined_icpms <- combined_icpms[, -cols_to_remove]
+
+icp <- combined_icpms %>%
+  rownames_to_column(., var = "File")  %>% 
+  pivot_longer(., cols = 2:ncol(.), names_to = "Feature", values_to = "Values") %>%
+  mutate(
+    technique = "ICP",
+    Source = ifelse(str_detect(File, "USE"), "Environmental", "Store-Bought"),
+    Values = as.numeric(Values)
+  )
+```
+
+# Step 5: Combine Label Info with raw data
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+p <- "./Raw data/Sample Labelling_all data_GC+HPLC+ICP_26Feb2026.xlsx"
+if(!file.exists(p)) stop(paste("Label file not found:", p))
+
+cache_dir <- "./data_cache"
+cache_file <- file.path(cache_dir, "step5_combined_labeled.rds")
+use_step5_cache <- TRUE
+loaded_from_cache <- FALSE
+
+if (use_step5_cache && file.exists(cache_file)) {
+  cached <- readRDS(cache_file)
+  cached_mtime <- cached$meta$label_mtime
+  current_mtime <- as.numeric(file.info(p)$mtime)
+  
+  if (is.list(cached) &&
+      is.list(cached$data) &&
+      isTRUE(all.equal(cached_mtime, current_mtime))) {
+    gc <- cached$data$gc
+    hplc <- cached$data$hplc
+    icp <- cached$data$icp
+    gc_hplc <- cached$data$gc_hplc
+    gc_icp <- cached$data$gc_icp
+    hplc_icp <- cached$data$hplc_icp
+    gc_hplc_icp <- cached$data$gc_hplc_icp
+    sampinfo <- cached$data$sampinfo
+    loaded_from_cache <- TRUE
+  }
+  
+  rm(cached)
+}
+
+if (!loaded_from_cache) {
+  sampinfo <- readxl::read_excel(path = p) %>% 
+    dplyr::select(c(File, Plastic_type, Subcategory, Polymer))
+  
+  # Join Info
+  icp <- left_join(icp, sampinfo, by = 'File')
+  gc <- left_join(gc, sampinfo, by = 'File')
+  hplc <- left_join(hplc, sampinfo, by = 'File')
+  
+  # Create Combinations
+  gc_hplc <- bind_rows(gc, hplc)
+  gc_icp <- bind_rows(icp, gc %>% dplyr::select(-c("m.z", "RT"))) 
+  hplc_icp <- bind_rows(icp, hplc %>% dplyr::select(-c("m.z", "RT"))) 
+  gc_hplc_icp <- bind_rows(icp, gc_hplc %>% dplyr::select(-c("m.z", "RT")))
+  
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  cache_payload <- list(
+    meta = list(label_file = p, label_mtime = as.numeric(file.info(p)$mtime)),
+    data = list(
+      gc = gc,
+      hplc = hplc,
+      icp = icp,
+      gc_hplc = gc_hplc,
+      gc_icp = gc_icp,
+      hplc_icp = hplc_icp,
+      gc_hplc_icp = gc_hplc_icp,
+      sampinfo = sampinfo
+    )
+  )
+  saveRDS(cache_payload, cache_file)
+}
+```
+
+
+# Step 6: Feature Reduction
+
+### Summary report of data metrics before applying feature reduction
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+df_in <- gc
+
+# 1. Process Data ONCE (Consolidated Pivot)
+df_wide <- df_in %>% 
+  dplyr::select(File, Plastic_type, Source, Polymer, Feature, technique, Values) %>%
+  dplyr::group_by(File, Source, Polymer, Plastic_type, technique, Feature) %>%
+  dplyr::summarise(Values = mean(Values, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = Feature, values_from = Values) %>%
+  tibble::column_to_rownames(var = "File") 
+
+df_numeric <- df_wide %>% dplyr::select(where(is.numeric))
+
+# --- Basic Statistics ---
+cat("Number of chemical features: ", ncol(df_numeric), "\n")
+missing_pct <- sum(is.na(df_numeric)) / prod(dim(df_numeric)) * 100
+cat("Percentage of missing values (%):", round(missing_pct, 2), "\n")
+
+# --- Correlations ---
+stats_df <- tibble::tibble(
+  Feature = colnames(df_numeric),
+  num_missing_values = colSums(is.na(df_numeric)),
+  mean_response = colMeans(df_numeric, na.rm = TRUE)
+)
+
+if (all(c("m.z", "RT") %in% colnames(df_in))) {
+  feature_meta <- df_in %>%
+    dplyr::group_by(Feature) %>%
+    dplyr::summarise(
+      m_z = mean(m.z, na.rm = TRUE),
+      retention_time = mean(RT, na.rm = TRUE),
+      .groups = "drop"
+    )
+  analysis_df <- stats_df %>% dplyr::left_join(feature_meta, by = "Feature")
+  cat("Pearson (Mean Response vs Missing):", round(cor(analysis_df$mean_response, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (m/z vs Missing):          ", round(cor(analysis_df$m_z, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+  cat("Pearson (RT vs Missing):           ", round(cor(analysis_df$retention_time, analysis_df$num_missing_values, use = "pairwise"), 2), "\n")
+} else {
+  cat("Pearson (Mean Response vs Missing):", round(cor(stats_df$mean_response, stats_df$num_missing_values, use = "pairwise.complete.obs"), 2), "\n")
+  message("NOTE: 'm.z' and 'RT' columns missing. Skipping specific correlations.")
+}
+```
+
+### Step 6.1 - Feature reduction Option 1: Regular 80% rule - Remove feature if there are more than 80% MVs
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+results <- shared_feature_filtering(gc, feat_reduc_mode = "regular80")
+print_filtering_stats(results)
+```
+
+### Step 6.2 - Feature reduction Option 2: Modified 80% rule
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+results <- shared_feature_filtering(gc, feat_reduc_mode = "modified80")
+print_filtering_stats(results)
+```
+
+
+### Step 6.3 - Feature reduction Option 3: In-house Comprehensive feature filtering 
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+results <- shared_feature_filtering(gc, feat_reduc_mode = "inhouse")
+print_filtering_stats(results)
+```
+
+### Step 6.4 - Data fusion to create multi-instrumental datasets
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# 1. Apply feature reduction to single analytical datasets
+gc_clean   <- shared_feature_filtering(gc, feat_reduc_mode = "inhouse")$filtered_data
+hplc_clean <- shared_feature_filtering(hplc, feat_reduc_mode = "inhouse")$filtered_data
+icp_clean  <- shared_feature_filtering(icp, feat_reduc_mode = "inhouse")$filtered_data
+
+# 2. Create data fusion combos (Fusion of single Filtered analytical Data)
+gc_hplc_fused     <- data_fusion(gc_hplc, source_feats = list(gc_clean, hplc_clean))
+gc_icp_fused      <- data_fusion(gc_icp, source_feats = list(gc_clean, icp_clean))
+hplc_icp_fused    <- data_fusion(hplc_icp, source_feats = list(hplc_clean, icp_clean))
+gc_hplc_icp_fused <- data_fusion(gc_hplc_icp, source_feats = list(gc_clean, hplc_clean, icp_clean))
+
+# 3. Quality Assurance Report (Example: GC dataset)
+# We need the Original Data (Unfiltered, Wide Format) to compare against Fused Data
+# Helper 'process_and_filter' can generate this structure cleanly.
+class_col <- "Plastic_type" # Define class column locally to avoid errors
+
+# Use helper to get raw wide data (threshold=0 returns standard object with original_data)
+# We use GC-ICP as the example for the report
+temp_res <- process_and_filter(gc_icp, class_col = class_col, threshold = 0.8, filter_mode = "none")
+
+# Create a results object for the stats printer
+# filtered_data = The fused result (Step 2)
+# original_data = The raw wide result (Step 3 temp_res)
+fusion_results <- list(
+    filtered_data = gc_icp_fused,
+    original_data = temp_res$original_data
+)
+
+# Print Stats
+cat("--- Quality Assurance Report for GC-ICP Data Fusion ---\n")
+print_filtering_stats(fusion_results)
+```
+
+
+# Step 7: Random Forest
+
+### Option 1: Use SB to predict ENV - Only select shared features between SB and ENV 
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# 1. Parallel Setup
+num_cores <- max(1, parallel::detectCores(logical = FALSE) - 1)
+cl <- parallel::makePSOCKcluster(num_cores)
+doParallel::registerDoParallel(cl)
+cat("Parallel processing registered with", num_cores, "cores.\n")
+
+t0 <- Sys.time()
+data_combinations <- list(
+  gc = gc_clean
+)
+
+# Store results
+rf_results_SB_train <- list()
+
+for(name in names(data_combinations)) {
+  cat("Processing dataset:", name, "\n")
+  
+  rf_results_SB_train[[name]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[name]],
+    type_col = "Plastic_type", 
+    remove_cols = c("Source", "Polymer", "technique"),
+    train_proportion = 0.8,
+    use_store_vs_environmental_split = TRUE,
+    data_name = name, 
+    group_for_significance = "Plastic_type", 
+    do_pairwise_test = TRUE,
+    do_top_importance_selection = TRUE,
+    do_rfa = TRUE,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 1
+  )
+  gc() # Memory cleanup
+}
+
+t1 <- Sys.time()
+print(paste0("Total run time: ", round(as.numeric(difftime(t1, t0, units = "secs")), 2), " seconds"))
+stopCluster(cl)
+registerDoSEQ()
+```
+
+### Option 2: Use Both SB and ENV to predict ENV
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Re-init Parallel for safety
+num_cores <- max(1, parallel::detectCores(logical = FALSE) - 1)
+cl <- parallel::makePSOCKcluster(num_cores)
+doParallel::registerDoParallel(cl)
+
+t0 <- Sys.time()
+data_combinations <- list(
+  gc = gc_clean
+)
+
+rf_results_SB_ENV_train <- list()
+
+for(name in names(data_combinations)) {
+  cat("Processing dataset:", name, "\n")
+  
+  rf_results_SB_ENV_train[[name]] <- run_rf_analysis_manuscript1(
+    data = data_combinations[[name]],
+    data_name = name, 
+    use_source_split = TRUE,
+    type_col = "Plastic_type", 
+    remove_cols = c("Source", "Polymer", "technique"),
+    group_for_significance = "Plastic_type",
+    do_pairwise_test = TRUE,
+    do_top_importance_selection = TRUE,
+    do_rfa = TRUE,
+    train_proportion = 0.8,
+    do_impute_norm_screen = TRUE,
+    seed = 123,
+    min_sample_number = 1
+  )
+  gc()
+}
+
+t1 <- Sys.time()
+print(paste0("Total run time: ", round(as.numeric(difftime(t1, t0, units = "secs")), 2), " seconds"))
+stopCluster(cl)
+registerDoSEQ()
+```
+
+### Export Results for Publication
+
+```{r class.source = 'fold-hide', echo=FALSE, warning = FALSE, message=FALSE}
+# Export results for the primary analysis (GC dataset, Option 2)
+if (!is.null(rf_results_SB_ENV_train$gc)) {
+  export_rf_results(
+    rf_results_SB_ENV_train$gc,
+    output_dir = "./results",
+    fold = "fold1",
+    prefix = "gc_rf_classification"
+  )
+}
+```
+
+# Step 8: HCA
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Data prep for HCA
+# Use result from Step 7 Option 2
+target_obj <- rf_results_SB_ENV_train$gc
+if(is.null(target_obj)) target_obj <- rf_results_SB_ENV_train[[1]]
+
+# target_obj is a list of folds; use the first fold
+fold_obj <- if (is.list(target_obj) && !is.null(target_obj$final_imp_norm_train)) {
+  target_obj
+} else {
+  target_obj[[1]]
+}
+if (is.null(fold_obj)) stop("No folds found in rf_results_SB_ENV_train.")
+
+df <- dplyr::bind_rows(
+  fold_obj$final_imp_norm_train,
+  fold_obj$final_imp_norm_test
+) %>%
+  dplyr::mutate(Plastic_type = gsub("..", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type = gsub(".", " ", Plastic_type, fixed = TRUE)) %>%
+  dplyr::mutate(Plastic_type_Source = paste0(Plastic_type, "-", Source))
+
+hc_df <- df %>% 
+  dplyr::select(-any_of(c("Subcategory", "Source", "Plastic_type", "Polymer", "technique"))) %>% 
+  dplyr::select(where(is.numeric)) %>%
+  as.data.frame()
+
+# --- Clean: remove bad rows & handle non-finite values ---
+hc_df[!is.finite(as.matrix(hc_df))] <- 0
+keep <- rowSums(hc_df, na.rm = TRUE) > 0
+hc_df_clean <- hc_df[keep, , drop = FALSE] 
+labels_clean <- df$Plastic_type_Source[keep] 
+
+# --- Distance Calculation ---
+use_bray <- !any(hc_df_clean < 0, na.rm = TRUE)
+
+if (use_bray) {
+  d <- vegan::vegdist(hc_df_clean, method = "robust.aitchison")
+  link <- "average"
+} else {
+  d <- dist(hc_df_clean, method = "euclidean")
+  link <- "average"
+  message("Detected negative values; using Euclidean instead of Bray-Curtis.")
+}
+
+if (any(!is.finite(d))) stop("Distance matrix still has non-finite entries.")
+
+# --- Cluster & plot ---
+hca_samp <- hclust(d, method = link)
+cat("cophenetic correlation coefficient (CCC) from HCA is:", cor(d, stats::cophenetic(hca_samp)), "\n")
+
+par(cex = 1)
+plot(hca_samp, labels = labels_clean, hang = -1, main = "")
+```
