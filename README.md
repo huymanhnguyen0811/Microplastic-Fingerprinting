@@ -125,11 +125,7 @@ For exact versions used during development, see `R package versions.txt`.
 
 ---
 
-### 3. Launch the app
-
-See [**Launching the App**](#launching-the-app) below.
-
----
+### 3. Launch and how to use the PlastiPrint app
 
 ## Launching the App
 
