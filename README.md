@@ -4,7 +4,7 @@ PlastiPrint is an open-source R Shiny application for chemical fingerprinting of
 
 ## Overview
 
-The app provides a 9-tab guided workflow that takes users from raw instrumental data (ATD-GC-MS, HPLC-QToF-MS, ICP-MS/MS) through data processing, feature selection, ML classification (Random Forest, SVM, XGBoost), and hierarchical cluster analysis — all without writing code.
+The app provides a 9-tab guided workflow that takes users from raw instrumental data (ATD-GC-MS, HPLC-QToF-MS, ICP-MS/MS) through data processing, feature selection, ML classification (Random Forest, SVM, XGBoost), and hierarchical cluster analysis (HCA) — all without writing code.
 
 ## License
 
@@ -20,25 +20,12 @@ The app provides a 9-tab guided workflow that takes users from raw instrumental 
 
 ## Installation
 
-### 1. Project folder structure
-
-```
-PlastiPrint/
-├── PlastiPrint_app-UI.R                                   ← the Shiny app
-├── Helper_Functions_for_Computational_Workflow_06Feb2026.R ← helper functions
-└── Raw Data - for Github only/
-    ├── ATDGCMS_data.xlsx
-    ├── HPLCQTOFMS_data.xlsx
-    ├── ICPMSMS_data.xlsx
-    └── Sample Labelling_all data_GC+HPLC+ICP_26Feb2026.xlsx
-```
-
-### 2. Place files
+### 1. Place files
 
 1. Clone or download this repository.
 2. Ensure `PlastiPrint_app-UI.R` and the helper `.R` file are in the project root (same level as `Raw Data - for Github only/`).
 
-### 3. Install R packages
+### 2. Install R packages
 
 The first launch automatically installs any missing CRAN packages (5–10 min on initial run). To pre-install manually:
 
