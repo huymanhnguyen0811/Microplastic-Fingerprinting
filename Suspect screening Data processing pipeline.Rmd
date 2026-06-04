@@ -1,0 +1,744 @@
+---
+title: "Microplastic fingerprinting"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting")
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(out.width='750px', dpi=200)
+```
+
+## Documentation
+
+This repo is accompanying the publication: "Computational fingerprinting workflow for environmental source tracking of microplastic based on representative additives"
+
+Demo of each ML algorithms is shown below.
+
+#######################################################################################################
+################### DATA PROCESSING SECTION ##################################
+#######################################################################################################
+
+You can include R code in the document as follows:
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Loading Packages --------------------------------------------------------
+library(ggplot2)
+library(vegan)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(data.table)
+library(writexl)
+library(tidyr)
+library(grid)
+library(gridExtra)
+library(stats)
+library(FactoMineR)
+library(factoextra)
+library(ggforce)
+
+
+# Functions -------------------------------------------------------------------------------------------------------
+'%notin%' <- Negate('%in%')
+
+# Grouping compounds based on RT1, RT2, and Ion1 - Version 1
+grouping_comp <- function(data, rt_cutoff, rtthres1, rtthres2, mzthres_ppm, type) {
+  
+  # create empty list, each sub-list is a compound group with following criteria:
+  # rtthres: RT threshold window
+  # mzthres: mz threshold window
+  dat <- data[ , , drop = FALSE]  # Shallow copy to avoid modification of original data
+  
+  # Initialize the compound column filled with NA values
+  dat$Feature <- NA
+  i <- 1
+  j <- 1 # Counter for HPLC data only
+  
+  # Checkpoint for 'type' parameter
+  if (!(type %in% c("ATDGCMS", "HPLCTOFMS"))) {
+    stop("Invalid type specified. Must be either 'ATDGCMS' or 'HPLCTOFMS'")
+  }
+
+  # Loop through each row to group compounds
+  if (type %in% "HPLCTOFMS") {
+      # Split HPLC data into RT <= rt_cutoff min and RT > rt_cutoff min
+      dat1 <- dat %>% filter(RT <= rt_cutoff) %>% arrange(Name, m.z, RT)
+      dat2 <- dat %>% filter(RT > rt_cutoff) %>% arrange(Name, m.z, RT)
+      
+      for (row in 1:nrow(dat1)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        comp1 <- dat1[row,]$Name
+        rt <- base::as.numeric(dat1[row, "RT"])
+        mz <- base::as.numeric(dat1[row, "m.z"])
+        
+        idx1 <- which(
+          dat1$Name == comp1 &
+          dat1$RT <= (rt + rtthres1) & dat1$RT >= (rt - rtthres1) &
+            dat1$m.z <= (mz + (mz*mzthres_ppm/1000000)) & dat1$m.z >= (mz - (mz*mzthres_ppm/1000000)) &
+            is.na(dat1$Feature)
+        )
+        
+        if (length(idx1) > 0) {
+          dat1[idx1, "Feature"] <- paste0("Compound_RT1_", i, ".", type)
+          i <- i + 1
+        }  
+      }
+      
+      for (row in 1:nrow(dat2)) {
+        # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+        comp2 <- dat2[row,]$Name
+        rt <- base::as.numeric(dat2[row, "RT"])
+        mz <- base::as.numeric(dat2[row, "m.z"])
+        
+        idx2 <- which(
+          dat2$Name == comp2 &
+          dat2$RT <= (rt + rtthres2) & dat2$RT >= (rt - rtthres2) &
+            dat2$m.z <= (mz + (mz*mzthres_ppm/1000000)) & dat2$m.z >= (mz - (mz*mzthres_ppm/1000000)) &
+            is.na(dat2$Feature)
+        )
+        
+        if (length(idx2) > 0) {
+          dat2[idx2, "Feature"] <- paste0("Compound_RT2_", j, ".", type)
+          j <- j + 1
+        }  
+      }
+      
+      dat <- rbind(dat1, dat2)
+      
+  } else {
+    for (row in 1:nrow(dat)) {
+      
+      # filter data by index, ALWAYS DO THIS INSTEAD OF CREATE SUBSET DATAFRAME
+      rt <- base::as.numeric(dat[row, "RT"])
+      mz <- base::as.numeric(dat[row, "m.z"])
+      
+      idx <- which(
+        dat$RT <= (rt + rtthres1) & dat$RT >= (rt - rtthres1) &
+          dat$m.z <= (mz + mzthres) & dat$m.z >= (mz - mzthres) &
+          is.na(dat$Feature)
+      )
+      
+      if (length(idx) > 0) {
+        dat[idx, "Feature"] <- paste0("Compound_", i, ".", type)
+        i <- i + 1
+      }  
+    }
+  }
+  
+  return(dat)
+}
+```
+
+### STEP 1: Data import
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Reading in raw data as Excel files
+data <- readxl::read_xlsx("C:/Users/huyng/OneDrive - Toronto Metropolitan University/Microplastic/Microplastic-Fingerprinting/Eric PET 9th September 2024/Huy_PET Leachate Raw df_09-09-24.xlsx") %>% 
+  # Select which column you want to keep or remove from the raw data input
+  dplyr::select(-c(CAS, Score, Hits, `Diff (Tgt, ppm)`, `Flags (Tgt)`))
+
+# Convert column name of m.z to "m/z"
+colnames(data)[8] <- "m.z"
+# Optional step to better describe your sample
+data$Sample_name <- paste0(data$Product, "_", data$Day)
+
+data <- data %>% 
+  # select(-c(Product)) %>% 
+  relocate(Sample_name, .after = 2)
+
+# Check for each row of the input data, if the values of all blank columns are missing then we delete that row
+rows_to_remove <- rowSums(is.na(data[, 12:26])) == length(12:26)
+data <- data[!rows_to_remove, ]
+
+# (optional step) If you saw that the column Acetaminophen-d4 RT in your data does not have numerical type then your need to convert it to numeric.
+# data$`Acetaminophen-d4 RT` <- as.numeric(unlist(data$`Acetaminophen-d4 RT`))
+```
+
+### Quality assurance prior to STEP 2: Examine variation in RT of 4 benchmark compounds in HPLC across all samples with histogram distribution of RT of 4 benchmark compounds 
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+bm_df <- data %>%
+  group_by(Sample_name, Replicate, Day) %>%
+  summarise(Acetaminophen_RT = mean(`Acetaminophen-d4 RT`),
+            dTEP_RT = mean(`dTEP RT`),
+            dTPrP_RT = mean(`dTPrP RT`),
+            PPD_RT = mean(`13C-6PPD RT`),
+            dTPP_RT = mean(`dTPP RT`))
+
+# Plot scatter of RT distribution
+par(mfrow = c(3, 2))
+
+hist(bm_df$Acetaminophen_RT[bm_df$Acetaminophen_RT < 6], main = "Histogram of Acetaminophen_RT", xlab = "Values", ylab = "Frequency")
+hist(bm_df$dTEP_RT, main = "Histogram of dTEP_RT", xlab = "Values", ylab = "Frequency")
+hist(bm_df$dTPrP_RT, main = "Histogram of dTPrP_RT", xlab = "Values", ylab = "Frequency")
+hist(bm_df$PPD_RT, main = "Histogram of 6PPD_RT", xlab = "Values", ylab = "Frequency")
+hist(bm_df$dTPP_RT, main = "Histogram of dTPP_RT", xlab = "Values", ylab = "Frequency")
+```
+
+### STEP 2: Grouping compounds based on RT1, RT2, Ion1 threshold --------------------------
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# HPLCTOFMS
+# Apply different alignment to 2 parts of chromatogram via rtthres1 (RT <= 6 min) and rtthres2 (RT > 6 min)
+combined_df2_grouped <- grouping_comp(data,
+                                      rt_cutoff = 6,
+                                      rtthres1 = 0.15,
+                                      rtthres2 = 0.1,
+                                      mzthres_ppm = 10,
+                                      type = "HPLCTOFMS")
+```
+
+### Step 3: Calculate Relative Peak Area (RPA) using closest eluting benchmarks
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Feature cleaning layer 1: remove all unique aligned feature that only appears once because they are more likely to be random background chemical noise or artifact from instrumental analysis
+non_unique <- c()
+for (comp in unique(combined_df2_grouped$Feature)) {
+  idx <- which(grepl(comp, combined_df2_grouped$Feature, fixed = TRUE))
+  if (length(idx) < 2) {
+    next
+  } else {
+    non_unique <- c(non_unique, idx)
+  }
+}
+
+non_unique_df1 <- combined_df2_grouped[non_unique,] %>% 
+  relocate(Feature, .before = 1)
+
+# Feature cleaning layer 2 - (OPTIONAL step, can skip it if you don't want to apply this layer of feature reduction): For each aligned feature, if the feature occurs in 2 replicates of the same sample, keep those occurences and remove the rest 
+row_to_keep <- c()
+for (comp in unique(non_unique_df1$Feature)) {
+  idx <- which(grepl(comp, non_unique_df1$Feature, fixed = TRUE))
+  count <- c()
+  for (i in 1:length(unique(non_unique_df1[idx,]$Sample_name))) {
+    count <- c(count, length(unique(non_unique_df1[idx, ][which(non_unique_df1[idx,]$Sample_name == unique(non_unique_df1[idx,]$Sample_name)[i]), ]$Replicate)))
+  }
+  if (any(count > 1)) {
+    samp_to_keep <- unique(non_unique_df1[idx,]$Sample_name)[which(count > 1)]
+    row_to_keep <- c(row_to_keep, idx[which(non_unique_df1[idx,]$Sample_name %in% samp_to_keep)])
+  }
+}
+
+non_unique_df2 <- non_unique_df1[row_to_keep,]
+
+# Calculate. Relative Peak Area (RPA)
+tempdf_list <- list()
+i <- 1
+# calculate based on the closest eluting benchmark
+for (comp in unique(non_unique_df2$Feature)) {
+  idx <- which(non_unique_df2$Feature == comp)
+  tempdf <- non_unique_df2[idx,]
+  
+  # Calculate the difference in retention time between each unique feature with the benchmark compounds
+  min_Acetaminophen <- abs(mean(non_unique_df2[idx,]$RT) - mean(non_unique_df2[idx,]$`Acetaminophen-d4 RT`))
+  min_dTEP <- abs(mean(non_unique_df2[idx,]$RT) - mean(non_unique_df2[idx,]$`dTEP RT`))
+  min_dTPrP <- abs(mean(non_unique_df2[idx,]$RT) - mean(non_unique_df2[idx,]$`dTPrP RT`))
+  min_6PPD <- abs(mean(non_unique_df2[idx,]$RT) - mean(non_unique_df2[idx,]$`13C-6PPD RT`))
+  min_dTPP <- abs(mean(non_unique_df2[idx,]$RT) - mean(non_unique_df2[idx,]$`dTPP RT`))
+  all_min <- c(min_Acetaminophen, min_dTEP, min_dTPrP, min_6PPD, min_dTPP)
+  
+  # conditional statement to figure out which benchmark is the closest eluting benchmark and then calculate RPA by dividing Peak Area (raw) to the Area of the closest eluting benchmark compound
+  if (which(all_min == min(all_min, na.rm = TRUE)) == 1) {
+    tempdf$RPA <- tempdf$Area / tempdf$`Acetaminophen-d4 Area`
+    tempdf_list[[i]] <- tempdf
+    i <- i + 1
+  } else if (which(all_min == min(all_min, na.rm = TRUE)) == 2) {
+    tempdf$RPA <- tempdf$Area / tempdf$`dTEP Area`
+    tempdf_list[[i]] <- tempdf
+    i <- i + 1
+  } else if (which(all_min == min(all_min, na.rm = TRUE)) == 3) {
+    tempdf$RPA <- tempdf$Area / tempdf$`dTPrP Area`
+    tempdf_list[[i]] <- tempdf
+    i <- i + 1
+  } else if (which(all_min == min(all_min, na.rm = TRUE)) == 4) {
+    tempdf$RPA <- tempdf$Area / tempdf$`13C-6PPD Area`
+    tempdf_list[[i]] <- tempdf
+    i <- i + 1
+  } else {
+    tempdf$RPA <- tempdf$Area / tempdf$`dTPP Area`
+    tempdf_list[[i]] <- tempdf
+    i <- i + 1
+  }
+}
+
+rpa_df <- bind_rows(tempdf_list)
+```
+
+### Step 4: (OPTIONAL step, depending on your experimental design, use it if you leach over multiple days and have different concentration of the leachates between each sampling dates) - Calculate concentration corrected RPA by Day
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+rpa_df$corrected_rpa <- NA
+
+for (row in 1:nrow(rpa_df)) {
+  if (rpa_df[row,]$Day == 0) {
+    rpa_df[row,]$corrected_rpa <- rpa_df[row,]$RPA / rpa_df[row,]$`Conc Factor Day 0`
+  } else if (rpa_df[row,]$Day == 2) {
+    rpa_df[row,]$corrected_rpa <- rpa_df[row,]$RPA / rpa_df[row,]$`Conc Factor Day 2`
+  } else if (rpa_df[row,]$Day == 15) {
+    rpa_df[row,]$corrected_rpa <- rpa_df[row,]$RPA / rpa_df[row,]$`Conc Factor Day 15`
+  } else {
+    rpa_df[row,]$corrected_rpa <- rpa_df[row,]$RPA / rpa_df[row,]$`Conc Factor Day 34`
+  }
+}
+```
+
+### Step 5: Calculate the mean and standard deviation of RPA across replicates and blanks
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# If you ran step 4 
+if (!is.na(rpa_df$corrected_rpa)) {
+  avg_df <- rpa_df %>%
+    group_by(Feature, Sample_name, Day, Batch, Product) %>%
+    summarise(mean_corrected_rpa = mean(corrected_rpa),
+              sd_corrected_rpa = sd(corrected_rpa),
+              mean_RT = mean(RT)
+    )
+  
+} else { # If you did not run step 4
+  avg_df <- rpa_df %>%
+    group_by(Feature, Sample_name, Day, Batch, Product) %>%
+    summarise(mean_rpa = mean(RPA),
+              sd_rpa = sd(RPA),
+              mean_RT = mean(RT)
+    )
+}
+```
+
+
+### Step 6: Blank Subtraction per batch
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# If you ran step 4 - run the code chunk below --------
+df_list <- list()
+i <- 1
+for (comp in unique(avg_df$Feature)) {
+  tempdf1 <- avg_df[which(avg_df$Feature == comp),]
+  # for (day in unique(tempdf1$Day)) { # Comment out if you don't have multiple leaching days
+  # tempdf2 <- tempdf1[which(tempdf1$Day == day),] { # Comment out if you don't have multiple leaching days
+  blank_mean_corrected_rpa <- tempdf2[which(tempdf2$Product == "Blank"),]$mean_corrected_rpa
+  blank_sd_corrected_rpa <- tempdf2[which(tempdf2$Product == "Blank"),]$sd_corrected_rpa
+  if (length(blank_mean_corrected_rpa) != 0) {
+    tempdf2$blank_substracted <- tempdf2$mean_corrected_rpa - blank_mean_corrected_rpa
+    negative_idx <- which(tempdf2$blank_substracted < 0)
+    positive_idx <- which(tempdf2$blank_substracted > 0 & tempdf2$blank_substracted > 3*blank_sd_corrected_rpa) # Quick head-ups: you can potentially lost many features at this step because values after blank subtraction are < 3*blank_sd_corrected_rpa
+    
+    tempdf2 <- tempdf2[positive_idx,]
+    tempdf2 <- tempdf2[-negative_idx,] # remove obs. with negative blank_substracted values
+    df_list[[i]] <- tempdf2
+    i <- i + 1
+  } else {
+    tempdf2$blank_substracted <- tempdf2$mean_corrected_rpa
+    df_list[[i]] <- tempdf2
+    i <- i + 1
+  }
+}
+
+# If you did not run step 4 - run the code chunk below --------
+df_list <- list()
+i <- 1
+for (comp in unique(avg_df$Feature)) {
+  tempdf1 <- avg_df[which(avg_df$Feature == comp),]
+  # for (day in unique(tempdf1$Day)) { # Comment out if you don't have multiple leaching days
+  # tempdf2 <- tempdf1[which(tempdf1$Day == day),] { # Comment out if you don't have multiple leaching days
+  blank_mean_rpa <- tempdf2[which(tempdf2$Product == "Blank"),]$mean_rpa
+  blank_sd_rpa <- tempdf2[which(tempdf2$Product == "Blank"),]$sd_rpa
+  if (length(blank_mean_rpa) != 0) {
+    tempdf2$blank_substracted <- tempdf2$mean_rpa - blank_mean_rpa
+    negative_idx <- which(tempdf2$blank_substracted < 0)
+    positive_idx <- which(tempdf2$blank_substracted > 0 & tempdf2$blank_substracted > 3*blank_sd_rpa) # Quick head-ups: you can potentially lost many features at this step because values after blank subtraction are < 3*blank_sd_corrected_rpa
+    
+    tempdf2 <- tempdf2[positive_idx,]
+    tempdf2 <- tempdf2[-negative_idx,] # remove obs. with negative blank_substracted values
+    df_list[[i]] <- tempdf2
+    i <- i + 1
+  } else {
+    tempdf2$blank_substracted <- tempdf2$mean_rpa
+    df_list[[i]] <- tempdf2
+    i <- i + 1
+  }
+}
+
+bs_df <- bind_rows(df_list)
+
+bs_df <- rbind(bs_df, avg_df %>% filter(str_detect(Product, pattern = "Blank")))
+
+name <- c()
+for (row in 1:nrow(bs_df)) {
+  name <- c(name, unique(rpa_df[which(str_detect(rpa_df$Feature, pattern = bs_df[row,]$Feature)),]$Name))
+}
+
+bs_df$Name <- name
+bs_df <- bs_df %>% relocate(Name, .after = 1)
+
+# Exporting your final dataframe into Excel files for further usage
+writexl::write_xlsx(bs_df, path = paste0("blank_substracted_df_", format(Sys.Date(), "%d-%b-%Y"), ".xlsx"))
+writexl::write_xlsx(rpa_df, path = paste0("rpa_df_", format(Sys.Date(), "%d-%b-%Y"), ".xlsx"))
+```
+
+#######################################################################################################
+################### EXPLORATORY DATA ANALYSES AND CLUSTERING SECTION ##################################
+#######################################################################################################
+
+# Data import (usually after data processing step above, some user will change the name of column in the exported rpa_df above and may add new column so I keep this as a flexible import of their own dataframe for data analysis and clustering step)
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+ori_data <- readxl::read_xlsx("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Microplastic-Fingerprinting-scripts and data/Eric PMT Weathering _Suspect Screening_01July2024/Updated_Leachates_df.xlsx")
+```
+
+### Step 7 (option 1): Compound as predictor variables - output will be df where rows are samples and columns are Features
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+compound_df <- ori_data %>%
+  dplyr::select(Product, Feature, Day, Replicate, Batch, corrected_rpa) %>% 
+  dplyr::group_by(Product, Feature, Day, Replicate, Batch) %>%
+  dplyr::summarise(across(corrected_rpa, base::sum)) %>% 
+  tidyr::pivot_wider(names_from =  Feature,
+                     values_from = corrected_rpa) %>%
+  relocate(Product, Feature, Day, Replicate, Batch, .after = 1)
+```
+
+### Step 7 (option 2): Polymer as predictor variables || only use when you have Polymer identified in your dataset, otherwise skip it
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+polymer_df <- ori_data %>%
+  dplyr::select(Product, Feature, Day, Replicate, Batch, corrected_rpa) %>% 
+  dplyr::group_by(Product, Feature, Day, Replicate, Batch) %>%
+  dplyr::summarise(across(corrected_rpa, base::sum)) %>% 
+  tidyr::pivot_wider(names_from =  Polymer,
+                     values_from = corrected_rpa) %>%
+  relocate(Product, Feature, Day, Replicate, Batch, .after = 1)
+```
+
+### Step 7 (option 3): Polymer+Compound as predictor variables || only use when you have Polymer identified in your dataset, otherwise skip it
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+polymer_compound_df <- ori_data %>%
+  dplyr::mutate(polymer_feature =  paste0(Polymer, "_", Feature)) %>%
+  dplyr::select(Product, Feature, Day, Replicate, Batch, corrected_rpa) %>% 
+  dplyr::group_by(Product, Feature, Day, Replicate, Batch) %>%
+  dplyr::summarise(across(corrected_rpa, base::sum)) %>% 
+  tidyr::pivot_wider(names_from =  polymer_feature,
+                     values_from = corrected_rpa) %>%
+  relocate(Product, Feature, Day, Replicate, Batch, .after = 1)
+```
+
+### Step 8: Filling missing values and percentage normalization
+
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+## Choose which dataframe output from one of the three options above at Step 7: Compound || Polymer || Polymer+Compound as predictor variables
+df_0.001 <- copy(compound_df) 
+
+# Missing value imputation with 0.001
+for (r in 1:nrow(df_0.001)) {
+  df_0.001[r, which(base::is.na(df_0.001[r,]))] <- 0.001
+}
+
+input <- df_0.001
+
+# Percentage Normalization
+percentage_normalized_df <- as.data.frame(t(apply(input[, 6:ncol(input)],
+                                       MARGIN = 1, 
+                                       function(row) {row/sum(row, na.rm = TRUE)})))
+
+percentage_normalized_df <- percentage_normalized_df %>% 
+  dplyr::mutate(Day = input$Day) %>%
+  dplyr::mutate(Replicate = input$Replicate) %>%
+  dplyr::mutate(Batch = input$Batch) %>%
+  dplyr::mutate(Product = input$Product) %>%
+  relocate(Produc, Day, Replicate, Batch, .before = 1)
+
+# remove artifacts from Subset compound that only appear in 1 Source/Polymer/Product_Name
+percentage_normalized_df_cleaned <- na.omit(percentage_normalized_df)
+```
+
+### Step 9: Pairwise test
+
+**NOTE**: For each compound (aka. column) -> Need to subset any categories that have less than 3 samples into a different df for later inspection, because after filling in missing data, if two categories missing data for that compound entirely, they will be filled with exactly same values -> p-values will be NaN and have cannot compute exact p-value with ties.
+
+```{r class.source = 'fold-hide', echo = FALSE, message = FALSE, warning = FALSE}
+# Initiate empty df for storing wilcoxon test results
+input <- percentage_normalized_df_cleaned
+
+pairwise_df <- data.frame(Feature=character(), comparison_pair=character(), pval=integer())
+
+# Subset of compounds with less than 3 data points per category
+col_contain_category_with_less_than_three_obs <- c()
+
+for (col in 6:ncol(input)) {
+  
+  # looping through the combinations of product categories 
+  for (c in 1:ncol(utils::combn(unique(input$Product), 2))) {
+    # extract the combinations of product category pairs
+    p_1 <- utils::combn(unique(input$Product), 2)[1,c]
+    p_2 <- utils::combn(unique(input$Product), 2)[2,c]
+    
+    # If either one of the comparing category have less than 3 data points => move on to the next comparison pair
+    if (sum(!is.na(as.numeric(unlist(input[which(input$Product == p_1), col])))) < 3 |
+        sum(!is.na(as.numeric(unlist(input[which(input$Product == p_2), col])))) < 3) {
+      # print(col)
+      col_contain_category_with_less_than_three_obs <- c(col_contain_category_with_less_than_three_obs, col)
+      next
+    } else {
+      # if (input[which(input$Product_Name == p_1), col] | input[which(input$Product_Name == p_2), col])
+    # print(col)
+    #   print(paste0(p_1, "_", p_2))
+      # calculating the p-value between each product category pair 
+      pval <- stats::wilcox.test(input[which(input$Product == p_1), col], 
+                                 input[which(input$Product == p_2), col])$p.value
+      # assigning row information
+      pairwise_df[nrow(pairwise_df) + 1,] <- c(colnames(input)[col], 
+                                               paste0(p_1, " & ", p_2), 
+                                               pval)
+    }
+  }
+}
+
+sig_comp <- list()
+j <- 1
+pvaluecorrect <- c("holm", "hochberg", "hommel", "BH", "BY")
+for (m in pvaluecorrect) {
+  pairwise_df$adjusted_pvalue <- stats::p.adjust(pairwise_df$pval, method = m)
+  print(pairwise_df %>%
+          filter(., adjusted_pvalue < 0.05) %>%
+          arrange(adjusted_pvalue))
+  
+  sig_comp[[j]] <- pairwise_df %>%
+          filter(., adjusted_pvalue < 0.05) %>%
+          arrange(adjusted_pvalue)
+  j <- j + 1
+}
+
+not_corrected_pval <- pairwise_df %>%
+  filter(., pval < 0.05) %>% 
+  arrange(pval)
+
+
+
+rt <- c()
+mz <- c()
+comp <- c()
+for (row in 1:nrow(sig_comp[[1]])) {
+  # print(row)
+  rt <- c(rt, mean(ori_data[which(ori_data$Feature == sig_comp[[1]][row,]$Feature),]$Mean_RT))
+  mz <- c(mz, mean(ori_data[which(ori_data$Feature == sig_comp[[1]][row,]$Feature),]$`m/z`))
+  comp <- c(comp, unique(ori_data[which(ori_data$Feature == sig_comp[[1]][row,]$Feature),]$Name))
+  
+}
+
+sig_comp[[1]]$rt <- rt
+sig_comp[[1]]$mz <- mz
+sig_comp[[1]]$Compound <- comp
+
+View(sig_comp[[1]])
+```
+
+
+## Step 10: Clustering Analyses
+
+### Step 10.1: PCA
+```{r , echo=FALSE, warning = FALSE, message=FALSE}
+pca_dat <- percentage_normalized_df_cleaned 
+
+res.pca <- FactoMineR::PCA(
+  pca_dat[, -c(1,2,3,4,5)],
+  scale.unit = FALSE,
+  graph = FALSE)
+
+# Scree plot
+fviz_screeplot(res.pca, ncp=10)
+
+# Biplot
+factoextra::fviz_pca_biplot(res.pca,  
+                            geom = c("point", "text"),
+                            label = "none",
+                            # invisible = "var", 
+                            repel = TRUE,
+                            labelsize = 5, 
+                            habillage = factor(pca_dat$Polymer),
+                            addEllipses = TRUE,
+                            ellipse.level = 0.95,
+                            ggtheme = ggplot2::theme_minimal(base_size = 15),
+                            title = "POLYMER",
+                            # xlim = c(-200, 1000),
+                            # ylim = c(-100, 200)
+                            ) + 
+  guides(fill=guide_legend(ncol=5)) +
+  # if has error "Too few points to calculate an ellipse"
+  # ggforce::geom_mark_ellipse(aes(fill = Groups,
+  #                                color = Groups),
+  #                            label.buffer = unit(40, 'mm')) +
+  theme(legend.position = 'bottom',
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()
+        )
+```
+
+
+###  Step 10.2: t-SNE
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+# REFERENCES VISUALIZATION: 
+# https://plotly.com/r/t-sne-and-umap-projections/
+# https://distill.pub/2016/misread-tsne/
+
+library(tsne)
+library(plotly)
+
+clus_dat <- percentage_normalized_df_cleaned 
+features <- clus_dat[, -c(1,2,3,4,5)]
+
+tsne <- tsne(features,
+             initial_dims = 3, 
+             k = 3, 
+             perplexity = 20, # Hyperparameter: perplexity (optimal number of neighbors) < number of samples
+             max_iter = 1000
+             )
+
+pdb <- cbind(data.frame(tsne), clus_dat$Polymer)
+options(warn = -1)
+tsne_plot <- plot_ly(data = pdb ,x =  ~X1, y = ~X2, z = ~X3, 
+               color = ~clus_dat$Polymer) %>% 
+  add_markers(size = 8) %>%
+  layout( 
+    xaxis = list(
+      zerolinecolor = "#ffff",
+      zerolinewidth = 2,
+      gridcolor='#ffff'), 
+    yaxis = list(
+      zerolinecolor = "#ffff",
+      zerolinewidth = 2,
+      gridcolor='#ffff'),
+    scene =list(bgcolor = "#e5ecf6"))
+
+tsne_plot
+```
+
+###  Step 10.3: UMAP clustering 
+
+```{r, echo=FALSE, warning = FALSE, message=FALSE}
+library(umap)
+library(plotly)
+clus_dat <- percentage_normalized_df_cleaned 
+features <- clus_dat[, -c(1,2,3,4,5)]
+
+umap <- umap(features, n_components = 3,
+             method = 'naive', metric= "manhattan",
+             alpha = 0.0001, gamma = 0.0001)
+
+layout <- cbind(data.frame(umap[["layout"]]), clus_dat$Source)
+umap_plot <- plotly::plot_ly(layout, x = ~X1, y = ~X2, z = ~X3, 
+                color = ~clus_dat$Source) %>% 
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'x-axis'), 
+                      yaxis = list(title = 'y-axis'), 
+                      zaxis = list(title = 'z-axis'))) 
+umap_plot
+```
+
+###  Step 10.4: HCA
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+hc_df <- percentage_normalized_df_cleaned[, -c(1,2,3,4,5)]
+
+## Dissimilarity Indices Calculated by vegan::vegdist()
+hca_samp <- stats::hclust(vegan::vegdist(hc_df,
+                                         method = "robust.aitchison")) # Since our data is continous -> canberra // manhattan // aitchison // robust.aitchison
+
+par(cex = 0.75)
+plot(hca_samp,
+     labels = percentage_normalized_df_cleaned$Product,
+     hang = -1,
+     main = "")
+```
+
+###  Step 10.5: NMDS 
+**References:** 
+https://eddatascienceees.github.io/tutorial-rayrr13/
+https://jonlefcheck.net/2012/10/24/nmds-tutorial-in-r/
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data <- percentage_normalized_df_cleaned 
+
+# Calculate the dissimilarity matrix using Bray-Curtis distance
+dissimilarity_matrix <- vegdist(data %>% dplyr::select(6:ncol(data)), method = "bray", na.rm = TRUE)
+
+# Perform NMDS
+nmds_result <- metaMDS(dissimilarity_matrix, k = 2, trymax = 100)
+
+# Extract NMDS scores
+nmds_scores <- as.data.frame(vegan::scores(nmds_result))
+
+# Add metadata (Product_Name, Source, Day) to the NMDS scores
+nmds_scores <- cbind(nmds_scores, data %>% dplyr::select(Generalized_Product_name, Source
+                                                  # Product_Name, Day
+                                                  ))
+
+# Define a vector of shapes
+shapes <- c(0:16) #, 21:24, 25:32, 33:40, 41:48, 49:56, 57:63)
+
+# Ensure the shapes vector has unique shapes
+# shapes <- shapes[1:16]
+
+# Generate a discrete color palette with 61 colors
+# palette <- colorspace::qualitative_hcl(61, palette = "Dark 3")
+
+# Plot the NMDS results using ggplot2
+nmds_plot <- ggplot(nmds_scores, aes(x = NMDS1, y = NMDS2)) +
+  geom_point(aes(
+    color = Source,
+    shape = Source, fill = Source), size = 3) +
+  labs(#title = paste0("NMDS-", "Source"),
+       x = "NMDS1", y = "NMDS2") +
+  theme_minimal(base_size = 22) +
+  theme(legend.position = "right") +
+  # xlim(-1.25, 1.25) +
+  # ylim(-1.5, 1.5) +
+  scale_color_manual(name = "Source", values = c("firebrick3", "dodgerblue3")) #+
+  # scale_shape_manual(name = "Source", values = shapes)  # +
+  # ggforce::geom_mark_ellipse(aes(fill = Source, color = Source),
+  #                            label.buffer = unit(20, 'mm'))
+
+# Report Stress values
+stressplot(nmds_result)
+
+ggsave(filename = paste0("C:/Users/huyng/OneDrive - Toronto Metropolitan University (TMU)/Microplastic/Eric PMT weathering Paper/", "NMDS_eric_no-eclipse_", format(Sys.time(), "%d-%m-%Y"),".png"), 
+       plot = nmds_plot, 
+       device = "png",
+       dpi = 600,        # Set DPI to 600
+       width = 15,       # Width in inches (adjust as needed)
+       height = 8,       # Height in inches (adjust as needed)
+       units = "in")
+```
+
+### Step 11: PERMANOVA 
+Reference: 
+https://nathanielwoodward.com/posts/a-cool-thing-called-permanova/
+https://onlinelibrary.wiley.com/doi/full/10.1002/9781118445112.stat07841
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Compound as predictor variables
+permanova_source_compounddf <- percentage_normalized_df_cleaned %>% 
+  dplyr::select(-c(Generalized_Product_name, Day, Product_Name))
+
+permanova_source <- vegan::adonis2(vegan::vegdist(permanova_source_compounddf[,2:ncol(permanova_source_compounddf)], 
+                                                  method = "bray")~Source, 
+                                   permutations=5000, data = permanova_source_compounddf)
+
+
+permanova_product_name_compounddf <- percentage_normalized_df_cleaned %>% 
+  dplyr::select(-c(Source, Day, Product_Name))
+permanova_product_name <- vegan::adonis2(vegan::vegdist(permanova_product_name_compounddf[,2:ncol(permanova_product_name_compounddf)], 
+                                                        method = "bray")~Generalized_Product_name, 
+                                         permutations=5000, data = permanova_product_name_compounddf)
+
+# Compound+Polymer as predictor variables
+permanova_source_CompoundPolymerdf <- percentage_normalized_df_cleaned %>% 
+  dplyr::select(-c(Generalized_Product_name, Day, Product_Name))
+
+permanova_source <- vegan::adonis2(vegan::vegdist(permanova_source_CompoundPolymerdf[,2:ncol(permanova_source_CompoundPolymerdf)], 
+                                                  method = "bray")~Source, 
+                                   permutations=5000, data = permanova_source_CompoundPolymerdf)
+
+
+permanova_product_name_CompoundPolymerdf <- percentage_normalized_df_cleaned %>% 
+  dplyr::select(-c(Source, Day, Product_Name))
+permanova_product_name <- vegan::adonis2(vegan::vegdist(permanova_product_name_CompoundPolymerdf[,2:ncol(permanova_product_name_CompoundPolymerdf)], 
+                                                        method = "bray")~Generalized_Product_name, 
+                                         permutations=5000, data = permanova_product_name_CompoundPolymerdf)
+```
